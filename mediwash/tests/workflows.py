@@ -896,6 +896,31 @@ def run_suite(binary: str, base_url: str, data_dir: str):
     after_del = invoke("ui_delete_rule", {"id": new_rid})
     assert not any(r["id"] == new_rid for r in after_del["rules"])
 
+    # 16. Mediary v3.4.8+ web_source boundary-safe extraction & title separation via `ui_compare_samples`
+    cmp_ws = invoke("ui_compare_samples", {
+        "rule_id": "mediatidy:ultimate-precision",
+        "category": "电视剧/国产剧",
+        "left": {
+            "name": "藏海传.YK.2160p.WEB-DL.H265.AAC.mp4",
+            "folder": "",
+            "size_gb": 1.2,
+            "bitrate_mbps": 8.0,
+            "video_bitrate_mbps": 7.2,
+        },
+        "right": {
+            "name": "Mad.Max.Fury.Road.2015.2160p.WEB-DL.H265.AAC-GWEB.mkv",
+            "folder": "",
+            "size_gb": 1.2,
+            "bitrate_mbps": 8.0,
+            "video_bitrate_mbps": 7.2,
+        },
+    })
+    assert cmp_ws["left"]["profile"]["web_source"] == "YK", cmp_ws["left"]
+    assert cmp_ws["left"]["recognition"]["parsed"]["title"] == "藏海传", cmp_ws["left"]
+    assert cmp_ws["left"]["recognition"]["parsed"]["web_source"] == "YK", cmp_ws["left"]
+    assert cmp_ws["right"]["profile"]["web_source"] == "", cmp_ws["right"]
+    assert cmp_ws["right"]["recognition"]["parsed"]["title"] == "Mad Max Fury Road", cmp_ws["right"]
+
 
 if __name__ == "__main__":
     binary_path = str(Path(sys.argv[1] if len(sys.argv) > 1 else "plugin").resolve())

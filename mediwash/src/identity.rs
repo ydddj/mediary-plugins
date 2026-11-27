@@ -26,7 +26,277 @@ pub struct ParsedFilename {
     pub episode: Option<u32>,
     pub episode_end: Option<u32>,
     pub explicit_tmdb: Option<u32>,
+    #[serde(default)]
+    pub web_source: String,
     pub inferred_type: &'static str,
+}
+
+/// Mediary v3.4.8+ canonical streaming platform (`{{webSource}}` / `{{web_source}}`) table:
+/// 10 international + 10 domestic/Asian streaming platforms.
+#[allow(dead_code)]
+pub const STREAMING_WEB_SOURCES: &[(&str, &str)] = &[
+    // International (10)
+    ("NF", "Netflix"),
+    ("AMZN", "Amazon"),
+    ("DSNP", "Disney+"),
+    ("ATVP", "Apple TV+"),
+    ("HMAX", "HBO Max"),
+    ("HULU", "Hulu"),
+    ("PMTP", "Paramount+"),
+    ("PCOK", "Peacock"),
+    ("ITUN", "iTunes"),
+    ("CR", "Crunchyroll"),
+    // Domestic / Asian (10)
+    ("BILI", "Bilibili"),
+    ("IQ", "iQIYI 爱奇艺"),
+    ("YK", "Youku 优酷"),
+    ("TX", "Tencent / WeTV 腾讯视频"),
+    ("MGTV", "MangoTV 芒果TV"),
+    ("BAHA", "Bahamut 巴哈姆特"),
+    ("KKTV", "KKTV"),
+    ("MYTV", "myTV SUPER"),
+    ("VIU", "Viu / ViuTV"),
+    ("FRIDAY", "friDay影音"),
+];
+
+fn has_alnum(s: &str) -> bool {
+    s.chars().any(char::is_alphanumeric)
+}
+
+fn match_web_source_explicit(text: &str) -> Option<&'static str> {
+    static EXPLICIT_RULES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+        let defs: &[(&str, &str)] = &[
+            ("NF", r"(?i)(?:^|[^A-Za-z0-9])Netflix(?:$|[^A-Za-z0-9])"),
+            ("AMZN", r"(?i)(?:^|[^A-Za-z0-9])(?:AMZN|Prime[ ._-]?Video)(?:$|[^A-Za-z0-9])"),
+            ("DSNP", r"(?i)(?:^|[^A-Za-z0-9])(?:DSNP|Disney\+|DisneyPlus|Disney[ ._-]?Plus)(?:$|[^A-Za-z0-9])"),
+            ("ATVP", r"(?i)(?:^|[^A-Za-z0-9])(?:ATVP|Apple[ ._-]?TV\+?)(?:$|[^A-Za-z0-9])"),
+            ("HMAX", r"(?i)(?:^|[^A-Za-z0-9])(?:HMAX|HBO[ ._-]?Max)(?:$|[^A-Za-z0-9])"),
+            ("HULU", r"(?i)(?:^|[^A-Za-z0-9])HULU(?:$|[^A-Za-z0-9])"),
+            ("PMTP", r"(?i)(?:^|[^A-Za-z0-9])(?:PMTP|Paramount\+|ParamountPlus|Paramount[ ._-]?Plus)(?:$|[^A-Za-z0-9])"),
+            ("PCOK", r"(?i)(?:^|[^A-Za-z0-9])PCOK(?:$|[^A-Za-z0-9])"),
+            ("ITUN", r"(?i)(?:^|[^A-Za-z0-9])(?:ITUN|iTunes)(?:$|[^A-Za-z0-9])"),
+            ("CR", r"(?i)(?:^|[^A-Za-z0-9])Crunchyroll(?:$|[^A-Za-z0-9])"),
+            ("BILI", r"(?i)(?:^|[^A-Za-z0-9])(?:BILI|Bilibili|B-?Global)(?:$|[^A-Za-z0-9])|哔哩哔哩"),
+            ("IQ", r"(?i)(?:^|[^A-Za-z0-9])iQIYI(?:$|[^A-Za-z0-9])|爱奇艺"),
+            ("YK", r"(?i)(?:^|[^A-Za-z0-9])Youku(?:$|[^A-Za-z0-9])|优酷"),
+            ("TX", r"(?i)(?:^|[^A-Za-z0-9])(?:WeTV|Tencent)(?:$|[^A-Za-z0-9])|腾讯视频"),
+            ("MGTV", r"(?i)(?:^|[^A-Za-z0-9])(?:MGTV|MangoTV)(?:$|[^A-Za-z0-9])|芒果TV"),
+            ("BAHA", r"(?i)(?:^|[^A-Za-z0-9])(?:BAHA|Bahamut)(?:$|[^A-Za-z0-9])|巴哈姆特"),
+            ("KKTV", r"(?i)(?:^|[^A-Za-z0-9])KKTV(?:$|[^A-Za-z0-9])"),
+            ("MYTV", r"(?i)(?:^|[^A-Za-z0-9])(?:MYTV|myTV[ ._-]?SUPER|myTVSUPER)(?:$|[^A-Za-z0-9])"),
+            ("VIU", r"(?i)(?:^|[^A-Za-z0-9])ViuTV(?:$|[^A-Za-z0-9])"),
+            ("FRIDAY", r"(?i)friDay影音"),
+        ];
+        defs.iter()
+            .map(|&(code, pat)| (code, Regex::new(pat).unwrap()))
+            .collect()
+    });
+    for (code, rx) in EXPLICIT_RULES.iter() {
+        if rx.is_match(text) {
+            return Some(*code);
+        }
+    }
+    None
+}
+
+fn match_web_source_token_exact(tok: &str, allow_case_insensitive_english: bool) -> Option<&'static str> {
+    let trimmed = tok.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(hit) = match_web_source_explicit(trimmed) {
+        return Some(hit);
+    }
+    let up = trimmed.to_ascii_uppercase();
+    match up.as_str() {
+        "NF" => Some("NF"),
+        "AMZN" | "AMAZON" => Some("AMZN"),
+        "DSNP" => Some("DSNP"),
+        "ATVP" => Some("ATVP"),
+        "HMAX" => Some("HMAX"),
+        "MAX" if allow_case_insensitive_english || trimmed == "MAX" => Some("HMAX"),
+        "HULU" => Some("HULU"),
+        "PMTP" => Some("PMTP"),
+        "PCOK" | "PEACOCK" => Some("PCOK"),
+        "ITUN" | "ITUNES" => Some("ITUN"),
+        "CR" => Some("CR"),
+        "BILI" | "BILIBILI" | "BGLOBAL" => Some("BILI"),
+        "IQ" | "IQIYI" => Some("IQ"),
+        "YK" | "YOUKU" => Some("YK"),
+        "TX" | "WETV" | "TENCENT" => Some("TX"),
+        "MGTV" | "MANGOTV" => Some("MGTV"),
+        "BAHA" | "BAHAMUT" => Some("BAHA"),
+        "KKTV" => Some("KKTV"),
+        "MYTV" | "MYTVSUPER" => Some("MYTV"),
+        "VIU" | "VIUTV" => Some("VIU"),
+        "FRIDAY" if allow_case_insensitive_english || trimmed == "friDay" || trimmed == "FRIDAY" => {
+            Some("FRIDAY")
+        }
+        _ => None,
+    }
+}
+
+/// Extracts Mediary v3.4.8+ standardized streaming platform code (`webSource` / `web_source`)
+/// using strict word boundaries so plain `WEB-DL` never maps to `"WEB"` and normal English title
+/// words (`Mad Max`, `Freaky Friday`, `Information`, `High IQ`) never false-match.
+pub fn extract_web_source(filename: &str) -> String {
+    static BRACKET_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"[\[\(【（]([^\]\)】）]{2,24})[\]\)】）]").unwrap());
+    static SE_START_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])(S\d{1,2}\s*[._-]?E\d{1,4}|EP?\s*\d{1,4})(?:$|[^A-Za-z0-9])|第\s*\d{1,4}\s*[集话話期]").unwrap()
+    });
+    static SPEC_TECH_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])(4320p|2160p|1440p|1080[pi]|720p|576p|480p|4k|uhd|web[ ._-]?dl|webrip|blu[ ._-]?ray|bdrip|remux|hdtv|h\.?26[45]|x26[45]|hevc|av1|dv|dovi|hdrvivid|hdr10\+?|hlg|sdr)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+    static RES_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])(4320p|2160p|1440p|1080[pi]|720p|576p|480p|4k|uhd)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+    static YEAR_BOUND_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?:^|[^A-Za-z0-9])(19\d{2}|20\d{2})(?:$|[^A-Za-z0-9])").unwrap());
+    static PHYSICAL_DISC_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])(blu[ ._-]?ray|bdrip|bdmv|remux|dvdrip|dvd|hdtv|iso)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+    static WEB_MARKER_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])(web[ ._-]?dl|webrip)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+    static TRAILING_GROUP_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"-[A-Za-z0-9]+$").unwrap());
+    static SPEC_SHORT_RULES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+        let defs: &[(&str, &str)] = &[
+            ("NF", r"(?i)(?:^|[^A-Za-z0-9])NF(?:$|[^A-Za-z0-9])"),
+            ("AMZN", r"(?i)(?:^|[^A-Za-z0-9])Amazon(?:$|[^A-Za-z0-9])"),
+            ("PCOK", r"(?i)(?:^|[^A-Za-z0-9])Peacock(?:$|[^A-Za-z0-9])"),
+            ("CR", r"(?i)(?:^|[^A-Za-z0-9])CR(?:$|[^A-Za-z0-9])"),
+            ("IQ", r"(?i)(?:^|[^A-Za-z0-9])IQ(?:$|[^A-Za-z0-9])"),
+            ("YK", r"(?i)(?:^|[^A-Za-z0-9])YK(?:$|[^A-Za-z0-9])"),
+            ("TX", r"(?i)(?:^|[^A-Za-z0-9])TX(?:$|[^A-Za-z0-9])"),
+            ("VIU", r"(?i)(?:^|[^A-Za-z0-9])VIU(?:$|[^A-Za-z0-9])"),
+        ];
+        defs.iter()
+            .map(|&(code, pat)| (code, Regex::new(pat).unwrap()))
+            .collect()
+    });
+    static MAX_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)(?:^|[^A-Za-z0-9])MAX(?:$|[^A-Za-z0-9])").unwrap());
+    static FRIDAY_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)(?:^|[^A-Za-z0-9])friDay(?:$|[^A-Za-z0-9])").unwrap());
+    static FRIDAY_EXACT_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?:^|[^A-Za-z0-9])friDay(?:$|[^A-Za-z0-9])").unwrap());
+    static PRE_WEB_MAX_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])MAX[ ._-]+(?:web[ ._-]?dl|webrip)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+    static PRE_WEB_FRIDAY_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])friDay[ ._-]+(?:web[ ._-]?dl|webrip)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+
+    let clean = strip_invisible_chars(filename);
+    let base = clean.rsplit('/').next().unwrap_or(&clean).trim();
+    if base.is_empty() {
+        return String::new();
+    }
+    let stem = base
+        .rsplit_once('.')
+        .filter(|(_, ext)| ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()))
+        .map_or(base, |(s, _)| s);
+
+    // 1. Bracketed platform tags anywhere (e.g. `[Baha]`, `[BILI]`, `[爱奇艺]`, `[NF]`, `[BGlobal]`)
+    for cap in BRACKET_RE.captures_iter(stem) {
+        if let Some(inner) = cap.get(1) {
+            if let Some(code) = match_web_source_token_exact(inner.as_str(), false) {
+                return code.to_string();
+            }
+        }
+    }
+
+    // Determine technical/spec zone start (after title)
+    let se_pos = SE_START_RE.find(stem).map(|m| m.start());
+    let tech_pos = SPEC_TECH_RE.find(stem).map(|m| m.start());
+    let year_pos = YEAR_BOUND_RE
+        .find_iter(stem)
+        .find(|m| has_alnum(&stem[..m.start()]))
+        .map(|m| m.start());
+    let spec_start = [se_pos, tech_pos, year_pos]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(stem.len());
+    let spec_zone = &stem[spec_start..];
+    let has_web_marker = WEB_MARKER_RE.is_match(stem);
+    let is_physical_disc = PHYSICAL_DISC_RE.is_match(stem) && !has_web_marker;
+
+    // 2. Explicit unambiguous platform brands/abbreviations in spec_zone
+    if let Some(code) = match_web_source_explicit(spec_zone) {
+        return code.to_string();
+    }
+
+    // 3. Short/contextual codes inside spec_zone (strip trailing `-GROUP` when not explicitly WEB-DL/WEBRip)
+    let spec_for_short = if !has_web_marker {
+        TRAILING_GROUP_RE.replace(spec_zone, "").into_owned()
+    } else {
+        spec_zone.to_string()
+    };
+    if !is_physical_disc {
+        for (code, rx) in SPEC_SHORT_RULES.iter() {
+            if rx.is_match(&spec_for_short) {
+                return (*code).to_string();
+            }
+        }
+        // Contextual English-word platforms (`MAX` -> `HMAX`, `friDay` -> `FRIDAY`):
+        // Only match inside spec_zone when right before `WEB-DL`/`WEBRip`, after resolution, or case-exact `friDay`!
+        let post_res = RES_RE
+            .find(&spec_for_short)
+            .map(|m| &spec_for_short[m.end()..])
+            .unwrap_or("");
+        if PRE_WEB_MAX_RE.is_match(&spec_for_short) || MAX_RE.is_match(post_res) {
+            return "HMAX".to_string();
+        }
+        if FRIDAY_EXACT_RE.is_match(&spec_for_short)
+            || PRE_WEB_FRIDAY_RE.is_match(&spec_for_short)
+            || FRIDAY_RE.is_match(post_res)
+        {
+            return "FRIDAY".to_string();
+        }
+    }
+
+    // 4. Token immediately preceding a tech/episode boundary (e.g. `藏海传.YK.2160p.WEB-DL.mp4`, `某剧.NF.WEB-DL.mkv`)
+    let pre_spec = &stem[..spec_start];
+    if !pre_spec.trim().is_empty() {
+        // Explicit unambiguous brand/code after title chars (e.g. `葬送的芙莉莲.BAHA.1080p.mkv` or `某剧.ATVP.WEB-DL.mkv`)
+        let pre_trimmed = pre_spec.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '+');
+        if let Some(code) = match_web_source_explicit(pre_trimmed) {
+            // Guard: ensure the platform token is not the entire title (e.g. movie titled `Hulu`)
+            let cleaned_without_last = pre_trimmed
+                .rsplit_once(|c: char| matches!(c, '.' | '_' | ' ' | '-' | '[' | ']' | '(' | ')'))
+                .map(|(head, _)| head)
+                .unwrap_or("");
+            if has_alnum(cleaned_without_last) {
+                return code.to_string();
+            }
+        }
+
+        // Short codes (`YK`/`IQ`/`TX`/`NF`/`CR`/`VIU`) or exact `friDay`/`MAX` immediately before tech/episode marker (NOT before year!)
+        let spec_starts_with_tech_or_ep = se_pos == Some(spec_start) || tech_pos == Some(spec_start);
+        if !is_physical_disc && spec_starts_with_tech_or_ep {
+            if let Some((head, tail)) = pre_trimmed
+                .rsplit_once(|c: char| matches!(c, '.' | '_' | ' ' | '-' | '[' | ']' | '(' | ')'))
+            {
+                if has_alnum(head) {
+                    let allow_en = WEB_MARKER_RE.find(spec_zone).is_some_and(|m| m.start() == 0);
+                    if let Some(code) = match_web_source_token_exact(tail, false) {
+                        if !matches!(code, "HMAX" | "FRIDAY")
+                            || allow_en
+                            || tail == "friDay"
+                            || tail == "HMAX"
+                        {
+                            return code.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    String::new()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,11 +406,21 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
     static TECH_CUT_RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)\b(4320p|2160p|1440p|1080[pi]|720p|576p|480p|4k|uhd|web[ -]?dl|webrip|blu[ -]?ray|bdrip|remux|hdtv|h\.?26[45]|x26[45]|hevc|av1|dv|dovi|hdrvivid|hdr10|sdr)\b").unwrap()
     });
+    static WEB_CUT_UNAMBIGUOUS_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])(AMZN|DSNP|Disney\+|DisneyPlus|ATVP|Apple[ -]?TV\+?|HMAX|HBO[ -]?Max|PMTP|Paramount\+|ParamountPlus|PCOK|ITUN|iTunes|Crunchyroll|BILI|Bilibili|B-?Global|iQIYI|Youku|WeTV|Tencent|MGTV|MangoTV|BAHA|Bahamut|KKTV|MYTV|myTV[ -]?SUPER|myTVSUPER|ViuTV|friDay影音)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+    static WEB_CUT_BEFORE_TECH_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|[^A-Za-z0-9])(NF|Netflix|Amazon|HULU|Peacock|CR|IQ|YK|TX|VIU)(?:$|[^A-Za-z0-9])").unwrap()
+    });
+    static WEB_CUT_EN_BEFORE_WEBDL_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[^A-Za-z0-9])(MAX|friDay|FRIDAY)\s+(?i:web[ -]?dl|webrip)\b").unwrap()
+    });
 
     let clean_file = strip_invisible_chars(filename);
     let clean_folder = strip_invisible_chars(rel_folder);
     let filename = clean_file.as_str();
     let rel_folder = clean_folder.as_str();
+    let web_source = extract_web_source(filename);
 
     let folder_is_movie = rel_folder.split('/').any(|s| {
         matches!(
@@ -252,7 +532,32 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
         }
     }
 
-    let cut = [ep_cut_pos, tech_pos]
+    let base_cut = [ep_cut_pos, tech_pos]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(stem.len());
+    let pre_base = &stem[..base_cut];
+    let web_cut_unambig = WEB_CUT_UNAMBIGUOUS_RE
+        .find_iter(pre_base)
+        .find(|m| has_alnum(&pre_base[..m.start()]))
+        .map(|m| m.start());
+    let web_cut_before_tech = if base_cut < stem.len() {
+        // Only trim trailing short platform token (`YK`/`IQ`/`TX`/`NF`/`CR`/`VIU`) right before SxxExx / 2160p / WEB-DL
+        let pre_trimmed = pre_base.trim_end();
+        WEB_CUT_BEFORE_TECH_RE
+            .find_iter(pre_trimmed)
+            .filter(|m| m.end() == pre_trimmed.len() && has_alnum(&pre_trimmed[..m.start()]))
+            .map(|m| m.start())
+            .next()
+    } else {
+        None
+    };
+    let web_cut_en = WEB_CUT_EN_BEFORE_WEBDL_RE
+        .find_iter(&stem)
+        .find(|m| has_alnum(&stem[..m.start()]))
+        .map(|m| m.start());
+    let cut = [Some(base_cut), web_cut_unambig, web_cut_before_tech, web_cut_en]
         .into_iter()
         .flatten()
         .min()
@@ -309,6 +614,7 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
         episode,
         episode_end,
         explicit_tmdb,
+        web_source,
         inferred_type,
     }
 }
@@ -320,9 +626,16 @@ fn clean_title_noise(s: &str) -> String {
         )
         .unwrap()
     });
+    static LEADING_WEB_BRACKET_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)^\s*(?:[\[\(【（]\s*(?:NF|Netflix|AMZN|Amazon|DSNP|Disney\+|DisneyPlus|ATVP|Apple[ ._-]?TV\+?|HMAX|HBO[ ._-]?Max|HULU|PMTP|Paramount\+|ParamountPlus|PCOK|Peacock|ITUN|iTunes|CR|Crunchyroll|BILI|Bilibili|B-?Global|IQ|iQIYI|爱奇艺|YK|Youku|优酷|TX|WeTV|Tencent|腾讯视频|MGTV|MangoTV|芒果TV|BAHA|Bahamut|巴哈姆特|KKTV|MYTV|myTV[ ._-]?SUPER|myTVSUPER|VIU|ViuTV|friDay影音|friDay)\s*[\]\)】）]\s*)+",
+        )
+        .unwrap()
+    });
     let cleaned = strip_invisible_chars(s);
     let without_tags = BRACKET_TAG_RE.replace_all(&cleaned, " ");
-    without_tags
+    let without_web_prefix = LEADING_WEB_BRACKET_RE.replace(&without_tags, "");
+    without_web_prefix
         .trim_matches(|c: char| {
             c.is_whitespace()
                 || matches!(
@@ -718,5 +1031,69 @@ mod tests {
         let p_tv_dir = parse_media_name("幕后特辑.mp4", "link/电视剧/国产剧/骨鉴卿心 (2026) [tmdbid-326202]/Season 01");
         assert_eq!(p_tv_dir.inferred_type, "tv");
         assert_eq!(p_tv_dir.explicit_tmdb, Some(326202));
+    }
+
+    #[test]
+    fn mediary_348_web_source_boundary_extraction_and_title_separation() {
+        // 1. All 20 Mediary v3.4.8 canonical streaming platforms (10 international + 10 domestic/Asian)
+        let cases = [
+            ("Stranger.Things.S04E01.2160p.NF.WEB-DL.H265.mkv", "NF", "Stranger Things"),
+            ("The.Boys.S04E01.2160p.AMZN.WEB-DL.DDP5.1.mkv", "AMZN", "The Boys"),
+            ("The.Mandalorian.S03E01.2160p.DSNP.WEB-DL.mkv", "DSNP", "The Mandalorian"),
+            ("Severance.S02E01.2160p.ATVP.WEB-DL.DV.H265.mkv", "ATVP", "Severance"),
+            ("The.Last.of.Us.S02E01.2160p.HMAX.WEB-DL.mkv", "HMAX", "The Last of Us"),
+            ("The.Last.of.Us.S02E01.2160p.MAX.WEB-DL.mkv", "HMAX", "The Last of Us"),
+            ("Shogun.S01E01.2160p.HULU.WEB-DL.H265.mkv", "HULU", "Shogun"),
+            ("Halo.S02E01.2160p.PMTP.WEB-DL.H265.mkv", "PMTP", "Halo"),
+            ("Poker.Face.S01E01.2160p.PCOK.WEB-DL.H265.mkv", "PCOK", "Poker Face"),
+            ("Ted.Lasso.S03E01.2160p.ITUN.WEB-DL.H265.mkv", "ITUN", "Ted Lasso"),
+            ("Solo.Leveling.S02E01.1080p.CR.WEB-DL.H264.mkv", "CR", "Solo Leveling"),
+            ("凡人修仙传.S01E100.2160p.BILI.WEB-DL.H265.mp4", "BILI", "凡人修仙传"),
+            ("唐朝诡事录.S02E01.2160p.IQ.WEB-DL.H265.mp4", "IQ", "唐朝诡事录"),
+            ("藏海传.S01E01.2160p.YK.WEB-DL.H265.mp4", "YK", "藏海传"),
+            ("庆余年.2019.S02E01.2160p.TX.SDR.H.265.25fps.AAC.strm", "TX", "庆余年"),
+            ("歌手2025.S01E01.2160p.MGTV.WEB-DL.H265.mp4", "MGTV", "歌手2025"),
+            ("葬送的芙莉莲.S01E01.1080p.BAHA.WEB-DL.H264.mkv", "BAHA", "葬送的芙莉莲"),
+            ("某台剧.S01E01.1080p.KKTV.WEB-DL.H264.mkv", "KKTV", "某台剧"),
+            ("新闻女王.S01E01.1080p.MYTV.WEB-DL.H265.mkv", "MYTV", "新闻女王"),
+            ("某港剧.S01E01.1080p.VIU.WEB-DL.H264.mkv", "VIU", "某港剧"),
+            ("某台剧.S01E01.1080p.friDay.WEB-DL.H264.mkv", "FRIDAY", "某台剧"),
+        ];
+        for (fname, want_ws, want_title) in cases {
+            let p = parse_media_name(fname, "");
+            assert_eq!(p.web_source, want_ws, "web_source mismatch for {fname}");
+            assert_eq!(p.title, want_title, "title mismatch for {fname}");
+        }
+
+        // 2. Platform tokens appearing before resolution / SxxExx or in leading brackets cleanly separate from title
+        let p_yk = parse_media_name("藏海传.YK.2160p.WEB-DL.H265.mp4", "");
+        assert_eq!(p_yk.title, "藏海传");
+        assert_eq!(p_yk.web_source, "YK");
+
+        let p_baha = parse_media_name("[Baha] 葬送的芙莉莲 [01] [1080p].mp4", "");
+        assert_eq!(p_baha.title, "葬送的芙莉莲");
+        assert_eq!(p_baha.episode, Some(1));
+        assert_eq!(p_baha.web_source, "BAHA");
+
+        let p_iq_cn = parse_media_name("[爱奇艺] 唐朝诡事录.S02E03.2160p.WEB-DL.mp4", "");
+        assert_eq!(p_iq_cn.title, "唐朝诡事录");
+        assert_eq!(p_iq_cn.web_source, "IQ");
+
+        // 3. Strict boundary guards: plain WEB-DL and normal English title words must NOT false-match!
+        let negative_cases = [
+            ("天声一对.Our.Love.Song.S01E03.2025.2160p.WEB-DL.H265.AAC-GWEB.mp4", "天声一对 Our Love Song"),
+            ("Information.Age.2024.1080p.WEB-DL.H264.mkv", "Information Age"),
+            ("Mad.Max.Fury.Road.2015.2160p.UHD.BluRay.HEVC.mkv", "Mad Max Fury Road"),
+            ("Freaky.Friday.2003.1080p.WEB-DL.H264.mkv", "Freaky Friday"),
+            ("Friday.1995.1080p.BluRay.x264.mkv", "Friday"),
+            ("Dune.2021.2160p.BluRay.Remux.HEVC-MAX.mkv", "Dune"),
+            ("High.IQ.2024.1080p.WEB-DL.H264.mkv", "High IQ"),
+            ("Madame.Web.2024.2160p.WEB-DL.H265.mkv", "Madame Web"),
+        ];
+        for (fname, want_title) in negative_cases {
+            let p = parse_media_name(fname, "");
+            assert_eq!(p.web_source, "", "unexpected web_source false match for {fname}");
+            assert_eq!(p.title, want_title, "title damaged for {fname}");
+        }
     }
 }

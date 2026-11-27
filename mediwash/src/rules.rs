@@ -509,6 +509,8 @@ pub struct MediaProfile {
     pub dolby_vision_tag: String,
     pub fps: String,
     pub source: String,
+    #[serde(default)]
+    pub web_source: String,
     pub codec: String,
     pub depth: String,
     pub extension: String,
@@ -756,6 +758,16 @@ impl MediaProfile {
         }
         .to_string();
 
+        // 7b. Streaming platform (`web_source`, aligned with Mediary v3.4.8+ `{{webSource}}`)
+        let web_source = path_candidates
+            .iter()
+            .filter_map(|p| {
+                let ws = crate::identity::extract_web_source(p);
+                (!ws.is_empty()).then_some(ws)
+            })
+            .next()
+            .unwrap_or_default();
+
         // 8. Audio tracks (from streams + filename fallback)
         let mut audio_tags = Vec::new();
         let audio_streams: Vec<&&MediaStream> = streams
@@ -840,6 +852,7 @@ impl MediaProfile {
             dolby_vision_tag,
             fps,
             source,
+            web_source,
             codec,
             depth,
             extension,
@@ -865,6 +878,7 @@ impl MediaProfile {
             "hdr": self.hdr,
             "fps": self.fps,
             "source": self.source,
+            "web_source": self.web_source,
             "codec": self.codec,
             "depth": self.depth,
             "extension": self.extension,
@@ -1898,6 +1912,64 @@ mod tests {
         assert_eq!(
             scorer.score(&hdr_vivid, &ReferenceBaseline::default(), "电视剧/国产剧", false).slot,
             "4K-HDR"
+        );
+    }
+
+    #[test]
+    fn media_profile_extracts_web_source_without_breaking_scoring() {
+        let rules = default_rules().unwrap();
+        let sym = Scorer::new(rules.iter().find(|r| r.kind == SYMEDIA).unwrap()).unwrap();
+        let tidy = Scorer::new(rules.iter().find(|r| r.kind == MEDIATIDY).unwrap()).unwrap();
+
+        let plain_web = MediaProfile::extract(
+            &LibrarySource {
+                name: "藏海传.S01E01.2160p.WEB-DL.H265.DDP5.1.mkv".into(),
+                size: 2_000_000_000.0,
+                bitrate: 12_000_000.0,
+                ..Default::default()
+            },
+            &[],
+        );
+        let yk_web = MediaProfile::extract(
+            &LibrarySource {
+                name: "藏海传.S01E01.2160p.YK.WEB-DL.H265.DDP5.1.mkv".into(),
+                size: 2_000_000_000.0,
+                bitrate: 12_000_000.0,
+                ..Default::default()
+            },
+            &[],
+        );
+        let strm_tx = MediaProfile::extract(
+            &LibrarySource {
+                name: "庆余年.2019.S02E01.2160p.TX.SDR.H.265.25fps.AAC.strm".into(),
+                strm_path: "/strm/cloud/媒体库/电视剧/国产剧/2010-2019/庆余年 (2019) [tmdbid-95663]/Season 02/庆余年.2019.S02E01.2160p.TX.SDR.H.265.25fps.AAC.strm".into(),
+                size: 1_500_000_000.0,
+                ..Default::default()
+            },
+            &[],
+        );
+
+        assert_eq!(plain_web.web_source, "");
+        assert_eq!(plain_web.source, "WEB-DL");
+        assert_eq!(yk_web.web_source, "YK");
+        assert_eq!(yk_web.source, "WEB-DL");
+        assert_eq!(yk_web.summary_json()["web_source"].as_str(), Some("YK"));
+        assert_eq!(strm_tx.web_source, "TX");
+        assert_eq!(strm_tx.summary_json()["web_source"].as_str(), Some("TX"));
+
+        // Symedia & MediaTidy scores stay identical between plain WEB-DL and platform-tagged WEB-DL
+        let base = ReferenceBaseline {
+            size: 2_000_000_000.0,
+            bitrate: 12_000_000.0,
+            video_bitrate: 10_800_000.0,
+        };
+        assert_eq!(
+            sym.score(&plain_web, &base, "电视剧/国产剧", false).total,
+            sym.score(&yk_web, &base, "电视剧/国产剧", false).total
+        );
+        assert_eq!(
+            tidy.score(&plain_web, &base, "电视剧/国产剧", false).total,
+            tidy.score(&yk_web, &base, "电视剧/国产剧", false).total
         );
     }
 }

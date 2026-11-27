@@ -402,7 +402,7 @@ function renderStagingTab(root) {
     <div class="mw-header">
       <div>
         <h2>115 监控目录归档入库（原生一步直达媒体库 + 权重洗版）</h2>
-        <p>仅需设置 1 个待洗版目录：胜出文件调用 Mediary 3.4.6 原生接口一步完成二级分类、重命名、字幕跟随与 STRM 入库；低分落败与重复文件直接移入 115 官方回收站</p>
+        <p>仅需设置 1 个待洗版目录：胜出文件调用 Mediary 3.4.8+ 原生接口一步完成二级分类、重命名（支持 <code>{{webSource}}</code> 流媒体平台变量）、字幕跟随与 STRM 入库；低分落败与重复文件直接移入 115 官方回收站</p>
       </div>
       <div class="mw-actions">
         <button type="button" class="mw-btn" id="btn-goto-history">查看历史记录 (${Number(c.media_history || 0)})</button>
@@ -428,7 +428,7 @@ function renderStagingTab(root) {
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;font-size:12.5px;line-height:1.55;">
               <div style="flex:1;min-width:260px;">
                 <strong>⚠️ 检测到宿主「内置 STRM 工具 → 转存整理任务」列表为空（会导致归档目录缺少 <code>[tmdbid-...]</code>）</strong><br/>
-                <span class="mw-muted">主程序的 <code>open115/files/organize</code> 接口会从内置 STRM 工具的默认转存任务读取 115 电影/剧集重命名模板；当转存任务被清空时，会回退为不含 <code>[tmdbid-...]</code> 的简版模板。请在内置 STRM 工具中新建一条<strong>取消勾选「启用」（保持停用即可，不会抢跑转存）</strong>的默认任务并粘贴下方模板，随后在历史记录点「重整」即可修正。</span>
+                <span class="mw-muted">主程序的 <code>open115/files/organize</code> 接口会从内置 STRM 工具的默认转存任务读取 115 电影/剧集重命名模板；当转存任务被清空时，会回退为不含 <code>[tmdbid-...]</code> 的简版模板。请在内置 STRM 工具中新建一条<strong>取消勾选「启用」（保持停用即可，不会抢跑转存）</strong>的默认任务并粘贴下方模板，随后在历史记录点「重整」即可修正（Mediary v3.4.8+ 115 归档与 PT 整理双链路原生支持 <code>{{webSource}}</code> / <code>{% if webSource %}</code> 流媒体平台变量）。</span>
               </div>
               <div class="mw-actions" style="flex-shrink:0;">
                 ${hsync.movie_rename_format ? `<button type="button" class="mw-btn sm" id="btn-copy-tpl-movie">复制电影模板</button>` : ''}
@@ -572,6 +572,32 @@ function renderStagingTab(root) {
         </div>
       </div>
 
+      <details style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--mw-border);font-size:12px;">
+        <summary style="cursor:pointer;color:var(--mw-muted);user-select:none;">
+          Mediary v3.4.8+ 命名模板助手（已同步宿主模板 · 原生支持 <code>{{webSource}}</code> / <code>{% if webSource %}</code> 流媒体平台变量）
+        </summary>
+        <div style="margin-top:8px;padding:10px 12px;border-radius:8px;background:var(--mw-surface-2);line-height:1.6;">
+          <div>
+            <strong>双链路原生支持：</strong>Mediary <code>v3.4.8+</code> 的 115 原生整理（<code>open115/files/organize</code>）与 PT 整理器均已注入 <code>{{webSource}}</code> / <code>{{web_source}}</code>（未识别到平台时为空字符串，普通 <code>WEB-DL</code> 不会误标 <code>WEB</code>），推荐判空写法：
+            <code>{% if webSource %}.{{webSource}}{% endif %}</code>
+            <button type="button" class="mw-btn sm" id="btn-copy-websource-snip" style="margin-left:6px;">复制变量片段</button>
+          </div>
+          <div class="mw-muted" style="margin-top:4px;">
+            <strong>支持 20 个标准流媒体缩写：</strong>
+            国际 <code>NF</code> <code>AMZN</code> <code>DSNP</code> <code>ATVP</code> <code>HMAX</code> <code>HULU</code> <code>PMTP</code> <code>PCOK</code> <code>ITUN</code> <code>CR</code> ·
+            国内/亚洲 <code>BILI</code> <code>IQ</code> <code>YK</code> <code>TX</code> <code>MGTV</code> <code>BAHA</code> <code>KKTV</code> <code>MYTV</code> <code>VIU</code> <code>FRIDAY</code>
+          </div>
+          ${
+            hsync.movie_rename_format || hsync.tv_rename_format
+              ? `<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">
+                  ${hsync.movie_rename_format ? `<div><span class="mw-muted">当前电影模板：</span><code style="word-break:break-all;">${esc(hsync.movie_rename_format)}</code></div>` : ''}
+                  ${hsync.tv_rename_format ? `<div><span class="mw-muted">当前剧集模板：</span><code style="word-break:break-all;">${esc(hsync.tv_rename_format)}</code></div>` : ''}
+                </div>`
+              : ''
+          }
+        </div>
+      </details>
+
       ${
         extraPipelines.length > 0
           ? `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--mw-border);">
@@ -672,6 +698,13 @@ function renderStagingTab(root) {
     copyTvBtn.onclick = async () => {
       await copyToClipboard(hsync.tv_rename_format || '');
       showToast('已复制剧集重命名模板（含 [tmdbid] 与 Season 01）', 'success');
+    };
+  }
+  const copyWsBtn = document.getElementById('btn-copy-websource-snip');
+  if (copyWsBtn) {
+    copyWsBtn.onclick = async () => {
+      await copyToClipboard('{% if webSource %}.{{webSource}}{% endif %}');
+      showToast('已复制 Mediary v3.4.8+ {{webSource}} 判空模板片段', 'success');
     };
   }
 
@@ -838,6 +871,7 @@ function renderStagingCandidatesTable() {
                     <div style="font-weight:600;word-break:break-all;">${esc(it.name)}</div>
                     <div class="mw-muted" style="font-size:11.5px;">
                       ${it.rel_path ? `📁 ${esc(it.rel_path)} · ` : ''}${fmtBytes(it.size)}
+                      ${it.detail?.profile?.web_source ? ` · <span class="mw-tag">${esc(it.detail.profile.web_source)}</span>` : ''}
                       ${it.sidecar_count > 0 ? ` · 含 ${it.sidecar_count} 个外挂字幕` : ''}
                     </div>
                   </td>
@@ -885,6 +919,7 @@ function renderStagingCandidatesTable() {
                           <div style="font-size:12px;">
                             <strong>识别来源：</strong>${esc(it.detail?.matched_by || '-')} ·
                             <strong>评分方案：</strong>${esc(it.detail?.rule_name || '-')} ·
+                            ${it.detail?.profile?.web_source ? `<strong>流媒体平台：</strong><span class="mw-tag">${esc(it.detail.profile.web_source)}</span> · ` : ''}
                             <strong>技术规格：</strong>${esc(JSON.stringify(it.detail?.profile || {}))}
                           </div>
                           ${
@@ -1322,6 +1357,7 @@ function renderLibraryTab(root) {
                           </td>
                           <td>
                             <span class="mw-tag ok">${Number(ret.score || it.winner_score || 0).toFixed(2)} 分</span>
+                            ${ret.profile?.web_source ? `<span class="mw-tag">${esc(ret.profile.web_source)}</span>` : ''}
                             <div style="font-size:12px;word-break:break-all;margin-top:3px;">${esc(ret.name || ret.path || '-')}</div>
                           </td>
                           <td>
@@ -1332,6 +1368,7 @@ function renderLibraryTab(root) {
                                       (cd) => `
                                   <div style="margin-bottom:4px;">
                                     <span class="mw-tag danger">${Number(cd.score || 0).toFixed(2)} 分</span>
+                                    ${cd.profile?.web_source ? `<span class="mw-tag">${esc(cd.profile.web_source)}</span>` : ''}
                                     <span style="font-size:12px;word-break:break-all;">${esc(cd.name || cd.path)}</span>
                                   </div>`
                                     )
@@ -2848,6 +2885,7 @@ function renderSampleScoreCard(label, side) {
       <div class="mw-muted" style="font-size:12px;margin-bottom:8px;">
         识别片名：<strong>${esc(p.title || '-')}</strong> ${p.year ? `(${p.year})` : ''}
         ${p.episode ? ` · S${String(p.season || 1).padStart(2, '0')}E${String(p.episode).padStart(2, '0')}` : ''}
+        ${side.profile?.web_source || p.web_source ? ` · 平台 <span class="mw-tag">${esc(side.profile?.web_source || p.web_source)}</span>` : ''}
         ${bnd ? ` · 绑定 TMDB:${bnd.tmdb_id} (${esc(bnd.source)})` : ''}
       </div>
       <table class="mw-table">
@@ -3105,7 +3143,7 @@ function mountInline115Picker(container, onPick) {
             <strong>${esc(f.name)}</strong> →
             <span class="mw-tag primary">${esc(pr.score?.slot || '-')}</span>
             <strong style="color:var(--mw-success);">${Number(pr.score?.total || 0).toFixed(2)} 分</strong>
-            （${esc(pf.resolution || '-')} · ${esc(pf.hdr || '-')} · ${pf.bitrate_mbps || 0} Mbps · ${esc((pf.audio || []).join('/') || '-')}）
+            （${esc(pf.resolution || '-')} · ${esc(pf.hdr || '-')}${pf.web_source ? ` · ${esc(pf.web_source)}` : ''} · ${pf.bitrate_mbps || 0} Mbps · ${esc((pf.audio || []).join('/') || '-')}）
           </div>
         `;
       };

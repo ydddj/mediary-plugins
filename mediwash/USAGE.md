@@ -1,7 +1,7 @@
-# MediWash 归档入库与权重洗版使用说明 (v2.3.0)
+# MediWash 归档入库与权重洗版使用说明 (v3.2.0)
 
-适用宿主：**Mediary v3.3.2+**  
-定位：承接 `MediFind` / 115 转存的**全自动按评分放行/隔离 + 自动调用主程序二级分类与重命名入库 + 新源确认后自动删旧 + 存量库精洗 + PT 主动升级**。
+适用宿主：**Mediary v3.4.8+**（向下兼容 v3.4.6+）  
+定位：承接 `MediFind` / 115 转存的**全自动按评分放行/回收 + 自动调用主程序原生 `files/organize` 二级分类与重命名入库 + 新源确认后自动删旧 + 存量库精洗 + PT 主动升级**。
 
 ---
 
@@ -37,5 +37,20 @@
 1. **115 归档入库**：指定 115 待整理监控目录（整理入口默认自动跟随 Mediary 主程序转存目录，二级分类与重命名由主程序自动执行），支持开关「归档权重洗版」、选择低分落败直移 115 官方回收站（宿主未升级时自动回退待删目录），以及追踪新源入库后的删旧账本。
 2. **存量库精洗**：配置电影/剧集全局统一评分方案与二级分类独立覆盖（默认自动保护「蓝光原盘」区的 `.iso` 原盘），支持电影库与剧集库后台断点续扫及二次复核批量清理重复低码源。
 3. **PT 主动洗版**：设置电影（默认 75）/ 剧集（默认 65）毕业分、免费/排除 H&R 与站点范围，支持手动查库搜种与每 15 分钟自动巡检，采用 `defer_organize=true` 安全下载归档闭环。
-4. **评分与订阅**：Symedia 100 分 14 维编辑器、MediaTidy 27 槽编辑器、`MuRongYun8` 远程订阅与本地 `mr/mp/tmdb_override` 覆盖、双样本识别与评分试算器。
-5. **历史记录**：将「🎬 媒体处理历史」与「⚙️ 任务执行记录」彻底拆开，支持按通道、处理动作、关键词实时筛选，以及单条删除、勾选批量删除与按筛选一键清空。
+4. **评分与订阅**：Symedia 100 分 14 维编辑器、MediaTidy 27 槽编辑器、`MuRongYun8` 远程订阅与本地 `mr/mp/tmdb_override` 覆盖、双样本识别与评分试算器（实时展示片名提取与 `web_source` 流媒体平台识别结果）。
+5. **历史记录**：将「🎬 媒体处理历史」与「⚙️ 任务执行记录」彻底拆开，支持按通道、处理动作、关键词实时筛选，以及单条重整、一键补齐缺 `[tmdbid-...]` 记录、勾选批量删除与按筛选一键清空。
+
+---
+
+## 四、Mediary v3.4.8+ 命名模板 `{{webSource}}` 联动说明
+
+Mediary `v3.4.8+` 已在 **PT 下载整理** 与 **内置 115 原生整理（`POST /api/plugin/open115/files/organize`）** 双链路同步注入 `{{webSource}}` 与 `{{web_source}}` 变量（识别不到时为空字符串 `""`，普通 `WEB-DL` 不再误标为 `"WEB"`）：
+
+- **推荐模板判空写法**：
+  ```jinja2
+  {{title}}.{{year}}.{{season_episode}}.{{videoFormat}}{% if webSource %}.{{webSource}}{% endif %}.{{videoCodec}}{{fileExt}}
+  ```
+- **支持的 20 个标准流媒体缩写**（MediWash 候选/存量属性与试算器已完全对齐）：
+  - **国际（10）**：`NF` (Netflix)、`AMZN` (Amazon)、`DSNP` (Disney+)、`ATVP` (Apple TV+)、`HMAX` (HBO Max / Max)、`HULU`、`PMTP` (Paramount+)、`PCOK` (Peacock)、`ITUN` (iTunes)、`CR` (Crunchyroll)
+  - **国内/亚洲（10）**：`BILI` (Bilibili / BGlobal)、`IQ` (iQIYI 爱奇艺)、`YK` (Youku 优酷)、`TX` (Tencent / WeTV 腾讯视频)、`MGTV` (MangoTV 芒果TV)、`BAHA` (Bahamut 巴哈姆特)、`KKTV`、`MYTV` (myTV SUPER)、`VIU` (Viu / ViuTV)、`FRIDAY` (friDay影音)
+- **模板继承提示**：在 Mediary「内置 STRM 工具 → 转存整理」中保留 1 条默认转存任务（保持「停用」不抢跑）并在「系统设置 → 整理重命名」保存含 `[tmdbid-{{tmdbid}}]` 与 `{% if webSource %}` 的模板，MediWash 每次调用原生归档时会自动透传该默认任务名，一步生成带 `[tmdbid-...]` 与流媒体平台标识的规范目录和 `.strm`。
