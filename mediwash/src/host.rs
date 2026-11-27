@@ -426,18 +426,28 @@ impl HostClient {
             self.base_url.as_str().trim_end_matches('/'),
             path.trim_start_matches('/')
         );
-        let mut req = self
-            .agent
-            .request(method, &full)
-            .timeout(Duration::from_secs(timeout_secs.max(2)))
-            .set("Authorization", &format!("Bearer {}", self.token));
-        for (k, v) in query {
-            req = req.query(k, v);
-        }
-        let resp = match body {
-            Some(payload) => req.send_json(payload),
-            None => req.call(),
+        let build_req = || {
+            let mut req = self
+                .agent
+                .request(method, &full)
+                .timeout(Duration::from_secs(timeout_secs.max(2)))
+                .set("Authorization", &format!("Bearer {}", self.token));
+            for (k, v) in query {
+                req = req.query(k, v);
+            }
+            req
         };
+        let send_once = |payload_opt: Option<Value>| match payload_opt {
+            Some(payload) => build_req().send_json(payload),
+            None => build_req().call(),
+        };
+        let mut resp = send_once(body.clone());
+        if let Err(ureq::Error::Transport(ref t)) = resp {
+            if t.kind() == ureq::ErrorKind::ConnectionFailed {
+                std::thread::sleep(Duration::from_millis(350));
+                resp = send_once(body);
+            }
+        }
         match resp {
             Ok(r) => Ok(r.into_string().unwrap_or_default()),
             Err(ureq::Error::Status(code, r)) => {
@@ -1007,6 +1017,7 @@ impl HostClient {
     /// Calls `POST /api/plugin/open115/files/organize` (`open115:write`, Mediary 3.4.6+)
     /// to directly archive winning 115 files into the final library with secondary categories,
     /// rename templates, companion subtitles, `.strm` generation, and incremental library scan.
+    #[allow(dead_code)]
     pub fn open115_organize_files(
         &self,
         source_cid: &str,
@@ -1017,7 +1028,7 @@ impl HostClient {
         files: &[OrganizeFileItem],
     ) -> Result<Value> {
         self.open115_organize_files_with_timeout(
-            source_cid, target_cid, task_name, media_type, tmdb_id, files, 80,
+            source_cid, target_cid, task_name, false, media_type, tmdb_id, files, 90,
         )
     }
 
@@ -1027,6 +1038,7 @@ impl HostClient {
         source_cid: &str,
         target_cid: Option<&str>,
         task_name: Option<&str>,
+        prefer_task_target_dir: bool,
         media_type: &str,
         tmdb_id: &str,
         files: &[OrganizeFileItem],
@@ -1040,9 +1052,15 @@ impl HostClient {
             .map(str::trim)
             .filter(|s| !s.is_empty() && *s != "0" && s.bytes().all(|b| b.is_ascii_digit()));
         let mut clean_task_name = task_name.map(str::trim).filter(|s| !s.is_empty());
+        // When `task_name` (e.g. `"115-895"`) already owns the default library target directory (`媒体库`),
+        // omit `target_cid` first so Mediary preserves `task.target_dir = "媒体库"` (hitting `flowlink.db`
+        // `cloud_dirs` cache even in 3,400+ folder categories) instead of rewriting it to `__cid_<id>__/`.
+        let mut omit_target_cid =
+            prefer_task_target_dir && clean_task_name.is_some() && clean_target.is_some();
 
         let mut last_resp = json!({});
-        for chunk in files.chunks(100) {
+        // Cap each HTTP request to 15 files so 115's 0.8 QPS rate limiter (~2s/file) never exceeds HTTP read timeout!
+        for chunk in files.chunks(15) {
             let items_json: Vec<Value> = chunk
                 .iter()
                 .map(|f| {
@@ -1078,8 +1096,10 @@ impl HostClient {
                 "dry_run": false,
                 "files": items_json,
             });
-            if let Some(tcid) = clean_target {
-                body["target_cid"] = json!(tcid);
+            if !omit_target_cid {
+                if let Some(tcid) = clean_target {
+                    body["target_cid"] = json!(tcid);
+                }
             }
             if let Some(tname) = clean_task_name {
                 body["task_name"] = json!(tname);
@@ -1094,40 +1114,56 @@ impl HostClient {
             }
 
             let t_secs = timeout_secs.clamp(15, 120);
-            let resp: Value = match self.call_json(
-                "POST",
-                "/plugin/open115/files/organize",
-                &[],
-                Some(body.clone()),
-                t_secs,
-            ) {
-                Ok(v) => {
-                    if clean_task_name.is_some()
-                        && ensure_host_ok(&v, "115 原生二级分类归档入库")
-                            .err()
-                            .is_some_and(|e| format!("{e:#}").contains("没有找到指定转存任务"))
-                    {
-                        clean_task_name = None;
-                        if let Some(obj) = body.as_object_mut() {
-                            obj.remove("task_name");
-                        }
-                        self.call_json("POST", "/plugin/open115/files/organize", &[], Some(body), t_secs)?
-                    } else {
-                        v
-                    }
-                }
-                Err(err)
-                    if clean_task_name.is_some()
-                        && format!("{err:#}").contains("没有找到指定转存任务") =>
+            let mut cur_res: Result<Value> =
+                self.call_json("POST", "/plugin/open115/files/organize", &[], Some(body.clone()), t_secs);
+
+            for _ in 0..2 {
+                let err_str = match &cur_res {
+                    Ok(v) => match ensure_host_ok(v, "115 原生二级分类归档入库") {
+                        Ok(()) => break,
+                        Err(e) => format!("{e:#}"),
+                    },
+                    Err(e) => format!("{e:#}"),
+                };
+                if omit_target_cid
+                    && clean_target.is_some()
+                    && (err_str.contains("未配置默认归档目标目录") || err_str.contains("target_cid"))
                 {
+                    omit_target_cid = false;
+                    if let Some(tcid) = clean_target {
+                        body["target_cid"] = json!(tcid);
+                    }
+                    cur_res = self.call_json(
+                        "POST",
+                        "/plugin/open115/files/organize",
+                        &[],
+                        Some(body.clone()),
+                        t_secs,
+                    );
+                    continue;
+                }
+                if clean_task_name.is_some() && err_str.contains("没有找到指定转存任务") {
                     clean_task_name = None;
+                    omit_target_cid = false;
                     if let Some(obj) = body.as_object_mut() {
                         obj.remove("task_name");
+                        if let Some(tcid) = clean_target {
+                            obj.insert("target_cid".to_string(), json!(tcid));
+                        }
                     }
-                    self.call_json("POST", "/plugin/open115/files/organize", &[], Some(body), t_secs)?
+                    cur_res = self.call_json(
+                        "POST",
+                        "/plugin/open115/files/organize",
+                        &[],
+                        Some(body.clone()),
+                        t_secs,
+                    );
+                    continue;
                 }
-                Err(err) => return Err(err),
-            };
+                break;
+            }
+
+            let resp = cur_res?;
             ensure_host_ok(&resp, "115 原生二级分类归档入库")?;
             last_resp = resp;
         }
@@ -1695,6 +1731,75 @@ mod tests {
             Some("https://image.tmdb.org/t/p/w500/ps456.jpg")
         );
         assert_eq!(tmdb_card_image_https("/api/local/poster", ""), None);
+
+        let skipped_resp = json!({
+            "ok": false,
+            "data": {
+                "moved": 0,
+                "skipped": 1,
+                "failed": 0,
+                "skipped_items": [
+                    { "name": "庶女.mp4", "skip_reason": "115 request failed: 该目录名称已存在。" }
+                ]
+            }
+        });
+        let err = ensure_host_ok(&skipped_resp, "115 原生二级分类归档入库").unwrap_err();
+        assert!(format!("{err:#}").contains("该目录名称已存在"));
+    }
+}
+
+fn find_nested_error(v: &Value, depth: usize) -> Option<String> {
+    if depth > 4 {
+        return None;
+    }
+    match v {
+        Value::Object(map) => {
+            for k in [
+                "error",
+                "error_message",
+                "skip_reason",
+                "reason",
+                "message",
+                "detail",
+                "err",
+            ] {
+                if let Some(s) = map.get(k).and_then(Value::as_str).map(str::trim) {
+                    if !s.is_empty() && !matches!(s, "ok" | "organized" | "success" | "done") {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+            for k in [
+                "data",
+                "failed_items",
+                "skipped_items",
+                "errors",
+                "failed",
+                "skipped",
+                "items",
+                "results",
+                "logs",
+            ] {
+                if let Some(child) = map.get(k) {
+                    if let Some(found) = find_nested_error(child, depth + 1) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                if let Some(s) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    return Some(s.to_string());
+                }
+                if let Some(found) = find_nested_error(item, depth + 1) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 
@@ -1706,38 +1811,24 @@ pub fn ensure_host_ok(v: &Value, context_label: &str) -> Result<()> {
             .as_i64()
             .is_none_or(|n| n == 0 || (n == 4100024 && v["already_received"] == true));
     if !ok {
-        let mut detail_msg = v["error"]
-            .as_str()
-            .or_else(|| v["message"].as_str())
-            .or_else(|| v["reason"].as_str())
-            .or_else(|| v["detail"].as_str())
-            .filter(|s| !s.trim().is_empty())
-            .map(str::to_string);
-        if detail_msg.is_none() {
-            for arr_key in ["failed_items", "errors", "items", "results"] {
-                if let Some(arr) = v[arr_key].as_array() {
-                    for it in arr {
-                        if let Some(em) = it["error"]
-                            .as_str()
-                            .or_else(|| it["reason"].as_str())
-                            .or_else(|| it["message"].as_str())
-                            .or_else(|| it.as_str())
-                            .filter(|s| !s.trim().is_empty())
-                        {
-                            detail_msg = Some(em.to_string());
-                            break;
-                        }
-                    }
-                }
-                if detail_msg.is_some() {
-                    break;
-                }
-            }
-        }
+        let detail_msg = find_nested_error(v, 0);
         let msg = detail_msg.unwrap_or_else(|| {
+            let scope = v.get("data").filter(|d| d.is_object()).unwrap_or(v);
+            let moved = scope["moved"].as_u64();
+            let skipped = scope["skipped"].as_u64();
+            let failed = scope["failed"].as_u64();
+            if moved == Some(0) && (skipped.unwrap_or(0) > 0 || failed.unwrap_or(0) > 0) {
+                return format!(
+                    "宿主整理跳过或失败（moved=0, skipped={}, failed={}，常见于目标目录同名冲突或已在库）",
+                    skipped.unwrap_or(0),
+                    failed.unwrap_or(0)
+                );
+            }
             let s = v.to_string();
-            if s.len() <= 240 && s != "{}" {
-                format!("宿主返回未成功状态 ({s})")
+            if s != "{}" {
+                let preview: String = s.chars().take(300).collect();
+                let tail = if s.chars().count() > 300 { "..." } else { "" };
+                format!("宿主返回未成功状态 ({preview}{tail})")
             } else {
                 "宿主回执未确认成功".to_string()
             }

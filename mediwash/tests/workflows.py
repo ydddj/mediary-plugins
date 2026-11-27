@@ -258,7 +258,21 @@ class MockMediary(BaseHTTPRequestHandler):
         if path == "/api/search/tmdb":
             return self.reply({"items": [{"id": 88801, "title": "神秘新片", "media_type": "movie", "release_date": "2026-05-01"}]})
         if path == "/api/search/tmdb/details":
-            return self.reply({"data": {"id": int(q.get("tmdb_id", ["0"])[0]), "title": "神秘新片", "release_date": "2026-05-01", "backdrop_path": "/mock_backdrop.jpg"}})
+            tid = int(q.get("tmdb_id", ["0"])[0])
+            if tid == 122079:
+                return self.reply({
+                    "data": {
+                        "id": 122079,
+                        "name": "铠甲勇士刑天",
+                        "first_air_date": "2011-01-17",
+                        "seasons": [
+                            {"season_number": 0, "episode_count": 4},
+                            {"season_number": 1, "episode_count": 30},
+                            {"season_number": 2, "episode_count": 30},
+                        ],
+                    }
+                })
+            return self.reply({"data": {"id": tid, "title": "神秘新片", "release_date": "2026-05-01", "backdrop_path": "/mock_backdrop.jpg"}})
 
         if path == "/api/plugin/open115/files":
             cid = q.get("cid", ["0"])[0]
@@ -411,13 +425,17 @@ class MockMediary(BaseHTTPRequestHandler):
             src_cid = body.get("source_cid", "")
             if not src_cid or src_cid == "0" or not str(src_cid).isdigit():
                 return self.reply({"ok": False, "error": "source_cid 必须为有效的非根目录纯数字 CID"}, 400)
-            target_cid = body.get("target_cid", "")
-            if not target_cid or target_cid == "0" or not str(target_cid).isdigit():
-                return self.reply({"ok": False, "error": "未配置默认归档目标目录，请提供 target_cid"}, 400)
             assert body.get("task_name") == "115-895", f"Expected disabled default task_name 115-895, got {body}"
+            # Real Mediary 3.4.6 inherits `target_dir="媒体库"` (`target_cid="900"`) from `task_name="115-895"`
+            # ONLY when `target_cid` is omitted; passing `target_cid` rewrites root to `__cid_900__/` and breaks 3400+ folder `cloud_dirs` lookup!
+            assert "target_cid" not in body, f"Must omit target_cid when task_name=115-895 owns default target_dir! Got: {body}"
             if "tmdb_id" in body:
                 assert isinstance(body["tmdb_id"], int) and body["tmdb_id"] > 0, body
                 assert body.get("media_type") in ("movie", "tv"), body
+                if body["tmdb_id"] == 122079:
+                    for f in body.get("files", []):
+                        if f.get("season") == 1 and f.get("episode", 0) > 30:
+                            return self.reply({"ok": False, "error": f"{f['name']} 的 S01E{f['episode']} 不在指定 TMDB 剧集季集范围内"}, 400)
             assert body.get("conflict_strategy") == "overwrite", body
             org_ids = {f["file_id"] for f in body.get("files", [])}
             assert org_ids, body
@@ -835,6 +853,33 @@ def run_suite(binary: str, base_url: str, data_dir: str):
     assert healed_hist["items"][0]["slot"].startswith("电影/华语电影/2020-2030 · "), healed_hist["items"][0]
     warn_hist = invoke("ui_history_list", {"record_type": "media", "keyword": "多喜新片", "status": "warning"})
     assert warn_hist["filtered_total"] == 0, warn_hist
+
+    # 15. Cross-season absolute episode remapping (`铠甲勇士刑天 第31话` -> S02E01) + Historical false-timeout warning auto-heal!
+    STATE["cloud_dirs"]["160"] = [
+        {
+            "file_id": "181",
+            "parent_id": "160",
+            "name": "铠甲勇士刑天 [tmdbid-122079] 第31话 「卷土重来」 (DVD 640x480 x264 AAC).mp4",
+            "size": 320_000_000,
+            "pick_code": "pc_armor31",
+            "sha1": "4444444444444444444444444444444444444444",
+            "is_dir": False,
+        }
+    ]
+    with sqlite3.connect(db_file) as con:
+        con.execute(
+            """INSERT INTO activity_logs (kind, title, sub_title, source_path, target_path, slot, action, status, detail, created_at, record_type)
+               VALUES ('115归档', '两京十五日 S01E05', '两京十五日 (2026) - S01E05 - 2160p.WEB-DL.H265.mkv',
+                       '115://待洗版/两京十五日.mkv', '归档未完成（保留原目录）', '主程序自动分类 · 4K-SDR',
+                       'organized', 'warning', '主程序原生归档失败：timed out reading response', 1795752216, 'media')"""
+        )
+    armor_tick = invoke("tick", {"manual": True}, dry_run=False)
+    assert any(f["file_id"] == "181" for f in STATE["cloud_dirs"]["200"]), armor_tick
+    last_org = STATE["organize_calls"][-1]
+    assert last_org["tmdb_id"] == 122079 and last_org["files"][0]["season"] == 2 and last_org["files"][0]["episode"] == 1, last_org
+
+    after_heal = invoke("ui_history_list", {"record_type": "media", "keyword": "两京十五日", "status": "warning"})
+    assert after_heal["filtered_total"] == 0, f"Historical false-timeout warning must auto-heal when episode is in library! Got: {after_heal}"
 
     dash_json = json.loads((Path(data_dir) / "dashboard.json").read_text())
     assert all(it["record_type"] == "media" for it in dash_json["items"]), "dashboard.json must only expose clean media history!"
