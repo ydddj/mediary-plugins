@@ -95,7 +95,7 @@ async function runAction(name, payload = {}, okMsg = '') {
 function updateChrome() {
   const d = state.data;
   if (!d) return;
-  el('mn-version-label').textContent = `v${d.version || '2.1.3'} · 原生 302 钩子`;
+  el('mn-version-label').textContent = `v${d.version || '2.1.4'} · 原生 302 钩子`;
   el('badge-sessions').textContent = (d.active_sessions || []).length;
   el('badge-accounts').textContent = (d.source_accounts || []).length + (d.lb_accounts || []).length;
   el('badge-users').textContent = (d.users || []).length;
@@ -1350,7 +1350,11 @@ document.querySelectorAll('#mn-nav .mn-nav-btn').forEach((btn) => {
   btn.onclick = () => {
     document.querySelectorAll('#mn-nav .mn-nav-btn').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
-    btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    const nav = el('mn-nav');
+    if (nav && nav.scrollWidth > nav.clientWidth) {
+      const targetLeft = Math.max(0, btn.offsetLeft - (nav.clientWidth - btn.offsetWidth) / 2);
+      nav.scrollTo({ left: targetLeft, behavior: 'smooth' });
+    }
     state.tab = btn.dataset.tab;
     render();
     const mainEl = document.querySelector('.mn-main');

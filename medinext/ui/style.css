@@ -427,77 +427,141 @@ code {
   word-break: break-all;
 }
 
-/* ==================== Tablet & Mobile Responsive (<= 760px) ==================== */
-@media (max-width: 760px) {
+/* ==================== Tablet & Mobile Responsive (<= 860px) ==================== */
+@media (max-width: 860px) {
+  html, body {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
   .mn-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
     height: 100dvh;
+    overflow: hidden;
   }
 
   .mn-sidebar {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
     border-right: none;
     border-bottom: 1px solid var(--mn-border);
-    padding: 10px 12px 8px;
-    gap: 8px;
-    overflow: visible;
+    padding: max(8px, env(safe-area-inset-top, 0px)) 12px 8px;
+    gap: 7px;
+    overflow: hidden;
   }
 
   .mn-brand {
-    padding: 0 0 6px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding: 0 0 2px;
     border-bottom: none;
   }
-  .mn-brand-badge { width: 30px; height: 30px; font-size: 12px; border-radius: 8px; }
-  .mn-brand-title { font-size: 14.5px; }
+  .mn-brand > div:last-child {
+    min-width: 0;
+    overflow: hidden;
+  }
+  .mn-brand-badge { width: 28px; height: 28px; font-size: 11.5px; border-radius: 8px; }
+  .mn-brand-title { font-size: 14px; }
+  .mn-brand-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-  /* Show compact horizontal status strip on mobile instead of hiding vital status! */
+  /* Compact self-contained horizontal status strip (never widens page) */
   .mn-sidebar-foot {
     display: flex;
     flex-direction: row;
+    flex-wrap: nowrap;
     align-items: center;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
     gap: 6px;
     padding-top: 0;
     border-top: none;
     overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
   .mn-sidebar-foot::-webkit-scrollbar { display: none; }
   .mn-sidebar-foot .mn-status-pill {
-    flex-shrink: 0;
+    flex: 0 0 auto;
     font-size: 11px;
     padding: 3px 8px;
     border-radius: 99px;
   }
   .mn-sidebar-foot .mn-subnote { display: none; }
 
-  /* Horizontal pill navigation bar with snap scrolling */
+  /* Self-contained horizontal pill navigation bar (isolated pan-x scroll) */
   .mn-nav {
+    display: flex;
     flex-direction: row;
+    flex-wrap: nowrap;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     flex: 0 0 auto;
     gap: 6px;
     overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    scroll-snap-type: x proximity;
     padding-bottom: 2px;
   }
   .mn-nav::-webkit-scrollbar { display: none; }
   .mn-nav-btn {
     white-space: nowrap;
     width: auto;
-    flex-shrink: 0;
-    min-height: 36px;
-    padding: 7px 11px;
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 6px 11px;
     border-radius: 99px;
     background: var(--mn-surface-2);
     border-color: var(--mn-border);
     font-size: 12.5px;
-    scroll-snap-align: center;
+  }
+  .mn-nav-btn.active {
+    background: var(--mn-primary);
+    border-color: var(--mn-primary);
+    color: #fff;
+  }
+  .mn-nav-btn.active .mn-nav-badge {
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
   }
 
   .mn-main {
-    padding: 12px 12px calc(28px + env(safe-area-inset-bottom, 0px));
+    flex: 1 1 0%;
+    min-height: 0;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px 12px calc(32px + env(safe-area-inset-bottom, 0px));
+  }
+
+  #mn-view {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .mn-toast {

@@ -1,5 +1,5 @@
 PLUGIN_ID := medinext
-VERSION := 2.1.3
+VERSION := 2.1.4
 RUST_IMAGE := rust:1.86-bookworm
 CARGO_TARGET_DIR ?= /tmp/medinext-target
 
