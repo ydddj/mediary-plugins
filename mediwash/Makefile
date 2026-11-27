@@ -1,9 +1,9 @@
 PLUGIN_ID := mediwash
-VERSION := 3.1.5
+VERSION := 3.1.8
 RUST_IMAGE := rust:1.86-bookworm
 CARGO_TARGET_DIR ?= /tmp/mediwash-target
 
-.PHONY: build test package clean
+.PHONY: build test package publish clean
 
 build:
 	@if command -v cargo >/dev/null 2>&1; then \
@@ -30,6 +30,13 @@ package: build
 	tar -czf dist/$(PLUGIN_ID)-$(VERSION)-linux-amd64.tar.gz plugin plugin.json README.md USAGE.md ui
 	chmod 644 dist/$(PLUGIN_ID)-$(VERSION)-linux-amd64.tar.gz
 	cd dist && sha256sum $(PLUGIN_ID)-$(VERSION)-linux-amd64.tar.gz > SHA256SUMS && chmod 644 SHA256SUMS
+
+publish: package
+	@if [ -f scripts/publish_github.py ]; then \
+		python3 scripts/publish_github.py --plugins $(PLUGIN_ID); \
+	elif [ -f ../scripts/publish_github.py ]; then \
+		python3 ../scripts/publish_github.py --plugins $(PLUGIN_ID); \
+	fi
 
 clean:
 	rm -rf plugin dist target

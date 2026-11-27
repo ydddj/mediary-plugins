@@ -120,10 +120,158 @@ impl Db {
 
         let _ = fs::remove_dir_all(data_dir.join("posters"));
 
-        Ok(Self {
+        let db = Self {
             data_dir: data_dir.to_path_buf(),
             conn,
-        })
+        };
+        db.repair_cached_metadata_v321();
+        Ok(db)
+    }
+
+    fn repair_cached_metadata_v321(&self) {
+        let done: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT val FROM kv WHERE key = 'schema_repair_v321'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
+        if done.as_deref() == Some("1") {
+            return;
+        }
+
+        // 1. Re-clean cached `tg_items` titles, TMDB IDs (with space), and episode ranges (`-E60`/`-E80`)
+        if let Ok(mut stmt) = self
+            .conn
+            .prepare("SELECT seq, payload FROM tg_items")
+        {
+            let rows: Vec<(i64, String)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default();
+            for (seq, payload) in rows {
+                let Ok(mut item) = serde_json::from_str::<ResourceItem>(&payload) else {
+                    continue;
+                };
+                let mut changed = false;
+                if !item.raw_title.trim().is_empty() {
+                    let pure = crate::rules::extract_pure_title(&item.raw_title);
+                    if !pure.is_empty()
+                        && (crate::rules::is_suspect_banner_title(&item.title)
+                            || item.title != crate::rules::clean_display_title(&item.title)
+                            || item.title.starts_with('[')
+                            || item.title.starts_with('【'))
+                    {
+                        item.title = pure;
+                        changed = true;
+                    }
+                    if item.tmdb_id.trim().is_empty() {
+                        let tid = crate::rules::extract_tmdb_id(&item.raw_title);
+                        if !tid.is_empty() {
+                            item.tmdb_id = tid;
+                            changed = true;
+                        }
+                    }
+                    let explicit_movie = item.raw_title.contains("类型：电影")
+                        || item.raw_title.contains("类型: 电影")
+                        || item.raw_title.contains("🎬 电影")
+                        || item.raw_title.contains("[电影]")
+                        || item.raw_title.contains("#电影");
+                    let new_eps = if explicit_movie {
+                        String::new()
+                    } else {
+                        crate::rules::parse_shallow_episodes(&item.raw_title, "tv", None)
+                    };
+                    if item.pan_type != "ed2k" && item.parsed_episodes != new_eps {
+                        item.parsed_episodes = new_eps;
+                        changed = true;
+                    }
+                    if explicit_movie && item.parsed_episodes.is_empty() && item.media_type != "movie" {
+                        item.media_type = "movie".to_string();
+                        changed = true;
+                    }
+                }
+                if changed {
+                    if let Ok(new_payload) = serde_json::to_string(&item) {
+                        let blob =
+                            format!("{} {} {}", item.title, item.raw_title, item.remark).to_lowercase();
+                        let _ = self.conn.execute(
+                            "UPDATE tg_items SET tmdb_id = ?1, search_blob = ?2, payload = ?3 WHERE seq = ?4",
+                            params![item.tmdb_id, blob, new_payload, seq],
+                        );
+                    }
+                }
+            }
+        }
+
+        // 2. Repair `probe_cache` in-place (preserving unlocked HDHive `share_code` & `receive_code`!)
+        if let Ok(mut stmt) = self
+            .conn
+            .prepare("SELECT clean_slug, payload FROM probe_cache")
+        {
+            let rows: Vec<(String, String)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default();
+            for (ck, payload) in rows {
+                let Ok(mut entry) = serde_json::from_str::<ProbeCacheEntry>(&payload) else {
+                    continue;
+                };
+                let mut changed = false;
+                let mut all_pairs = Vec::new();
+                for f in &mut entry.files {
+                    if f.is_video || f.is_subtitle {
+                        let def_s = crate::rules::infer_season_num(&f.path, 1);
+                        let mut pairs = crate::rules::extract_episode_pairs(&f.name, def_s);
+                        if pairs.is_empty() {
+                            pairs = crate::rules::extract_episode_pairs(&f.path, def_s);
+                        }
+                        let lbl = crate::rules::format_episode_pairs(&pairs);
+                        if f.episode_label != lbl {
+                            f.episode_label = lbl;
+                            changed = true;
+                        }
+                        if f.is_video {
+                            all_pairs.extend(pairs);
+                        }
+                    }
+                }
+                let new_eps = crate::rules::format_episode_pairs(&all_pairs);
+                if entry.parsed_episodes != new_eps {
+                    entry.parsed_episodes = new_eps;
+                    changed = true;
+                }
+                if crate::rules::is_suspect_banner_title(&entry.title) {
+                    if let Some(dir) = entry.files.iter().find(|n| n.is_dir && !crate::rules::is_suspect_banner_title(&n.name)) {
+                        entry.title = crate::rules::extract_pure_title(&dir.name);
+                        changed = true;
+                    } else if let Some(vid) = entry.files.iter().find(|n| n.is_video) {
+                        let vt = crate::rules::extract_pure_title(&vid.name);
+                        if !vt.is_empty() {
+                            entry.title = vt;
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    if let Ok(new_payload) = serde_json::to_string(&entry) {
+                        let _ = self.conn.execute(
+                            "UPDATE probe_cache SET payload = ?1 WHERE clean_slug = ?2",
+                            params![new_payload, ck],
+                        );
+                    }
+                }
+            }
+        }
+
+        let _ = self.conn.execute("DELETE FROM provider_cache", []);
+        let _ = self.conn.execute(
+            "INSERT OR REPLACE INTO kv (key, val) VALUES ('schema_repair_v321', '1')",
+            [],
+        );
     }
 
     pub fn load_config(&self) -> Result<AppConfig> {

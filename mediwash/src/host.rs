@@ -562,6 +562,7 @@ impl HostClient {
     pub fn sync_unified_rules(&self, db: &mut Connection) -> Result<()> {
         let mut movie_fmt = String::new();
         let mut tv_fmt = String::new();
+        let mut flowlink_task_name = String::new();
         if let Ok(settings) = self.call_json::<Value>("GET", "/settings", &[], None, 10) {
             let lp = settings.get("library_paths").unwrap_or(&settings);
             movie_fmt = lp["movie_rename_format"]
@@ -572,6 +573,14 @@ impl HostClient {
                 .as_str()
                 .unwrap_or_default()
                 .to_string();
+            if let Some(tn) = settings
+                .get("flowlink")
+                .and_then(|fl| fl["task_name"].as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                flowlink_task_name = tn.to_string();
+            }
         }
 
         let mut open115_target_folder = String::new();
@@ -582,6 +591,8 @@ impl HostClient {
         let mut transfer_source_cid = String::new();
         let mut transfer_target_folder = String::new();
         let mut transfer_target_cid = String::new();
+        let mut transfer_task_name = String::new();
+        let mut has_flowlink_transfer_template = true;
         let mut protected_set = std::collections::BTreeSet::new();
 
         let pick_str = |v: &Value, keys: &[&str]| -> String {
@@ -628,6 +639,10 @@ impl HostClient {
                 &ocfg,
                 &["transfer_target_cid", "transfer_movie_cid", "transfer_tv_cid"],
             );
+            transfer_task_name = pick_str(
+                &ocfg,
+                &["transfer_task_name", "default_transfer_task", "task_name"],
+            );
             for k in [
                 "target_cid",
                 "offline_folder_cid",
@@ -639,27 +654,49 @@ impl HostClient {
                 mark_protected(&pick_str(&ocfg, &[k]));
             }
             if let Some(tasks) = ocfg["transfer_tasks"].as_array() {
+                has_flowlink_transfer_template = tasks.iter().any(|t| {
+                    !pick_str(t, &["movie_template", "tv_template"]).is_empty()
+                }) || !tasks.is_empty();
                 for t in tasks {
                     for k in ["source_cid", "target_cid", "movie_cid", "tv_cid"] {
                         mark_protected(&pick_str(t, &[k]));
                     }
                 }
-                if transfer_target_cid.is_empty() {
+                if tasks.is_empty() {
+                    transfer_task_name.clear();
+                    flowlink_task_name.clear();
+                } else {
                     let chosen = tasks
                         .iter()
                         .find(|t| t["is_default"].as_bool() == Some(true))
                         .or_else(|| tasks.first());
                     if let Some(t) = chosen {
+                        let chosen_name = pick_str(t, &["name", "task_name"]);
+                        if !chosen_name.is_empty() {
+                            transfer_task_name = chosen_name;
+                        }
                         if transfer_source_folder.is_empty() {
                             transfer_source_folder = pick_str(t, &["source_path", "source_folder"]);
                         }
                         if transfer_source_cid.is_empty() {
                             transfer_source_cid = pick_str(t, &["source_cid"]);
                         }
-                        transfer_target_folder = pick_str(t, &["target_dir", "movie_dir", "tv_dir"]);
-                        transfer_target_cid = pick_str(t, &["target_cid", "movie_cid", "tv_cid"]);
+                        if transfer_target_folder.is_empty() {
+                            transfer_target_folder =
+                                pick_str(t, &["target_dir", "movie_dir", "tv_dir"]);
+                        }
+                        if transfer_target_cid.is_empty() {
+                            transfer_target_cid =
+                                pick_str(t, &["target_cid", "movie_cid", "tv_cid"]);
+                        }
                     }
                 }
+            }
+            if transfer_task_name.is_empty()
+                && has_flowlink_transfer_template
+                && !flowlink_task_name.is_empty()
+            {
+                transfer_task_name = flowlink_task_name.clone();
             }
             if let Some(utasks) = ocfg["upload_tasks"].as_array() {
                 for ut in utasks {
@@ -799,6 +836,14 @@ impl HostClient {
             if !transfer_target_cid.is_empty() && transfer_target_cid != "0" {
                 cfg.host_sync.transfer_target_cid = transfer_target_cid;
             }
+            if !transfer_task_name.is_empty() {
+                cfg.host_sync.transfer_task_name = transfer_task_name;
+            } else if !has_flowlink_transfer_template {
+                cfg.host_sync.transfer_task_name.clear();
+            } else if !flowlink_task_name.is_empty() {
+                cfg.host_sync.transfer_task_name = flowlink_task_name;
+            }
+            cfg.host_sync.has_flowlink_transfer_template = has_flowlink_transfer_template;
             if !protected_set.is_empty() {
                 cfg.host_sync.protected_cids = protected_set.into_iter().collect();
             }
@@ -966,17 +1011,22 @@ impl HostClient {
         &self,
         source_cid: &str,
         target_cid: Option<&str>,
+        task_name: Option<&str>,
         media_type: &str,
         tmdb_id: &str,
         files: &[OrganizeFileItem],
     ) -> Result<Value> {
-        self.open115_organize_files_with_timeout(source_cid, target_cid, media_type, tmdb_id, files, 80)
+        self.open115_organize_files_with_timeout(
+            source_cid, target_cid, task_name, media_type, tmdb_id, files, 80,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open115_organize_files_with_timeout(
         &self,
         source_cid: &str,
         target_cid: Option<&str>,
+        task_name: Option<&str>,
         media_type: &str,
         tmdb_id: &str,
         files: &[OrganizeFileItem],
@@ -989,6 +1039,7 @@ impl HostClient {
         let clean_target = target_cid
             .map(str::trim)
             .filter(|s| !s.is_empty() && *s != "0" && s.bytes().all(|b| b.is_ascii_digit()));
+        let mut clean_task_name = task_name.map(str::trim).filter(|s| !s.is_empty());
 
         let mut last_resp = json!({});
         for chunk in files.chunks(100) {
@@ -1030,6 +1081,9 @@ impl HostClient {
             if let Some(tcid) = clean_target {
                 body["target_cid"] = json!(tcid);
             }
+            if let Some(tname) = clean_task_name {
+                body["task_name"] = json!(tname);
+            }
             if matches!(media_type, "movie" | "tv") {
                 body["media_type"] = json!(media_type);
                 if let Ok(tid) = tmdb_id.trim().parse::<u64>() {
@@ -1039,13 +1093,41 @@ impl HostClient {
                 }
             }
 
-            let resp: Value = self.call_json(
+            let t_secs = timeout_secs.clamp(15, 120);
+            let resp: Value = match self.call_json(
                 "POST",
                 "/plugin/open115/files/organize",
                 &[],
-                Some(body),
-                timeout_secs.clamp(15, 120),
-            )?;
+                Some(body.clone()),
+                t_secs,
+            ) {
+                Ok(v) => {
+                    if clean_task_name.is_some()
+                        && ensure_host_ok(&v, "115 原生二级分类归档入库")
+                            .err()
+                            .is_some_and(|e| format!("{e:#}").contains("没有找到指定转存任务"))
+                    {
+                        clean_task_name = None;
+                        if let Some(obj) = body.as_object_mut() {
+                            obj.remove("task_name");
+                        }
+                        self.call_json("POST", "/plugin/open115/files/organize", &[], Some(body), t_secs)?
+                    } else {
+                        v
+                    }
+                }
+                Err(err)
+                    if clean_task_name.is_some()
+                        && format!("{err:#}").contains("没有找到指定转存任务") =>
+                {
+                    clean_task_name = None;
+                    if let Some(obj) = body.as_object_mut() {
+                        obj.remove("task_name");
+                    }
+                    self.call_json("POST", "/plugin/open115/files/organize", &[], Some(body), t_secs)?
+                }
+                Err(err) => return Err(err),
+            };
             ensure_host_ok(&resp, "115 原生二级分类归档入库")?;
             last_resp = resp;
         }
@@ -1624,10 +1706,42 @@ pub fn ensure_host_ok(v: &Value, context_label: &str) -> Result<()> {
             .as_i64()
             .is_none_or(|n| n == 0 || (n == 4100024 && v["already_received"] == true));
     if !ok {
-        let msg = v["error"]
+        let mut detail_msg = v["error"]
             .as_str()
             .or_else(|| v["message"].as_str())
-            .unwrap_or("宿主回执未确认成功");
+            .or_else(|| v["reason"].as_str())
+            .or_else(|| v["detail"].as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string);
+        if detail_msg.is_none() {
+            for arr_key in ["failed_items", "errors", "items", "results"] {
+                if let Some(arr) = v[arr_key].as_array() {
+                    for it in arr {
+                        if let Some(em) = it["error"]
+                            .as_str()
+                            .or_else(|| it["reason"].as_str())
+                            .or_else(|| it["message"].as_str())
+                            .or_else(|| it.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                        {
+                            detail_msg = Some(em.to_string());
+                            break;
+                        }
+                    }
+                }
+                if detail_msg.is_some() {
+                    break;
+                }
+            }
+        }
+        let msg = detail_msg.unwrap_or_else(|| {
+            let s = v.to_string();
+            if s.len() <= 240 && s != "{}" {
+                format!("宿主返回未成功状态 ({s})")
+            } else {
+                "宿主回执未确认成功".to_string()
+            }
+        });
         return Err(anyhow!("{context_label}失败：{msg}"));
     }
     Ok(())

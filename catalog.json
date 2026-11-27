@@ -4,7 +4,7 @@
     {
       "id": "medifind",
       "name": "MediFind 网盘聚合引擎",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "description": "面向 Mediary 3.4.6+ 的 Rust 上游找片与转存进货引擎：原生接入宿主参数化 TMDB 发现与同源海报代理、分季已入库集号比对、确定性库诊断、115 分享与 ED2K/Magnet 指定目录离线进货，支持影巢中转/HDHive、Telegram MTProto 频道订阅、AYClub、RSS 与 NextFind 同款权重打分",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/medifind",
@@ -26,16 +26,16 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/medifind-3.2.0-linux-amd64.tar.gz",
-          "sha256": "c8bb61af247e93086bba6086a44f4a718ba01fe894030dc1469966b6c20af8f0",
-          "size": 6004906
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/medifind-3.2.1-linux-amd64.tar.gz",
+          "sha256": "cdb13bfc8a22f50889f020ec244c0c18c6ce6d74baedd557fd466412e46eed75",
+          "size": 6024312
         }
       }
     },
     {
       "id": "mediwash",
       "name": "MediWash 归档入库与权重洗版",
-      "version": "3.1.5",
+      "version": "3.1.8",
       "description": "面向 Mediary 3.4.6+ 的 115 单目录全自动权重洗版与原生归档入库插件：胜出文件调用宿主原生 files/organize 一步完成二级分类、模板重命名、字幕跟随与 STRM 入库，淘汰/重复文件调用 files/delete 直移 115 官方回收站；支持新源入库自动删旧、存量库精洗与 PT 升级。",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/mediwash",
@@ -63,9 +63,9 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/mediwash-3.1.5-linux-amd64.tar.gz",
-          "sha256": "ca363824d6585c9bbeed32da8210616628532eac2c9b54353695ad4f603772b0",
-          "size": 4203044
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/mediwash-3.1.8-linux-amd64.tar.gz",
+          "sha256": "fd5906fe15dfe4d0d482ad81d2e699da748f7712d1411f754a31d96f6860c91f",
+          "size": 4278648
         }
       }
     },

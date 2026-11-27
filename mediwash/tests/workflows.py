@@ -215,9 +215,10 @@ class MockMediary(BaseHTTPRequestHandler):
         if path == "/api/settings":
             return self.reply({
                 "library_paths": {
-                    "movie_rename_format": "{{title}} ({{year}})/{{title}}.{{videoFormat}}{{fileExt}}",
-                    "tv_rename_format": "{{title}}/Season {{season}}/{{title}}.{{season_episode}}{{fileExt}}",
+                    "movie_rename_format": "{{title}} ({{year}}) [tmdbid-{{tmdbid}}]/{{title}}.{{videoFormat}}{{fileExt}}",
+                    "tv_rename_format": "{{title}} [tmdbid-{{tmdbid}}]/Season {{season}}/{{title}}.{{season_episode}}{{fileExt}}",
                 },
+                "flowlink": {"task_name": "115-895"},
                 "flowlink_enabled": True,
             })
         if path == "/api/settings/category-file":
@@ -236,6 +237,19 @@ class MockMediary(BaseHTTPRequestHandler):
                 "transfer_source_cid": "205",
                 "transfer_target_folder": "媒体库",
                 "transfer_target_cid": "900",
+                "transfer_tasks": [
+                    {
+                        "name": "115-895",
+                        "is_default": True,
+                        "enabled": False,
+                        "source_path": "转存监控",
+                        "source_cid": "205",
+                        "target_dir": "媒体库",
+                        "target_cid": "900",
+                        "movie_template": "{{title}} ({{year}}) [tmdbid-{{tmdbid}}]/{{title}}{{fileExt}}",
+                        "tv_template": "{{title}} ({{year}}) [tmdbid-{{tmdbid}}]/Season {{season}}/{{title}}.{{season_episode}}{{fileExt}}",
+                    }
+                ],
             })
         if path == "/api/open115/web-cookie/status":
             return self.reply({"status": "connected"})
@@ -400,6 +414,7 @@ class MockMediary(BaseHTTPRequestHandler):
             target_cid = body.get("target_cid", "")
             if not target_cid or target_cid == "0" or not str(target_cid).isdigit():
                 return self.reply({"ok": False, "error": "未配置默认归档目标目录，请提供 target_cid"}, 400)
+            assert body.get("task_name") == "115-895", f"Expected disabled default task_name 115-895, got {body}"
             if "tmdb_id" in body:
                 assert isinstance(body["tmdb_id"], int) and body["tmdb_id"] > 0, body
                 assert body.get("media_type") in ("movie", "tv"), body

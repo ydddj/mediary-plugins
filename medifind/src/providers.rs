@@ -1348,14 +1348,41 @@ pub fn convert_tg_posts_to_resources(
                 ed2k_links.push(lk);
                 continue;
             }
-            let title = non_empty(&[&pure_title, &lk.file_name, &first_line(&p.text)]);
-            let ctx_text = format!("{} {}", p.text, lk.file_name);
+            let file_pure = rules::extract_pure_title(&lk.file_name);
+            let fl = first_line(&p.text);
+            let safe_first = if rules::is_suspect_banner_title(&fl) {
+                ""
+            } else {
+                fl.as_str()
+            };
+            let title = non_empty(&[
+                &pure_title,
+                &file_pure,
+                &lk.file_name,
+                safe_first,
+                "未命名资源",
+            ]);
+            let ctx_text = format!("{}\n{}", p.text, lk.file_name);
             let attrs = rules::parse_movie_attributes(&ctx_text);
-            let eps = rules::parse_shallow_episodes(&ctx_text, "tv", None);
+            let explicit_movie = p.text.contains("类型：电影")
+                || p.text.contains("类型: 电影")
+                || p.text.contains("🎬 电影")
+                || p.text.contains("[电影]")
+                || p.text.contains("#电影");
+            let eps = if explicit_movie {
+                String::new()
+            } else {
+                rules::parse_shallow_episodes(&ctx_text, "tv", None)
+            };
             let mtype = if !eps.is_empty()
-                || p.text.contains("剧集")
-                || p.text.contains('季')
-                || p.text.contains('集')
+                || (!explicit_movie
+                    && (p.text.contains("剧集")
+                        || p.text.contains("电视剧")
+                        || p.text.contains("番剧")
+                        || p.text.contains("季集")
+                        || p.text.contains('季')
+                        || p.text.contains("集全")
+                        || p.text.contains("更新至")))
             {
                 "tv"
             } else {

@@ -666,8 +666,7 @@ pub fn inspect_resource(
                     rc = f.receive_code.clone();
                 }
                 let is_vid = rules::is_video_file(&f.file_name);
-                let pairs =
-                    rules::extract_episode_pairs(&format!("{} {}", f.rel_path, f.file_name), 1);
+                let pairs = extract_file_node_episodes(&f.rel_path, &f.file_name);
                 if is_vid {
                     all_pairs.extend(pairs.iter().copied());
                     names.push(f.file_name.clone());
@@ -851,10 +850,7 @@ pub fn inspect_resource(
     for n in &all_nodes {
         if n.is_video {
             video_names.push(n.name.clone());
-            all_pairs.extend(rules::extract_episode_pairs(
-                &format!("{} {}", n.path, n.name),
-                1,
-            ));
+            all_pairs.extend(extract_file_node_episodes(&n.path, &n.name));
         }
     }
     let eps_str = rules::format_episode_pairs(&all_pairs);
@@ -1040,8 +1036,28 @@ pub fn transfer_resource(
         } else {
             mc.submit_link(slug)?
         };
-        let t = if req.title.is_empty() { "磁力任务" } else { &req.title };
-        let clean_t = rules::clean_display_title(t);
+        let magnet_dn = rules::extract_all_resource_links(slug)
+            .into_iter()
+            .find(|l| !l.file_name.trim().is_empty())
+            .map(|l| l.file_name)
+            .unwrap_or_default();
+        let raw_t = if !req.title.trim().is_empty() && !rules::is_suspect_banner_title(&req.title) {
+            req.title.as_str()
+        } else if !magnet_dn.is_empty() {
+            magnet_dn.as_str()
+        } else if !req.title.trim().is_empty() {
+            req.title.as_str()
+        } else {
+            "磁力任务"
+        };
+        let clean_t = rules::clean_display_title(raw_t);
+        let mut eff_req = req.clone();
+        if eff_req.tmdb_id.trim().is_empty() {
+            let tid = rules::extract_tmdb_id(raw_t);
+            if !tid.is_empty() {
+                eff_req.tmdb_id = tid;
+            }
+        }
         let target_short = if (!cfg.rules.prefer_flowlink || explicit_target_override)
             && !offline_cid.is_empty()
         {
@@ -1049,17 +1065,18 @@ pub fn transfer_resource(
         } else {
             "FlowLink 离线整理".to_string()
         };
-        mark_transferred(db, cfg, req, slug, &clean_t, "magnet", "", reason, &msg);
+        let mag_eps = rules::parse_shallow_episodes(raw_t, &eff_req.media_type, None);
+        mark_transferred(db, cfg, &eff_req, slug, &clean_t, "magnet", &mag_eps, reason, &msg);
         notify_transfer_templated(
             mc,
             settings,
             cfg,
             &TransferNotifyInput {
-                req,
-                raw_title: t,
-                resource_title: &clean_t,
+                req: &eff_req,
+                raw_title: raw_t,
+                resource_title: if !magnet_dn.is_empty() { &magnet_dn } else { &clean_t },
                 source_type: if req.source_type.is_empty() { "magnet" } else { &req.source_type },
-                season_episode: "",
+                season_episode: &mag_eps,
                 download_action: "离线下载",
                 size_str: "",
                 target_hint: &target_short,
@@ -1165,8 +1182,19 @@ pub fn transfer_resource(
             (sub_cnt, warns, msg)
         };
 
-        let t = if req.title.is_empty() { "ED2K 资源" } else { &req.title };
-        let clean_t = rules::clean_display_title(t);
+        let (best_ed2k_title, best_ed2k_tid) =
+            infer_share_identity(&req.title, &req.tmdb_id, &inspected);
+        let mut eff_req = req.clone();
+        if !best_ed2k_tid.is_empty() {
+            eff_req.tmdb_id = best_ed2k_tid;
+        }
+        let clean_t = if !best_ed2k_title.is_empty() {
+            best_ed2k_title
+        } else if !req.title.is_empty() {
+            rules::clean_display_title(&req.title)
+        } else {
+            "ED2K 资源".to_string()
+        };
         let ed2k_bytes: i64 = inspected
             .files
             .iter()
@@ -1178,13 +1206,25 @@ pub fn transfer_resource(
         } else {
             String::new()
         };
+        let ed2k_sample = inspected
+            .files
+            .iter()
+            .find(|f| to_submit.contains(&f.direct_link) && !f.name.trim().is_empty())
+            .map(|f| {
+                if submitted > 1 {
+                    format!("{} 等{}个文件", f.name.trim(), submitted)
+                } else {
+                    f.name.trim().to_string()
+                }
+            })
+            .unwrap_or_else(|| clean_t.clone());
         let ed2k_target_hint = if (!cfg.rules.prefer_flowlink || explicit_target_override)
             && !offline_cid.is_empty()
         {
             format!(
                 "{}个文件 → {}",
                 submitted,
-                format_target_dir_label(mc, cfg, &offline_cid)
+                short_target_dir_name(mc, cfg, &offline_cid)
             )
         } else {
             format!("{}个文件 → FlowLink", submitted)
@@ -1192,7 +1232,7 @@ pub fn transfer_resource(
         mark_transferred(
             db,
             cfg,
-            req,
+            &eff_req,
             slug,
             &clean_t,
             "ed2k",
@@ -1205,13 +1245,9 @@ pub fn transfer_resource(
             settings,
             cfg,
             &TransferNotifyInput {
-                req,
-                raw_title: t,
-                resource_title: if !inspected.precise_title.is_empty() {
-                    &inspected.precise_title
-                } else {
-                    &clean_t
-                },
+                req: &eff_req,
+                raw_title: &clean_t,
+                resource_title: &ed2k_sample,
                 source_type: if req.source_type.is_empty() { "ed2k" } else { &req.source_type },
                 season_episode: &inspected.parsed_episodes,
                 download_action: "离线下载",
@@ -1341,12 +1377,22 @@ pub fn transfer_resource(
         }
     }
 
-    let raw_disp_title = if !req.title.is_empty() {
-        &req.title
+    let (inferred_title, inferred_tid) =
+        infer_share_identity(&req.title, &req.tmdb_id, &inspected);
+    let mut eff_req = req.clone();
+    if !inferred_tid.is_empty() {
+        eff_req.tmdb_id = inferred_tid;
+    }
+    let clean_disp_title = if !inferred_title.is_empty() {
+        inferred_title
+    } else if !req.title.is_empty() {
+        rules::clean_display_title(&req.title)
     } else {
-        &inspected.precise_title
+        rules::clean_display_title(&inspected.precise_title)
     };
-    let clean_disp_title = rules::clean_display_title(raw_disp_title);
+    if !clean_disp_title.is_empty() {
+        eff_req.title = clean_disp_title.clone();
+    }
     let disp_title = clean_disp_title.as_str();
     let src_label = if req.source_type.is_empty() {
         "115"
@@ -1357,6 +1403,7 @@ pub fn transfer_resource(
         &inspected.files,
         &selected_ids,
         &inspected.parsed_episodes,
+        &eff_req.media_type,
     );
     let share_size_str = if total_share_bytes > 0 {
         rules::format_bytes(total_share_bytes)
@@ -1382,7 +1429,7 @@ pub fn transfer_resource(
             &selected_ids,
         ) {
             if is_115_reviewing_text(&e.to_string()) {
-                enqueue_reviewing(db, req, &inspected.share_code, &inspected.receive_code, &target_cid);
+                enqueue_reviewing(db, &eff_req, &inspected.share_code, &inspected.receive_code, &target_cid);
                 return Ok(TransferResult {
                     status: "reviewing".into(),
                     notice: "115 分享处于审核中，已加入待审重试队列".into(),
@@ -1423,7 +1470,7 @@ pub fn transfer_resource(
         mark_transferred(
             db,
             cfg,
-            req,
+            &eff_req,
             eff_slug,
             disp_title,
             src_label,
@@ -1442,8 +1489,8 @@ pub fn transfer_resource(
             settings,
             cfg,
             &TransferNotifyInput {
-                req,
-                raw_title: raw_disp_title,
+                req: &eff_req,
+                raw_title: disp_title,
                 resource_title: &res_share_desc,
                 source_type: src_label,
                 season_episode: &eff_episodes,
@@ -1469,7 +1516,7 @@ pub fn transfer_resource(
             mark_transferred(
                 db,
                 cfg,
-                req,
+                &eff_req,
                 &submit_text,
                 disp_title,
                 src_label,
@@ -1482,8 +1529,8 @@ pub fn transfer_resource(
                 settings,
                 cfg,
                 &TransferNotifyInput {
-                    req,
-                    raw_title: raw_disp_title,
+                    req: &eff_req,
+                    raw_title: disp_title,
                     resource_title: &res_share_desc,
                     source_type: src_label,
                     season_episode: &eff_episodes,
@@ -1521,7 +1568,7 @@ pub fn transfer_resource(
                     mark_transferred(
                         db,
                         cfg,
-                        req,
+                        &eff_req,
                         &submit_text,
                         disp_title,
                         src_label,
@@ -1534,8 +1581,8 @@ pub fn transfer_resource(
                         settings,
                         cfg,
                         &TransferNotifyInput {
-                            req,
-                            raw_title: raw_disp_title,
+                            req: &eff_req,
+                            raw_title: disp_title,
                             resource_title: &res_share_desc,
                             source_type: src_label,
                             season_episode: &eff_episodes,
@@ -1555,7 +1602,7 @@ pub fn transfer_resource(
                 }
             }
             if is_115_reviewing_text(&e.to_string()) {
-                enqueue_reviewing(db, req, &inspected.share_code, &inspected.receive_code, &target_cid);
+                enqueue_reviewing(db, &eff_req, &inspected.share_code, &inspected.receive_code, &target_cid);
                 return Ok(TransferResult {
                     status: "reviewing".into(),
                     notice: "115 分享处于审核中，已加入待审重试队列".into(),
@@ -1663,7 +1710,7 @@ pub fn parse_snap_response(
         };
         let is_video = !is_dir && rules::is_video_file(&name);
         let is_subtitle = !is_dir && rules::is_subtitle_file(&name);
-        let pairs = rules::extract_episode_pairs(&full_path, 1);
+        let pairs = extract_file_node_episodes(prefix, &name);
         let (season, episode, episode_end) = if let (Some(first), Some(last)) = (pairs.first(), pairs.last())
         {
             (first.season, first.episode, last.episode)
@@ -2124,12 +2171,12 @@ pub fn run_daily_checkin(
     if settings.notify && cfg.notifications.enabled && cfg.notifications.on_checkin {
         if let Some(host) = mc {
             if cfg.hdhive.checked_in_today || cfg.ayclub.enabled {
-                let body = parts
-                    .iter()
-                    .map(|p| format!("🎯 {}", p))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let _ = host.notify("📅 MediFind 每日签到 · 额度报告", &body);
+                let mut lines: Vec<String> = parts.iter().map(|p| format!("🎯 {}", p)).collect();
+                lines.push(format!(
+                    "🗓️ 时间: {}",
+                    chrono::Local::now().format("%Y-%m-%d %H:%M")
+                ));
+                let _ = host.notify("📅 每日签到 · 额度报告", &lines.join("\n"));
             }
         }
     }
@@ -2452,53 +2499,78 @@ pub fn process_due_rss_feeds(
                                         && cfg.notifications.on_rss_subscribe
                                     {
                                         let tpls = host.get_notification_templates();
-                                        // Mediary POST /api/subscriptions natively fires `subscription_added` when enabled;
-                                        // only send a fallback templated notice if host's native subscription_added is disabled.
-                                        if !tpls.subscription_added.enabled {
-                                            let img = cfg
-                                                .notifications
-                                                .include_poster
-                                                .then(|| {
-                                                    crate::host::tmdb_card_image_https(
-                                                        &resolved.backdrop_path,
-                                                        &resolved.poster_path,
-                                                    )
-                                                    .or_else(|| {
-                                                        (!snap.poster_url.is_empty())
-                                                            .then(|| snap.poster_url.clone())
-                                                    })
-                                                })
-                                                .flatten();
-                                            let mut vars = HashMap::new();
-                                            vars.insert(
-                                                "media_icon",
-                                                if resolved.effective_type() == "tv" { "📺" } else { "🎬" }
-                                                    .to_string(),
-                                            );
-                                            vars.insert("name", resolved.effective_title().to_string());
-                                            if item.year > 0 {
-                                                vars.insert("year", item.year.to_string());
-                                            }
-                                            vars.insert("overview", resolved.overview.clone());
-                                            let nt_title = crate::host::render_mediary_template(
-                                                &tpls.subscription_added.title,
-                                                &vars,
-                                            );
-                                            let nt_body = crate::host::render_mediary_template(
-                                                &tpls.subscription_added.content,
-                                                &vars,
-                                            );
-                                            let final_body = if nt_body.is_empty() {
-                                                format!("🌐 来源: RSS · {}", feed_name)
-                                            } else {
-                                                nt_body
-                                            };
-                                            let _ = host.notify_with_image(
-                                                &nt_title,
-                                                &final_body,
-                                                img.as_deref(),
-                                            );
-                                        }
+                                         // Mediary POST /api/subscriptions natively fires `subscription_added` when enabled;
+                                         // only send a fallback templated notice if host's native subscription_added is disabled.
+                                         if !tpls.subscription_added.enabled {
+                                             let eff_type = resolved.effective_type();
+                                             let det_opt = host
+                                                 .get_tmdb_details(
+                                                     &tid_num.to_string(),
+                                                     eff_type,
+                                                 )
+                                                 .ok();
+                                             let img = cfg
+                                                 .notifications
+                                                 .include_poster
+                                                 .then(|| {
+                                                     det_opt
+                                                         .as_ref()
+                                                         .and_then(|d| {
+                                                             crate::host::tmdb_card_image_https(
+                                                                 &d.backdrop_path,
+                                                                 &d.poster_path,
+                                                             )
+                                                         })
+                                                         .or_else(|| {
+                                                             crate::host::tmdb_card_image_https(
+                                                                 &resolved.backdrop_path,
+                                                                 &resolved.poster_path,
+                                                             )
+                                                         })
+                                                         .or_else(|| {
+                                                             (!snap.poster_url.is_empty())
+                                                                 .then(|| snap.poster_url.clone())
+                                                         })
+                                                 })
+                                                 .flatten();
+                                             let mut vars = HashMap::new();
+                                             vars.insert(
+                                                 "media_icon",
+                                                 if eff_type == "tv" { "📺" } else { "🎬" }
+                                                     .to_string(),
+                                             );
+                                             vars.insert("name", resolved.effective_title().to_string());
+                                             if item.year > 0 {
+                                                 vars.insert("year", item.year.to_string());
+                                             }
+                                             if eff_type == "tv" {
+                                                 vars.insert("season_label", "S01".to_string());
+                                             }
+                                             let overview = det_opt
+                                                 .as_ref()
+                                                 .map(|d| d.overview.trim())
+                                                 .filter(|s| !s.is_empty())
+                                                 .unwrap_or_else(|| resolved.overview.trim());
+                                             vars.insert("overview", overview.to_string());
+                                             let nt_title = crate::host::render_mediary_template(
+                                                 &tpls.subscription_added.title,
+                                                 &vars,
+                                             );
+                                             let nt_body = crate::host::render_mediary_template(
+                                                 &tpls.subscription_added.content,
+                                                 &vars,
+                                             );
+                                             let final_body = if nt_body.is_empty() {
+                                                 format!("🌐 来源: RSS · {}", feed_name)
+                                             } else {
+                                                 nt_body
+                                             };
+                                             let _ = host.notify_with_image(
+                                                 &nt_title,
+                                                 &final_body,
+                                                 img.as_deref(),
+                                             );
+                                         }
                                     }
                                 }
                             }
@@ -2743,7 +2815,11 @@ fn process_tg_auto_levels(
                 continue;
             }
             if lvl == 99 {
-                let mut tid = it.tmdb_id.clone();
+                let mut tid = if !it.tmdb_id.trim().is_empty() {
+                    it.tmdb_id.trim().to_string()
+                } else {
+                    rules::extract_tmdb_id(&it.raw_title)
+                };
                 let mut mtype = if it.media_type.is_empty() {
                     if !it.parsed_episodes.is_empty() {
                         "tv".to_string()
@@ -2753,13 +2829,28 @@ fn process_tg_auto_levels(
                 } else {
                     it.media_type.clone()
                 };
-                if tid.is_empty() && !it.title.is_empty() {
-                    let pure = rules::extract_pure_title(&it.title);
-                    let q_title = if pure.is_empty() { &it.title } else { &pure };
+                let mut title = if !rules::is_suspect_banner_title(&it.title) {
+                    it.title.clone()
+                } else {
+                    let from_raw = rules::extract_pure_title(&it.raw_title);
+                    if !from_raw.is_empty() {
+                        from_raw
+                    } else {
+                        it.title.clone()
+                    }
+                };
+                if tid.is_empty() && !title.is_empty() && !rules::is_suspect_banner_title(&title) {
+                    let pure = rules::extract_pure_title(&title);
+                    let q_title = if pure.is_empty() { &title } else { &pure };
                     if let Ok(resolved) = mc.resolve_tmdb(q_title, &mtype, 0) {
                         if !resolved.effective_id().is_empty() {
                             tid = resolved.effective_id().to_string();
                             mtype = resolved.effective_type().to_string();
+                            if !resolved.effective_title().is_empty()
+                                && rules::is_suspect_banner_title(&title)
+                            {
+                                title = resolved.effective_title().to_string();
+                            }
                         }
                     }
                 }
@@ -2770,7 +2861,7 @@ fn process_tg_auto_levels(
                     cfg,
                     &TransferRequest {
                         slug: it.slug,
-                        title: it.title,
+                        title,
                         tmdb_id: tid,
                         media_type: mtype,
                         source_type: "telegram".into(),
@@ -2787,7 +2878,11 @@ fn process_tg_auto_levels(
             }
 
             // Bit 64 (入新) & Bit 32 (洗版)
-            let mut tid = it.tmdb_id.clone();
+            let mut tid = if !it.tmdb_id.trim().is_empty() {
+                it.tmdb_id.trim().to_string()
+            } else {
+                rules::extract_tmdb_id(&it.raw_title)
+            };
             let mut mtype = if it.media_type.is_empty() {
                 if !it.parsed_episodes.is_empty() {
                     "tv".to_string()
@@ -2797,8 +2892,17 @@ fn process_tg_auto_levels(
             } else {
                 it.media_type.clone()
             };
-            let mut title = it.title.clone();
-            if tid.is_empty() && !title.is_empty() {
+            let mut title = if !rules::is_suspect_banner_title(&it.title) {
+                it.title.clone()
+            } else {
+                let from_raw = rules::extract_pure_title(&it.raw_title);
+                if !from_raw.is_empty() {
+                    from_raw
+                } else {
+                    it.title.clone()
+                }
+            };
+            if tid.is_empty() && !title.is_empty() && !rules::is_suspect_banner_title(&title) {
                 let pure = rules::extract_pure_title(&title);
                 let q_title = if pure.is_empty() { &title } else { &pure };
                 if let Ok(resolved) = mc.resolve_tmdb(q_title, &mtype, 0) {
@@ -2999,7 +3103,7 @@ fn annotate_missing_on_nodes(
     for n in nodes {
         let mut c = n.clone();
         if c.is_video || c.is_subtitle {
-            let pairs = rules::extract_episode_pairs(&format!("{} {}", c.path, c.name), 1);
+            let pairs = extract_file_node_episodes(&c.path, &c.name);
             c.episode_label = rules::format_episode_pairs(&pairs);
             if c.is_video {
                 c.is_missing_in_db = is_node_missing_in_library(mtype, &pairs, snap);
@@ -3196,10 +3300,113 @@ fn short_target_dir_name(mc: &HostClient, cfg: &AppConfig, cid: &str) -> String 
     format!("CID:{}", c)
 }
 
+fn extract_file_node_episodes(path_ctx: &str, file_name: &str) -> Vec<EpisodePair> {
+    let def_s = rules::infer_season_num(path_ctx, 1);
+    let from_name = rules::extract_episode_pairs(file_name, def_s);
+    if !from_name.is_empty() {
+        return from_name;
+    }
+    if path_ctx.trim().is_empty() {
+        return Vec::new();
+    }
+    // Only fall back to folder path if folder encodes a single episode (not `全60集` pack header!)
+    let from_path = rules::extract_episode_pairs(path_ctx, def_s);
+    if from_path.len() <= 2 {
+        from_path
+    } else {
+        Vec::new()
+    }
+}
+
+fn is_generic_folder_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || rules::is_suspect_banner_title(trimmed) {
+        return true;
+    }
+    let low = trimmed.to_lowercase();
+    matches!(
+        low.as_str(),
+        "video" | "videos" | "movie" | "movies" | "tv" | "bdmv" | "stream" | "subs" | "subtitles"
+            | "4k" | "1080p" | "2160p" | "国语" | "粤语" | "原盘" | "正片" | "花絮"
+    ) || low.starts_with("season ")
+        || (low.starts_with('s') && low[1..].chars().all(|c| c.is_ascii_digit()))
+        || (trimmed.starts_with('第') && trimmed.ends_with('季'))
+}
+
+fn infer_share_identity(
+    req_title: &str,
+    req_tmdb_id: &str,
+    inspected: &InspectResponse,
+) -> (String, String) {
+    let mut best_tid = req_tmdb_id.trim().to_string();
+    if best_tid.is_empty() {
+        best_tid = rules::extract_tmdb_id(req_title);
+    }
+    if best_tid.is_empty() {
+        best_tid = rules::extract_tmdb_id(&inspected.precise_title);
+    }
+    if best_tid.is_empty() {
+        for f in &inspected.files {
+            let tid = rules::extract_tmdb_id(&f.name);
+            if !tid.is_empty() {
+                best_tid = tid;
+                break;
+            }
+            let ptid = rules::extract_tmdb_id(&f.path);
+            if !ptid.is_empty() {
+                best_tid = ptid;
+                break;
+            }
+        }
+    }
+
+    let mut best_title = String::new();
+    if !req_title.trim().is_empty() && !rules::is_suspect_banner_title(req_title) {
+        let p = rules::extract_pure_title(req_title);
+        best_title = if !p.is_empty() && !rules::is_suspect_banner_title(&p) {
+            p
+        } else {
+            rules::clean_display_title(req_title)
+        };
+    }
+    if best_title.is_empty() || rules::is_suspect_banner_title(&best_title) {
+        let prec_clean = rules::clean_display_title(&inspected.precise_title);
+        if !prec_clean.is_empty() && !rules::is_suspect_banner_title(&prec_clean) {
+            let p = rules::extract_pure_title(&prec_clean);
+            best_title = if !p.is_empty() { p } else { prec_clean };
+        }
+    }
+    if best_title.is_empty() || rules::is_suspect_banner_title(&best_title) {
+        for f in &inspected.files {
+            if f.is_dir && !is_generic_folder_name(&f.name) {
+                let p = rules::extract_pure_title(&f.name);
+                if !p.is_empty() && !rules::is_suspect_banner_title(&p) {
+                    best_title = p;
+                    break;
+                }
+            }
+        }
+    }
+    if best_title.is_empty() || rules::is_suspect_banner_title(&best_title) {
+        for f in &inspected.files {
+            if f.is_video && !f.name.trim().is_empty() {
+                let p = rules::extract_pure_title(&f.name);
+                if !p.is_empty() && !rules::is_suspect_banner_title(&p) {
+                    best_title = p;
+                    break;
+                }
+            }
+        }
+    }
+
+    (best_title, best_tid)
+}
+
 fn summarize_transferred_files(
     files: &[ShareFileNode],
     selected_ids: &[String],
     fallback_episodes: &str,
+    media_type: &str,
 ) -> (String, i64, String) {
     let sel_set: HashSet<&str> = selected_ids.iter().map(String::as_str).collect();
     let mut total_bytes = 0i64;
@@ -3222,16 +3429,15 @@ fn summarize_transferred_files(
             if sample_video_name.is_empty() && !f.name.trim().is_empty() {
                 sample_video_name = f.name.trim().to_string();
             }
-            if !sel_set.is_empty() {
-                let pairs = rules::extract_episode_pairs(&format!("{} {}", f.path, f.name), 1);
-                ep_pairs.extend(pairs);
-            }
+            ep_pairs.extend(extract_file_node_episodes(&f.path, &f.name));
         }
     }
     if video_count > 1 && !sample_video_name.is_empty() {
         sample_video_name = format!("{} 等{}个视频", sample_video_name, video_count);
     }
-    let ep_str = if !ep_pairs.is_empty() {
+    let ep_str = if media_type.eq_ignore_ascii_case("movie") && sel_set.is_empty() {
+        String::new()
+    } else if !ep_pairs.is_empty() {
         rules::format_episode_pairs(&ep_pairs)
     } else {
         fallback_episodes.trim().to_string()
@@ -3287,14 +3493,24 @@ fn notify_transfer_templated(
     }
 
     let mut clean_name = rules::clean_display_title(inp.raw_title);
-    let pure_cand = rules::extract_pure_title(&clean_name);
-    if !pure_cand.is_empty()
-        && !matches!(
-            clean_name.as_str(),
-            "磁力任务" | "ED2K 资源" | "未命名资源"
-        )
-    {
-        clean_name = pure_cand;
+    if !rules::is_suspect_banner_title(&clean_name) {
+        let pure_cand = rules::extract_pure_title(&clean_name);
+        if !pure_cand.is_empty() && !rules::is_suspect_banner_title(&pure_cand) {
+            clean_name = pure_cand;
+        }
+    } else {
+        let res_pure = rules::extract_pure_title(inp.resource_title);
+        if !res_pure.is_empty() && !rules::is_suspect_banner_title(&res_pure) {
+            clean_name = res_pure;
+        }
+    }
+
+    let mut tid = inp.req.tmdb_id.trim().to_string();
+    if tid.is_empty() {
+        tid = rules::extract_tmdb_id(inp.raw_title);
+    }
+    if tid.is_empty() {
+        tid = rules::extract_tmdb_id(inp.resource_title);
     }
 
     let mut year = rules::extract_year_str(inp.raw_title);
@@ -3310,8 +3526,23 @@ fn notify_transfer_templated(
     };
     let mut poster_url: Option<String> = None;
 
-    if !inp.req.tmdb_id.trim().is_empty() {
-        if let Ok(det) = mc.get_tmdb_details(inp.req.tmdb_id.trim(), &mtype) {
+    if !tid.is_empty() {
+        let alt_mtype = if mtype == "tv" { "movie" } else { "tv" };
+        let mut det_res = mc.get_tmdb_details(&tid, &mtype).ok();
+        if det_res
+            .as_ref()
+            .map(|d| d.title.trim().is_empty() && d.name.trim().is_empty())
+            .unwrap_or(true)
+            && inp.season_episode.trim().is_empty()
+        {
+            if let Ok(alt_det) = mc.get_tmdb_details(&tid, alt_mtype) {
+                if !alt_det.title.trim().is_empty() || !alt_det.name.trim().is_empty() {
+                    mtype = alt_mtype.to_string();
+                    det_res = Some(alt_det);
+                }
+            }
+        }
+        if let Some(det) = det_res {
             let det_date = if !det.release_date.trim().is_empty() {
                 det.release_date.trim()
             } else {
@@ -3326,8 +3557,8 @@ fn notify_transfer_templated(
                 det.name.trim()
             };
             if !det_title.is_empty()
-                && (clean_name.is_empty()
-                    || matches!(clean_name.as_str(), "磁力任务" | "ED2K 资源" | "未命名资源"))
+                && (rules::is_suspect_banner_title(&clean_name)
+                    || clean_name.chars().all(|c| c.is_ascii()))
             {
                 clean_name = det_title.to_string();
             }
@@ -3337,48 +3568,82 @@ fn notify_transfer_templated(
             }
         }
     }
-    if (poster_url.is_none() || year.is_empty())
-        && !clean_name.is_empty()
-        && !matches!(clean_name.as_str(), "磁力任务" | "ED2K 资源" | "未命名资源")
-    {
-        let yr_num = year.parse::<i32>().unwrap_or(0);
-        if let Ok(resolved) = mc.resolve_tmdb(&clean_name, &mtype, yr_num) {
-            mtype = resolved.effective_type().to_string();
-            let r_year = resolved.effective_year();
-            if year.is_empty() && !r_year.is_empty() {
-                year = r_year;
-            }
-            if !resolved.effective_title().is_empty() {
-                clean_name = resolved.effective_title().to_string();
-            }
-            if cfg.notifications.include_poster && poster_url.is_none() {
-                poster_url = crate::host::tmdb_card_image_https(
-                    &resolved.backdrop_path,
-                    &resolved.poster_path,
-                );
-            }
+
+    if poster_url.is_none() || year.is_empty() || rules::is_suspect_banner_title(&clean_name) {
+        let mut cand_queries = Vec::new();
+        if !clean_name.is_empty() && !rules::is_suspect_banner_title(&clean_name) {
+            cand_queries.push(clean_name.clone());
         }
-        if (poster_url.is_none() || year.is_empty()) && cfg.notifications.include_poster {
-            if let Ok(hits) = mc.search_tmdb(&clean_name, &mtype, 1) {
-                if let Some(first) = hits.first() {
-                    if year.is_empty() {
-                        let sy = first.effective_year();
-                        if !sy.is_empty() {
-                            year = sy;
+        let res_pure = rules::extract_pure_title(inp.resource_title);
+        if !res_pure.is_empty()
+            && !rules::is_suspect_banner_title(&res_pure)
+            && !cand_queries.contains(&res_pure)
+        {
+            cand_queries.push(res_pure);
+        }
+
+        let yr_num = year.parse::<i32>().unwrap_or(0);
+        for q in &cand_queries {
+            let mut hit_item: Option<crate::host::TMDBMediaItem> =
+                mc.resolve_tmdb(q, &mtype, yr_num).ok();
+            if hit_item.is_none() && yr_num > 0 {
+                hit_item = mc.resolve_tmdb(q, &mtype, 0).ok();
+            }
+            if hit_item.is_none() && inp.season_episode.trim().is_empty() {
+                let alt_mtype = if mtype == "tv" { "movie" } else { "tv" };
+                hit_item = mc.resolve_tmdb(q, alt_mtype, yr_num).ok();
+            }
+            if hit_item.is_none() {
+                if let Ok(hits) = mc.search_tmdb(q, "all", 1) {
+                    hit_item = hits.into_iter().next();
+                }
+            }
+
+            if let Some(resolved) = hit_item {
+                let eff_t = resolved.effective_type().to_string();
+                if !eff_t.is_empty() {
+                    mtype = eff_t;
+                }
+                let r_year = resolved.effective_year();
+                if year.is_empty() && !r_year.is_empty() {
+                    year = r_year;
+                }
+                let r_title = resolved.effective_title();
+                if !r_title.is_empty()
+                    && (rules::is_suspect_banner_title(&clean_name)
+                        || clean_name.chars().all(|c| c.is_ascii()))
+                {
+                    clean_name = r_title.to_string();
+                }
+                if cfg.notifications.include_poster && poster_url.is_none() {
+                    // Upgrade to full TMDB details if search/resolve lacked `backdrop_path` so WeCom gets `w780` 16:9 card!
+                    if resolved.backdrop_path.trim().is_empty()
+                        && !resolved.effective_id().is_empty()
+                    {
+                        if let Ok(det) =
+                            mc.get_tmdb_details(resolved.effective_id(), resolved.effective_type())
+                        {
+                            poster_url = crate::host::tmdb_card_image_https(
+                                &det.backdrop_path,
+                                &det.poster_path,
+                            );
                         }
                     }
                     if poster_url.is_none() {
                         poster_url = crate::host::tmdb_card_image_https(
-                            &first.backdrop_path,
-                            &first.poster_path,
+                            &resolved.backdrop_path,
+                            &resolved.poster_path,
                         );
                     }
+                }
+                if poster_url.is_some() && !year.is_empty() {
+                    break;
                 }
             }
         }
     }
 
-    if clean_name.is_empty() {
+    if clean_name.is_empty() || rules::is_suspect_banner_title(&clean_name) {
         clean_name = "未命名资源".to_string();
     }
 
@@ -3597,5 +3862,63 @@ mod tests {
             29,
             true,
         ));
+
+        // P0 #4: Share identity recovery when TG post title was a banner (`✅新片送达–请您检阅`) + selective `S01E11 - 2160p` episode accuracy
+        let banner_inspected = InspectResponse {
+            precise_title: "✅新片送达–请您检阅".into(),
+            files: vec![
+                ShareFileNode {
+                    id: "d1".into(),
+                    name: "欢迎来龙餐馆".into(),
+                    is_dir: true,
+                    ..Default::default()
+                },
+                ShareFileNode {
+                    id: "f1".into(),
+                    name: "Once.Upon.a.Time.in.the.Middle.East.2026.2160p.YOUKU.WEB-DL.mkv".into(),
+                    path: "欢迎来龙餐馆/Once.Upon.a.Time.in.the.Middle.East.2026.2160p.YOUKU.WEB-DL.mkv".into(),
+                    size: 58_000_000_000,
+                    is_video: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let (rec_title, _) =
+            infer_share_identity("✅新片送达–请您检阅", "", &banner_inspected);
+        assert_eq!(rec_title, "欢迎来龙餐馆");
+
+        let tmdbid_inspected = InspectResponse {
+            precise_title: "✅新片送达–请您检阅".into(),
+            files: vec![ShareFileNode {
+                id: "f2".into(),
+                name: "欢迎来龙餐馆(2026)(tmdbid=1391021).2160p.WEB-DL.mp4".into(),
+                size: 36_000_000_000,
+                is_video: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let (rec_title2, rec_tid2) =
+            infer_share_identity("✅新片送达–请您检阅", "", &tmdbid_inspected);
+        assert_eq!(rec_title2, "欢迎来龙餐馆");
+        assert_eq!(rec_tid2, "1391021");
+
+        let shunu_files = vec![ShareFileNode {
+            id: "ep11".into(),
+            name: "庶女 (2026) - S01E11 - 2160p.WEB-DL.H265.AAC.mp4".into(),
+            path: "庶女 (2026) 全60集/庶女 (2026) - S01E11 - 2160p.WEB-DL.H265.AAC.mp4".into(),
+            size: 369_623_040,
+            is_video: true,
+            ..Default::default()
+        }];
+        let (ep_sum, sz_sum, _) = summarize_transferred_files(
+            &shunu_files,
+            &["ep11".to_string()],
+            "S01E01-E60",
+            "tv",
+        );
+        assert_eq!(ep_sum, "S01E11");
+        assert_eq!(sz_sum, 369_623_040);
     }
 }

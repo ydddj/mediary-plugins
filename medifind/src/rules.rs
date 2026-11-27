@@ -21,17 +21,23 @@ static RE_MAGNET: LazyLock<Regex> =
 static RE_TELEGRAPH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)https?://(?:[a-z0-9-]+\.)?telegra\.ph/[^\s"'<>]+"#).unwrap());
 static RE_TMDB_TAG: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)tmdb(?:id)?[-_:：\s=]*(\d{2,10})").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)tmdb(?:\s*id)?[-_:：\s=]*(\d{2,10})").unwrap());
 static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap());
 static RE_SIZE_TOKEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(TB|TiB|T|GB|GiB|G|MB|MiB|M)\b").unwrap());
-static RE_SXXEXX_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)[Ss](\d{1,2})[.\s_-]*[Ee](\d{1,4})[.\s_-]*(?:-|~|至)[.\s_-]*[Ss]?\d{0,2}[Ee]?(\d{1,4})").unwrap()
+static RE_SXXEXX_RANGE_EXPLICIT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b[Ss](\d{1,2})[.\s_-]*[Ee][Pp]?(\d{1,4})\s*(?:-|~|至)\s*(?:[Ss](\d{1,2})[.\s_-]*)?[Ee][Pp]?(\d{1,4})\b").unwrap()
+});
+static RE_SXXEXX_RANGE_TIGHT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b[Ss](\d{1,2})[.\s_-]*[Ee][Pp]?(\d{1,4})(?:-|~|至)(\d{1,4})\b").unwrap()
 });
 static RE_SXXEXX_SINGLE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)[Ss](\d{1,2})[.\s_-]*[Ee](\d{1,4})\b").unwrap());
-static RE_EP_ONLY_RANGE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b[Ee][Pp]?(\d{1,4})\s*(?:-|~|至)\s*[Ee]?[Pp]?(\d{1,4})\b").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)\b[Ss](\d{1,2})[.\s_-]*[Ee][Pp]?(\d{1,4})\b").unwrap());
+static RE_EP_ONLY_RANGE_EXPLICIT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b[Ee][Pp]?(\d{1,4})\s*(?:-|~|至)\s*[Ee][Pp]?(\d{1,4})\b").unwrap()
+});
+static RE_EP_ONLY_RANGE_TIGHT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b[Ee][Pp]?(\d{1,4})(?:-|~|至)(\d{1,4})\b").unwrap());
 static RE_SEASON_RANGE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:[Ss]|Season\s*)(\d{1,2})\s*(?:-|~|至)\s*(?:[Ss]|Season\s*)?(\d{1,2})\b").unwrap()
 });
@@ -50,15 +56,23 @@ static RE_CN_EP_SINGLE: LazyLock<Regex> =
 static RE_FULL_MARKERS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"全集|完结|合集|全剧终").unwrap());
 static RE_BRACKET_PREFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:【[^】]+】|\[[^\]]+\]|（[^）]+）)\s*").unwrap());
+    LazyLock::new(|| Regex::new(r"^(?:【([^】]+)】|\[([^\]]+)\]|（([^）]+)）)\s*").unwrap());
 static RE_LEADING_DECOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\s📺🎬🎞️🎥📽️🔥✨📌🔔💿📀🆕]+").unwrap()
+    Regex::new(r"^[\s📺🎬🎞️🎥📽️🔥✨📌🔔💿📀🆕✅☑️🎉💥📣📢💎⭐🌟]+\s*").unwrap()
 });
 static RE_CAT_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:(?:名称|片名|标题|剧名|译名|影视|电影|剧集|电视剧|连续剧|动漫|动画|番剧|综艺|纪录片|短剧|国产剧|美剧|日剧|韩剧|港剧|台剧|泰剧|英剧)[：:\s]+)+").unwrap()
+    Regex::new(r"^(?:(?:名称|片名|标题|剧名|译名|又名|影视|电影|剧集|电视剧|连续剧|动漫|动画|番剧|综艺|纪录片|短剧|国产剧|美剧|日剧|韩剧|港剧|台剧|泰剧|英剧)[：:\s]+)+").unwrap()
 });
+static RE_LABELED_TITLE_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[\s📺🎬🎞️🎥📽️🔥✨📌🔔💿📀🆕✅☑️]*)(?:\[(?:电影|剧集|电视剧|动漫|动画|番剧|综艺|纪录片|短剧)\]\s*[：:]\s*|(?:名称|片名|标题|剧名|译名|影视|电影|剧集|电视剧|连续剧|动漫|动画|番剧|综艺|纪录片|短剧|◎\s*片\s*名|◎\s*译\s*名)\s*[：:]+\s*)(.+)$").unwrap()
+});
+static RE_RELEASE_SPEC_CUT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[\s._\[\(【（-])(?:2160p|1080p|1080i|720p|576p|480p|4k|uhd|web-dl|webdl|webrip|bluray|blu-ray|bdrip|remux|hdr10\+?|dovi|dv|h\.?265|h\.?264|x265|x264|hevc|avc|ddp?\d|dts|truehd|atmos|hq|hfr|60fps|120fps)\b").unwrap()
+});
+static RE_HASHTAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"#([^\s#，,。！!？?|｜/\\]+)").unwrap());
 static RE_TMDB_BRACKET_TAG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\s*[\[\(【（]?\s*tmdb(?:id)?[-_:：\s=]*\d+\s*[\]\)】）]?").unwrap()
+    Regex::new(r"(?i)\s*[\[\(【（]?\s*tmdb(?:\s*id)?[-_:：\s=]*\d+\s*[\]\)】）]?").unwrap()
 });
 static RE_GROUP_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"-([A-Za-z0-9@._]{2,20})(?:\.[a-zA-Z0-9]{2,5})?$").unwrap());
@@ -341,40 +355,114 @@ pub fn extract_year(text: &str) -> String {
         .unwrap_or_default()
 }
 
-pub fn extract_pure_title(text: &str) -> String {
-    let mut candidate = String::new();
-    for line in text.replace("\r\n", "\n").lines() {
-        let l = line.trim();
-        if l.is_empty() {
-            continue;
-        }
-        let low = l.to_lowercase();
-        if low.contains("http://")
-            || low.contains("https://")
-            || low.contains("ed2k://")
-            || low.contains("magnet:?")
-            || l.starts_with("链接")
-            || l.starts_with("标签")
-            || l.starts_with("体积")
-            || l.starts_with("大小")
-        {
-            continue;
-        }
-        candidate = l.to_string();
-        break;
+pub fn is_suspect_banner_title(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return true;
     }
-    if candidate.is_empty() {
-        return String::new();
+    let cleaned = RE_LEADING_DECOR.replace(t, "");
+    let c = cleaned.trim();
+    if c.is_empty() {
+        return true;
     }
-    loop {
-        let before = candidate.clone();
-        candidate = RE_LEADING_DECOR.replace(&candidate, "").into_owned();
-        while RE_BRACKET_PREFIX.is_match(&candidate) {
-            candidate = RE_BRACKET_PREFIX.replace(&candidate, "").into_owned();
+    let low = c.to_lowercase();
+    for kw in [
+        "新片送达",
+        "请您检阅",
+        "全球顶级封装",
+        "首发",
+        "置顶公告",
+        "频道公告",
+        "防失联",
+        "分享者",
+        "关注公众号",
+        "扫码领",
+        "热更频道",
+        "搬搬群组",
+        "转存频道",
+        "资源分享频道",
+    ] {
+        if low.contains(kw) {
+            return true;
         }
-        candidate = RE_CAT_PREFIX.replace(&candidate, "").into_owned();
-        if candidate == before {
-            break;
+    }
+    matches!(
+        c,
+        "磁力任务" | "ED2K 资源" | "未命名资源" | "115分享" | "115网盘" | "影视资源"
+    )
+}
+
+fn is_bracket_tag_noise(inner: &str) -> bool {
+    let low = inner.trim().to_lowercase();
+    if low.is_empty() {
+        return true;
+    }
+    for kw in [
+        "首发", "封装", "4k", "2160", "1080", "720", "remux", "bluray", "blu-ray", "bd",
+        "web", "dv", "hdr", "sdr", "dovi", "x265", "h265", "hevc", "x264", "h264", "aac",
+        "eac3", "ddp", "truehd", "atmos", "dts", "国语", "粤语", "英语", "双语", "中字", "简繁",
+        "内封", "外挂", "特效", "高码", "完结", "全集", "合集", "集全", "多版本", "电影", "剧集",
+        "电视剧", "动漫", "动画", "番剧", "综艺", "纪录片", "短剧", "韩剧", "美剧", "日剧", "国产",
+        "tmdbid", "tmdb", "关注", "公众号", "福利",
+    ] {
+        if low.contains(kw) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_metadata_or_banner_line(line: &str) -> bool {
+    let l = line.trim();
+    if l.is_empty() {
+        return true;
+    }
+    let low = l.to_lowercase();
+    if low.contains("http://")
+        || low.contains("https://")
+        || low.contains("ed2k://")
+        || low.contains("magnet:?")
+        || l.starts_with('#')
+        || l.starts_with('@')
+        || l.starts_with('◎')
+    {
+        return true;
+    }
+    if is_suspect_banner_title(l) {
+        return true;
+    }
+    let stripped = RE_LEADING_DECOR
+        .replace(l, "")
+        .trim_start_matches(&['👤', '📦', '💾', '📡', '📅', '🧲', '🎭', '📂', '🗂', '🌍', '🗣', '👥', '📖', '📝', '📶', '🎯', '📥', '🔖', '🏷', '🤖', '🍿', '📼', '⭐', '🌟', '\u{fe0f}', ' '][..])
+        .trim()
+        .to_string();
+    for prefix in [
+        "链接", "标签", "体积", "大小", "分享者", "质量", "帧率", "平台", "年份", "年代",
+        "产地", "地区", "语言", "类别", "类型", "题材", "分类", "主演", "导演", "编剧",
+        "评分", "豆瓣", "imdb", "IMDb", "tmdb", "TMDB", "文件", "备注", "描述", "简介",
+        "计划", "播出进度", "转存入库", "触发", "已发版本", "提取码", "访问码", "密码", "投稿",
+    ] {
+        if stripped.starts_with(prefix) {
+            let rest = stripped[prefix.len()..].trim_start();
+            if rest.is_empty() || rest.starts_with('：') || rest.starts_with(':') || rest.starts_with(' ') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn normalize_title_candidate(raw_cand: &str) -> String {
+    let mut candidate = RE_TMDB_BRACKET_TAG.replace_all(raw_cand.trim(), "").into_owned();
+    // Strip trailing media file extension (e.g. `.mkv`, `.mp4`, `.strm`)
+    if let Some(dot_pos) = candidate.rfind('.') {
+        let ext = candidate[dot_pos + 1..].trim().to_ascii_lowercase();
+        if matches!(
+            ext.as_str(),
+            "mp4" | "mkv" | "ts" | "m2ts" | "mov" | "avi" | "wmv" | "flv" | "webm"
+                | "iso" | "rmvb" | "m4v" | "mpg" | "mpeg" | "strm" | "srt" | "ass" | "ssa"
+        ) {
+            candidate.truncate(dot_pos);
         }
     }
 
@@ -382,50 +470,218 @@ pub fn extract_pure_title(text: &str) -> String {
         let rest = &candidate[start + '《'.len_utf8()..];
         if let Some(end) = rest.find('》') {
             let book = &rest[..end];
-            return RE_CN_SEASON.replace_all(book, "").trim().to_string();
+            let cleaned_book = RE_CN_SEASON.replace_all(book, "").trim().to_string();
+            if !cleaned_book.is_empty() && !is_suspect_banner_title(&cleaned_book) {
+                return cleaned_book;
+            }
         }
     }
 
-    for re in [&*RE_YEAR, &*RE_SXXEXX_SINGLE, &*RE_SEASON_SINGLE, &*RE_CN_SEASON] {
+    let mut preserved_bracket_title = String::new();
+    loop {
+        let before = candidate.clone();
+        candidate = RE_LEADING_DECOR.replace(&candidate, "").into_owned();
+        while let Some(cap) = RE_BRACKET_PREFIX.captures(&candidate) {
+            let inner = cap
+                .get(1)
+                .or_else(|| cap.get(2))
+                .or_else(|| cap.get(3))
+                .map(|m| m.as_str().trim())
+                .unwrap_or_default()
+                .to_string();
+            let after = candidate[cap.get(0).unwrap().end()..].trim().to_string();
+            if is_bracket_tag_noise(&inner) {
+                candidate = after;
+            } else if !after.is_empty() && !after.starts_with('[') && !after.starts_with('【') {
+                // E.g. `[新番] 葬送的芙莉莲` -> keep `葬送的芙莉莲`
+                candidate = after;
+            } else {
+                // E.g. `[七龙珠][BD-REMUX]` -> unwrap `七龙珠` as the real title and strip trailing bracket tags!
+                if preserved_bracket_title.is_empty() {
+                    preserved_bracket_title = inner;
+                }
+                candidate = after;
+            }
+        }
+        candidate = RE_CAT_PREFIX.replace(&candidate, "").into_owned();
+        if candidate == before {
+            break;
+        }
+    }
+    if candidate.trim().is_empty() && !preserved_bracket_title.is_empty() {
+        candidate = preserved_bracket_title;
+    }
+
+    for re in [
+        &*RE_YEAR,
+        &*RE_SXXEXX_SINGLE,
+        &*RE_SEASON_SINGLE,
+        &*RE_CN_SEASON,
+        &*RE_RELEASE_SPEC_CUT,
+    ] {
         if let Some(m) = re.find(&candidate) {
             if m.start() > 1 {
                 candidate.truncate(m.start());
             }
         }
     }
-    for sep in ["|", "｜", " / "] {
+    for sep in ["|", "｜", " / ", "【", "["] {
         if let Some(idx) = candidate.find(sep) {
             if idx > 0 {
                 candidate.truncate(idx);
             }
         }
     }
+    // Split CJK dual-title `育种师/繁殖者` -> `育种师` (without breaking `1/2` or `9/11`)
+    if let Some(slash_idx) = candidate.find('/') {
+        let left = candidate[..slash_idx].trim();
+        let right = candidate[slash_idx + 1..].trim();
+        if left.chars().filter(|c| !c.is_ascii()).count() >= 2
+            && right.chars().filter(|c| !c.is_ascii()).count() >= 2
+        {
+            candidate = left.to_string();
+        }
+    }
+    // Convert dot-separated Latin scene names (`Once.Upon.a.Time.in.the.Middle.East`) to spaces
+    if candidate.contains('.') && !candidate.contains(' ') {
+        let dot_parts: Vec<&str> = candidate.split('.').filter(|s| !s.is_empty()).collect();
+        if dot_parts.len() >= 2
+            && dot_parts
+                .iter()
+                .all(|p| p.chars().all(|c| c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
+        {
+            candidate = dot_parts.join(" ");
+        }
+    }
+
     candidate
-        .trim_matches(&[' ', '.', '_', '-', ':', '：', '(', ')', '（', '）', '[', ']', '【', '】', '\t'][..])
+        .trim_matches(
+            &[
+                ' ', '.', '_', '-', '—', '–', ':', '：', '(', ')', '（', '）', '[', ']', '【',
+                '】', '\t',
+            ][..],
+        )
         .trim()
         .to_string()
 }
 
-pub fn clean_display_title(raw: &str) -> String {
-    let mut s = raw.trim().to_string();
-    if s.is_empty() {
-        return s;
+pub fn extract_pure_title(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n");
+
+    // Pass 1: Explicit labeled title line anywhere in the post (e.g. `🎬 影视：欢迎来龙餐馆`, `🎬 名称：胭脂扣`, `[剧集]：我的偶像总裁`)
+    for line in normalized.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        if let Some(cap) = RE_LABELED_TITLE_LINE.captures(l) {
+            let val = normalize_title_candidate(&cap[1]);
+            if !val.is_empty() && !is_suspect_banner_title(&val) {
+                return val;
+            }
+        }
     }
-    s = RE_TMDB_BRACKET_TAG.replace_all(&s, "").into_owned();
+
+    // Pass 2: First non-banner, non-metadata content line
+    for line in normalized.lines() {
+        let l = line.trim();
+        if is_metadata_or_banner_line(l) {
+            continue;
+        }
+        let val = normalize_title_candidate(l);
+        if !val.is_empty() && !is_suspect_banner_title(&val) {
+            return val;
+        }
+    }
+
+    // Pass 3: Hashtag fallback (`#欢迎来龙餐馆 #电影 #2160P`)
+    for cap in RE_HASHTAG.captures_iter(&normalized) {
+        let tag = cap[1].trim();
+        let low = tag.to_lowercase();
+        if tag.chars().count() >= 2
+            && !matches!(
+                low.as_str(),
+                "电影"
+                    | "剧集"
+                    | "电视剧"
+                    | "动漫"
+                    | "动画"
+                    | "番剧"
+                    | "综艺"
+                    | "纪录片"
+                    | "短剧"
+                    | "国产剧"
+                    | "美剧"
+                    | "韩剧"
+                    | "日剧"
+                    | "热更"
+                    | "完结"
+                    | "合集"
+                    | "4k"
+                    | "2160p"
+                    | "1080p"
+                    | "hdr"
+                    | "dv"
+                    | "remux"
+                    | "bluray"
+                    | "原盘"
+            )
+            && !is_suspect_banner_title(tag)
+        {
+            return tag.to_string();
+        }
+    }
+
+    String::new()
+}
+
+pub fn clean_display_title(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.contains('\n') {
+        let pure = extract_pure_title(trimmed);
+        if !pure.is_empty() {
+            return pure;
+        }
+    }
+    let mut s = RE_TMDB_BRACKET_TAG.replace_all(trimmed, "").into_owned();
+    let mut preserved = String::new();
     loop {
         let before = s.clone();
         s = RE_LEADING_DECOR.replace(&s, "").into_owned();
-        while RE_BRACKET_PREFIX.is_match(&s) {
-            s = RE_BRACKET_PREFIX.replace(&s, "").into_owned();
+        while let Some(cap) = RE_BRACKET_PREFIX.captures(&s) {
+            let inner = cap
+                .get(1)
+                .or_else(|| cap.get(2))
+                .or_else(|| cap.get(3))
+                .map(|m| m.as_str().trim())
+                .unwrap_or_default()
+                .to_string();
+            let after = s[cap.get(0).unwrap().end()..].trim().to_string();
+            if is_bracket_tag_noise(&inner) || (!after.is_empty() && !after.starts_with('[') && !after.starts_with('【')) {
+                s = after;
+            } else {
+                if preserved.is_empty() {
+                    preserved = inner;
+                }
+                s = after;
+            }
         }
         s = RE_CAT_PREFIX.replace(&s, "").into_owned();
         if s == before {
             break;
         }
     }
-    let cleaned = s.trim_matches(&[' ', ':', '：', '-', '—', '\t'][..]).trim();
+    if s.trim().is_empty() && !preserved.is_empty() {
+        s = preserved;
+    }
+    let cleaned = s
+        .trim_matches(&[' ', ':', '：', '-', '—', '–', '\t'][..])
+        .trim();
     if cleaned.is_empty() {
-        raw.trim().to_string()
+        trimmed.to_string()
     } else {
         cleaned.to_string()
     }
@@ -622,29 +878,82 @@ fn push_ep(seen: &mut BTreeSet<EpisodePair>, s: u32, e: u32) {
     }
 }
 
+fn is_plausible_tight_range(start: u32, end: u32) -> bool {
+    if end < start || end - start > 500 {
+        return false;
+    }
+    if matches!(end, 480 | 576 | 720 | 1080 | 2160 | 4320) && end.saturating_sub(start) > 50 {
+        return false;
+    }
+    if (1900..=2099).contains(&end) && start < 1800 {
+        return false;
+    }
+    true
+}
+
+fn strip_schedule_preview_lines(text: &str) -> String {
+    if !text.contains('\n') {
+        return text.to_string();
+    }
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.contains("计划：")
+            || l.contains("计划:")
+            || l.contains("下集")
+            || l.contains("预告")
+            || l.contains("播出时间")
+        {
+            continue;
+        }
+        kept.push(line);
+    }
+    kept.join("\n")
+}
+
+pub fn infer_season_num(text: &str, fallback: u32) -> u32 {
+    infer_season(text, if fallback == 0 { 1 } else { fallback })
+}
+
 pub fn extract_episode_pairs(text: &str, default_season: u32) -> Vec<EpisodePair> {
     let def_s = if default_season == 0 { 1 } else { default_season };
+    let cleaned = strip_schedule_preview_lines(text);
+    let src = cleaned.as_str();
     let mut seen = BTreeSet::new();
 
-    for cap in RE_SXXEXX_RANGE.captures_iter(text) {
+    for cap in RE_SXXEXX_RANGE_EXPLICIT.captures_iter(src) {
+        let s1 = cap[1].parse::<u32>().unwrap_or(0);
+        let start = cap[2].parse::<u32>().unwrap_or(0);
+        let s2 = cap
+            .get(3)
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+            .unwrap_or(s1);
+        let end = cap[4].parse::<u32>().unwrap_or(0);
+        if s1 == s2 && end >= start && end - start <= 500 {
+            for ep in start..=end {
+                push_ep(&mut seen, s1, ep);
+            }
+        }
+    }
+    for cap in RE_SXXEXX_RANGE_TIGHT.captures_iter(src) {
         let s = cap[1].parse::<u32>().unwrap_or(0);
         let start = cap[2].parse::<u32>().unwrap_or(0);
         let end = cap[3].parse::<u32>().unwrap_or(0);
-        if end >= start && end - start <= 500 {
+        if is_plausible_tight_range(start, end) {
             for ep in start..=end {
                 push_ep(&mut seen, s, ep);
             }
         }
     }
-    for cap in RE_SXXEXX_SINGLE.captures_iter(text) {
+    for cap in RE_SXXEXX_SINGLE.captures_iter(src) {
         let s = cap[1].parse::<u32>().unwrap_or(0);
         let ep = cap[2].parse::<u32>().unwrap_or(0);
         push_ep(&mut seen, s, ep);
     }
 
     if seen.is_empty() {
-        let season = infer_season(text, def_s);
-        for cap in RE_EP_ONLY_RANGE.captures_iter(text) {
+        let season = infer_season(src, def_s);
+        for cap in RE_EP_ONLY_RANGE_EXPLICIT.captures_iter(src) {
             let start = cap[1].parse::<u32>().unwrap_or(0);
             let end = cap[2].parse::<u32>().unwrap_or(0);
             if end >= start && end - start <= 500 {
@@ -653,7 +962,16 @@ pub fn extract_episode_pairs(text: &str, default_season: u32) -> Vec<EpisodePair
                 }
             }
         }
-        for cap in RE_CN_EP_RANGE.captures_iter(text) {
+        for cap in RE_EP_ONLY_RANGE_TIGHT.captures_iter(src) {
+            let start = cap[1].parse::<u32>().unwrap_or(0);
+            let end = cap[2].parse::<u32>().unwrap_or(0);
+            if is_plausible_tight_range(start, end) {
+                for ep in start..=end {
+                    push_ep(&mut seen, season, ep);
+                }
+            }
+        }
+        for cap in RE_CN_EP_RANGE.captures_iter(src) {
             let start = cap[1].parse::<u32>().unwrap_or(0);
             let end = cap[2].parse::<u32>().unwrap_or(0);
             if end >= start && end - start <= 500 {
@@ -663,17 +981,17 @@ pub fn extract_episode_pairs(text: &str, default_season: u32) -> Vec<EpisodePair
             }
         }
         if seen.is_empty() {
-            if let Some(cap) = RE_CN_UPDATE_TO.captures(text) {
+            if let Some(cap) = RE_CN_UPDATE_TO.captures(src) {
                 let end = cap[1].parse::<u32>().unwrap_or(0).min(500);
                 for ep in 1..=end {
                     push_ep(&mut seen, season, ep);
                 }
-            } else if let Some(cap) = RE_CN_FULL_COUNT.captures(text) {
+            } else if let Some(cap) = RE_CN_FULL_COUNT.captures(src) {
                 let end = cap[1].parse::<u32>().unwrap_or(0).min(500);
                 for ep in 1..=end {
                     push_ep(&mut seen, season, ep);
                 }
-            } else if let Some(cap) = RE_CN_EP_SINGLE.captures(text) {
+            } else if let Some(cap) = RE_CN_EP_SINGLE.captures(src) {
                 let ep = cap[1].parse::<u32>().unwrap_or(0);
                 push_ep(&mut seen, season, ep);
             }
@@ -1606,5 +1924,67 @@ mod tests {
         );
         assert_eq!(clean_display_title("📺 电视剧：妈妈发疯了 [tmdbid-12345]"), "妈妈发疯了");
         assert_eq!(extract_pure_title("📺 电视剧：芝加哥烈焰 S15E06 2160p"), "芝加哥烈焰");
+    }
+
+    #[test]
+    fn test_real_world_tg_banners_tmdb_spaces_and_resolution_episodes() {
+        // 1. Multi-line TG post with channel banner header (`✅新片送达–请您检阅`)
+        let tg_banner_post = "✅新片送达–请您检阅\n👤 分享者：亲爱的小孩\n\n🎬 影视：欢迎来龙餐馆\n📦 质量：2160p HQ DV H.265 DD\n💾 大小：54.4GB\n\n📡 平台：优酷\n📅 年份：2026\n🧲 类型：电影 ｜ 主演：沈腾\n#欢迎来龙餐馆 #电影 #2160P";
+        assert_eq!(extract_pure_title(tg_banner_post), "欢迎来龙餐馆");
+        assert!(is_suspect_banner_title("✅新片送达–请您检阅"));
+        assert!(is_suspect_banner_title("【LGNB首发】"));
+
+        // 2. LGNB multi-line posts & bracketed titles (`[七龙珠][BD-REMUX]`, `[剧集]：我的偶像总裁`)
+        let lgnb_post = "【LGNB首发】\n🎬 名称：胭脂扣\n📝 描述：在香港报馆任职的袁永定...";
+        assert_eq!(extract_pure_title(lgnb_post), "胭脂扣");
+        assert_eq!(
+            extract_pure_title("[剧集]：我的偶像总裁 (2026)\nS01E01-E12 · 完结"),
+            "我的偶像总裁"
+        );
+        assert_eq!(extract_pure_title("[七龙珠][BD-REMUX]\n◎年 代: 1986"), "七龙珠");
+        assert_eq!(
+            extract_pure_title(
+                "Once.Upon.a.Time.in.the.Middle.East.2026.2160p.YOUKU.WEB-DL.DTS5.1.HQ.DV.HFR.H.265-SalmonWeb.mkv"
+            ),
+            "Once Upon a Time in the Middle East"
+        );
+        assert_eq!(
+            extract_pure_title("欢迎来龙餐馆(2026)(tmdbid=1391021).2160p.WEB-DL.mp4"),
+            "欢迎来龙餐馆"
+        );
+
+        // 3. Space-separated `TMDB ID: ...` and `tmdbid=...`
+        assert_eq!(extract_tmdb_id("🍿 TMDB ID: 1391021"), "1391021");
+        assert_eq!(extract_tmdb_id("🍿 TMDB ID：296140"), "296140");
+        assert_eq!(
+            extract_tmdb_id("欢迎来龙餐馆(2026)(tmdbid=1391021).2160p.mp4"),
+            "1391021"
+        );
+
+        // 4. Resolution (`2160p` / `1080p`) after hyphen must NEVER be parsed as `-E60` / `-E80`!
+        assert_eq!(
+            parse_shallow_episodes("庶女 (2026) - S01E11 - 2160p.WEB-DL.H265.AAC.mp4", "tv", None),
+            "S01E11"
+        );
+        assert_eq!(
+            parse_shallow_episodes("妈妈发疯了 - S01E43 - 1080p.WEB-DL.mkv", "tv", None),
+            "S01E43"
+        );
+        assert_eq!(
+            parse_shallow_episodes("花儿与少年 - S08E19 - 1080p.mp4", "tv", None),
+            "S08E19"
+        );
+        assert_eq!(
+            parse_shallow_episodes("Reading Bones 2026 S01E01-S01E08 1080p", "tv", None),
+            "S01E01-E08"
+        );
+        assert_eq!(
+            parse_shallow_episodes("骨鉴卿心 S01E01-08 2160p", "tv", None),
+            "S01E01-E08"
+        );
+        // Schedule preview line (`下集 ... S06E12`) must not pollute current episode `S06E11`
+        let jojo_post = "✅新片送达–请您检阅\n🎬 影视：JOJO的奇妙冒险\n📺 季集：S06E11\n📶 计划：连载中 · 下集 12-04（周五）S06E12";
+        assert_eq!(extract_pure_title(jojo_post), "JOJO的奇妙冒险");
+        assert_eq!(parse_shallow_episodes(jojo_post, "tv", None), "S06E11");
     }
 }

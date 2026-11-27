@@ -132,8 +132,12 @@ fn dispatch(
         }
 
         "tick" => {
-            let is_manual_ui = input["manual"].as_bool() == Some(true)
+            let is_manual_ui = input["ui_slice"].as_bool() == Some(true)
+                || input["manual"].as_bool() == Some(true)
                 || env::var("MEDIARY_PLUGIN_TRIGGER").ok().as_deref() == Some("manual");
+            let should_reset_cursor = input["reset_cursor"].as_bool().unwrap_or_else(|| {
+                input["manual"].as_bool() == Some(true) && input.get("ui_slice").is_none()
+            });
             let host = HostClient::from_env()?;
             let _ = host.sync_unified_rules_if_stale(conn, if is_manual_ui { 300 } else { 120 });
             let cfg = db::load_config(conn)?;
@@ -141,6 +145,38 @@ fn dispatch(
             let mut notices = Vec::new();
             let mut any_has_more = false;
             let tick_clock = std::time::Instant::now();
+
+            if !is_manual_ui
+                && db::get_cursor(conn, "pending_tmdbid_repair").as_deref() == Some("1")
+            {
+                match staging::repair_missing_tmdbid_history(conn, &host, &cfg, settings, 180) {
+                    Ok(rep) => {
+                        let rem = rep["remaining"].as_u64().unwrap_or(0);
+                        if rem == 0 {
+                            let _ = conn.execute(
+                                "DELETE FROM cursors WHERE key = 'pending_tmdbid_repair'",
+                                [],
+                            );
+                        } else {
+                            any_has_more = true;
+                        }
+                        if let Some(n) = rep["notice"].as_str().filter(|s| !s.is_empty()) {
+                            notices.push(n.to_string());
+                            db::log_task_history(
+                                conn,
+                                "115归档",
+                                "历史记录 TMDB 标签批量重整",
+                                &cfg.host_sync.transfer_task_name,
+                                "repair_tmdbid",
+                                "done",
+                                n,
+                            );
+                        }
+                    }
+                    Err(e) => notices.push(format!("TMDB 标签批量重整异常: {e:#}")),
+                }
+            }
+
             for p in cfg
                 .pipelines
                 .iter()
@@ -150,16 +186,16 @@ fn dispatch(
                     any_has_more = true;
                     break;
                 }
-                if input["manual"].as_bool() == Some(true) {
+                if should_reset_cursor {
                     let _ = conn.execute(
                         "DELETE FROM cursors WHERE key = ?",
                         [format!("staging_walk:{}", p.id)],
                     );
                 }
                 let scan_res = if is_manual_ui {
-                    staging::scan_pipeline_ui(conn, &host, &cfg, settings, p.id, 10)
+                    staging::scan_pipeline_ui(conn, &host, &cfg, settings, p.id, 12)
                 } else {
-                    staging::scan_pipeline(conn, &host, &cfg, settings, p.id, 30)
+                    staging::scan_pipeline(conn, &host, &cfg, settings, p.id, 80)
                 };
                 match scan_res {
                     Ok(r) => {
@@ -1124,6 +1160,33 @@ fn dispatch(
             Ok(res)
         }
 
+        "ui_history_repair_tmdbid" => {
+            let filter = db::ActivityFilter {
+                record_type: input["record_type"].as_str().unwrap_or("media").to_string(),
+                kind: input["kind"].as_str().unwrap_or("all").to_string(),
+                action_group: input["action_group"].as_str().unwrap_or("all").to_string(),
+                status: input["status"].as_str().unwrap_or("all").to_string(),
+                keyword: input["keyword"].as_str().unwrap_or_default().to_string(),
+                limit: input["limit"].as_u64().unwrap_or(200) as usize,
+            };
+            let host = HostClient::from_env()?;
+            let _ = host.sync_unified_rules_if_stale(conn, 180);
+            let cfg = db::load_config(conn)?;
+            let rep = staging::repair_missing_tmdbid_history(conn, &host, &cfg, settings, 18)?;
+            if rep["remaining"].as_u64().unwrap_or(0) > 0 {
+                let _ = db::set_cursor(conn, "pending_tmdbid_repair", "1");
+            } else {
+                let _ = conn.execute(
+                    "DELETE FROM cursors WHERE key = 'pending_tmdbid_repair'",
+                    [],
+                );
+            }
+            let mut res = db::query_activities(conn, &filter)?;
+            res["repair"] = rep;
+            res["counts"] = db::summary_counts(conn);
+            Ok(res)
+        }
+
         _ => bail!("MediWash 未知插件动作: {action}"),
     }
 }
@@ -1195,6 +1258,8 @@ fn build_bootstrap_payload(
             "transfer_source_cid": cfg.host_sync.transfer_source_cid,
             "transfer_target_folder": cfg.host_sync.transfer_target_folder,
             "transfer_target_cid": cfg.host_sync.transfer_target_cid,
+            "transfer_task_name": cfg.host_sync.transfer_task_name,
+            "has_flowlink_transfer_template": cfg.host_sync.has_flowlink_transfer_template,
             "last_synced": models::format_ts_cn(cfg.host_sync.last_synced),
         },
         "counts": db::summary_counts(conn),

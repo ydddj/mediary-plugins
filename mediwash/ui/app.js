@@ -390,8 +390,10 @@ function renderStagingTab(root) {
     probe_mode: 'smart',
     rule_id_override: '',
   };
+  const rules = b.rules || [];
   const extraPipelines = pipelines.slice(1);
   const rejMode = primary.reject_mode === 'skip' ? 'skip' : 'recycle_bin';
+  const probeMode = primary.probe_mode || 'smart';
   const libTargetHint = hsync.transfer_target_folder
     ? `${hsync.transfer_target_folder}${hsync.transfer_target_cid ? ` (${hsync.transfer_target_cid})` : ''}`
     : '跟随 Mediary 主程序媒体库设置';
@@ -415,6 +417,23 @@ function renderStagingTab(root) {
             <div style="font-size:13px;line-height:1.55;">
               <strong>⚠️ 当前处于「仅预览模式（干跑）」——评分结果暂未执行实际归档与清理</strong><br/>
               <span class="mw-muted">确认评分规则符合预期后，关闭插件右上角「配置 → 仅预览模式（干跑）」，后续所有新片入库、高分洗版升级、低分移入回收站均<strong>全自动一步到位，无需任何中间目录</strong>。</span>
+            </div>
+          </div>`
+        : ''
+    }
+
+    ${
+      hsync.has_flowlink_transfer_template === false
+        ? `<div class="mw-card" style="border-color:#d97706;background:color-mix(in srgb, #f59e0b 10%, var(--mw-surface));">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;font-size:12.5px;line-height:1.55;">
+              <div style="flex:1;min-width:260px;">
+                <strong>⚠️ 检测到宿主「内置 STRM 工具 → 转存整理任务」列表为空（会导致归档目录缺少 <code>[tmdbid-...]</code>）</strong><br/>
+                <span class="mw-muted">主程序的 <code>open115/files/organize</code> 接口会从内置 STRM 工具的默认转存任务读取 115 电影/剧集重命名模板；当转存任务被清空时，会回退为不含 <code>[tmdbid-...]</code> 的简版模板。请在内置 STRM 工具中新建一条<strong>取消勾选「启用」（保持停用即可，不会抢跑转存）</strong>的默认任务并粘贴下方模板，随后在历史记录点「重整」即可修正。</span>
+              </div>
+              <div class="mw-actions" style="flex-shrink:0;">
+                ${hsync.movie_rename_format ? `<button type="button" class="mw-btn sm" id="btn-copy-tpl-movie">复制电影模板</button>` : ''}
+                ${hsync.tv_rename_format ? `<button type="button" class="mw-btn sm primary" id="btn-copy-tpl-tv">复制剧集模板</button>` : ''}
+              </div>
             </div>
           </div>`
         : ''
@@ -452,6 +471,7 @@ function renderStagingTab(root) {
           </div>
         </div>
         <div class="mw-actions">
+          <button type="button" class="mw-btn sm" id="btn-edit-primary-pipe">编辑当前目录</button>
           <button type="button" class="mw-btn sm" id="btn-browse-115-standalone">浏览/实测 115 目录</button>
           <button type="button" class="mw-btn sm ghost" id="btn-new-pipeline">+ 额外监控目录</button>
         </div>
@@ -476,7 +496,11 @@ function renderStagingTab(root) {
             <button type="button" class="mw-btn sm" id="btn-qp-pick-dst">浏览</button>
           </div>
           <span class="mw-muted" id="qp-dst-name" style="font-size:11.5px;">
-            ${esc(primary.target_cid ? `指定归档库根：${primary.target_name || '自定义目录'} (${primary.target_cid})` : `默认归档至：${libTargetHint}（无需开启转存任务）`)}
+            ${esc(
+              primary.target_cid
+                ? `指定归档库根：${primary.target_name || '自定义目录'} (${primary.target_cid})${hsync.transfer_task_name ? ` · 命名模板任务：${hsync.transfer_task_name}` : ''}`
+                : `默认归档至：${libTargetHint}${hsync.transfer_task_name ? ` · 复用模板任务：${hsync.transfer_task_name}（保持停用即可）` : '（无需开启转存任务）'}`
+            )}
           </span>
         </div>
 
@@ -489,6 +513,30 @@ function renderStagingTab(root) {
           <span class="mw-muted" style="font-size:11.5px;">
             使用宿主原生 <code>open115/files/delete</code> 移入回收站，受保护目录自动防误删
           </span>
+        </div>
+      </div>
+
+      <div class="mw-grid-2" style="margin-top:10px;">
+        <div class="mw-field">
+          <label>115 MediaInfo 实测模式（影响大批量积压归档速度）</label>
+          <select class="mw-select" id="qp-probe-mode">
+            <option value="smart" ${probeMode === 'smart' ? 'selected' : ''}>智能按需探测（推荐：优先命中缓存，未命中进 1.25s 后台队列）</option>
+            <option value="filename_only" ${probeMode === 'filename_only' ? 'selected' : ''}>仅按文件名与体积快速评分（零排队秒级归档，适合百集批量消化）</option>
+            <option value="always" ${probeMode === 'always' ? 'selected' : ''}>强制实测全部音视频流后再归档</option>
+          </select>
+        </div>
+
+        <div class="mw-field">
+          <label>专属评分方案（留空跟随全局电影/剧集统一策略）</label>
+          <select class="mw-select" id="qp-rule-override">
+            <option value="">跟随全局电影/剧集统一策略</option>
+            ${rules
+              .map(
+                (r) =>
+                  `<option value="${esc(r.id)}" ${r.id === (primary.rule_id_override || '') ? 'selected' : ''}>${esc(r.name)}</option>`
+              )
+              .join('')}
+          </select>
         </div>
       </div>
 
@@ -612,11 +660,26 @@ function renderStagingTab(root) {
     render();
   };
 
+  const copyMovieBtn = document.getElementById('btn-copy-tpl-movie');
+  if (copyMovieBtn) {
+    copyMovieBtn.onclick = async () => {
+      await copyToClipboard(hsync.movie_rename_format || '');
+      showToast('已复制电影重命名模板（含 [tmdbid]）', 'success');
+    };
+  }
+  const copyTvBtn = document.getElementById('btn-copy-tpl-tv');
+  if (copyTvBtn) {
+    copyTvBtn.onclick = async () => {
+      await copyToClipboard(hsync.tv_rename_format || '');
+      showToast('已复制剧集重命名模板（含 [tmdbid] 与 Season 01）', 'success');
+    };
+  }
+
   document.getElementById('btn-run-tick').onclick = async () => {
-    showToast('正在执行目录扫描分流、删旧账本核验与 PT 巡检...', 'info');
+    showToast('正在执行目录扫描分流、就绪探测复检与删旧核验...', 'info');
     let lastNotice = '';
-    for (let round = 1; round <= 12; round++) {
-      const res = await callAction('tick', { manual: round === 1 });
+    for (let round = 1; round <= 24; round++) {
+      const res = await callAction('tick', { manual: true, ui_slice: true, reset_cursor: round === 1 });
       lastNotice = res.notice || '巡检完成';
       if (res.counts && state.boot) {
         state.boot.counts = res.counts;
@@ -667,8 +730,8 @@ function renderStagingTab(root) {
       auto_admit: document.getElementById('qp-auto').checked,
       wash_enabled: document.getElementById('qp-wash').checked,
       reject_mode: document.getElementById('qp-rej-mode').value,
-      probe_mode: primary.probe_mode || 'smart',
-      rule_id_override: primary.rule_id_override || '',
+      probe_mode: document.getElementById('qp-probe-mode').value || 'smart',
+      rule_id_override: document.getElementById('qp-rule-override').value || '',
     };
     if (runScan) showToast('正在保存设置并分批执行一步归档与洗版处理...', 'info');
     let res = await callAction('ui_save_pipeline', { pipeline, run_scan: runScan });
@@ -695,6 +758,7 @@ function renderStagingTab(root) {
   document.getElementById('btn-qp-save').onclick = () => savePrimaryPipeline(false);
   document.getElementById('btn-qp-save-scan').onclick = () => savePrimaryPipeline(true);
 
+  document.getElementById('btn-edit-primary-pipe').onclick = () => openPipelineModal(primary.id ? primary : null);
   document.getElementById('btn-browse-115-standalone').onclick = () => open115BrowserModal();
   document.getElementById('btn-new-pipeline').onclick = () => openPipelineModal(null);
 
@@ -3512,6 +3576,13 @@ function renderHistoryTab(root) {
         </div>
 
         <div class="mw-actions">
+          ${
+            isMedia
+              ? `<button type="button" class="mw-btn sm" id="btn-hist-repair-tmdbid" data-tip="自动扫描历史记录中所有缺失 [tmdbid-...] 的已归档条目，按同目录合并批量重新整理并清理空壳旧目录">
+                   补齐缺 tmdbid 项
+                 </button>`
+              : ''
+          }
           <button type="button" class="mw-btn sm primary" id="btn-hist-retry-selected">
             ${isMedia ? '重整/重试勾选' : '重试勾选'} (${state.histSelected.size})
           </button>
@@ -3777,11 +3848,11 @@ function renderHistoryTab(root) {
   const doRetry = async (ids) => {
     let pendingIds = [...ids];
     let lastNotice = '';
-    for (let round = 1; round <= 15 && pendingIds.length > 0; round++) {
+    for (let round = 1; round <= 40 && pendingIds.length > 0; round++) {
       showToast(
         round === 1
-          ? '正在执行重整 / 重试...'
-          : `已完成前序批次，正在继续重整剩余 ${pendingIds.length} 条记录...`,
+          ? `正在执行重整 / 重试（共 ${pendingIds.length} 条）...`
+          : `第 ${round - 1} 批已完成，正在继续处理剩余 ${pendingIds.length} 条记录...`,
         'info'
       );
       const res = await callAction('ui_history_retry', {
@@ -3813,6 +3884,35 @@ function renderHistoryTab(root) {
     if (!ids.length) return showToast('请先勾选要重试的历史记录', 'error');
     doRetry(ids);
   };
+
+  const repairBtn = document.getElementById('btn-hist-repair-tmdbid');
+  if (repairBtn) {
+    repairBtn.onclick = async () => {
+      await runBusy('正在按目录分组批量补齐 [tmdbid-...] 标签...', async () => {
+        let totalRepaired = 0;
+        let lastNotice = '';
+        for (let round = 1; round <= 20; round++) {
+          const res = await bridge.runAction('ui_history_repair_tmdbid', {
+            record_type: state.histType,
+            kind: state.histKind,
+            action_group: state.histAction,
+            status: state.histStatus,
+            keyword: state.histKeyword,
+            limit: 200,
+          });
+          state.histData = res;
+          if (res.counts && state.boot) state.boot.counts = res.counts;
+          const rep = res.repair || {};
+          totalRepaired += Number(rep.repaired || 0);
+          if (rep.notice) lastNotice = rep.notice;
+          render();
+          if (!rep.has_more) break;
+          setBusyText(`正在分批重整缺 [tmdbid] 条目（已完成 ${totalRepaired} 条，剩余 ${rep.remaining || 0} 条）...`);
+        }
+        showToast(lastNotice || `已完成 ${totalRepaired} 条记录的 [tmdbid] 模板重整`, 'success');
+      });
+    };
+  }
 
   root.querySelectorAll('.js-hist-del-one').forEach((btn) => {
     btn.onclick = () => doDelete([Number(btn.dataset.id)], false);

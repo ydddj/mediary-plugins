@@ -1,5 +1,5 @@
 PLUGIN_ID := medifind
-VERSION := 3.2.0
+VERSION := 3.2.1
 RUST_IMAGE := rust:1.86-bookworm
 CARGO_TARGET_DIR ?= /tmp/medifind-target
 

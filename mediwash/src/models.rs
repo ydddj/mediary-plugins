@@ -145,6 +145,10 @@ pub struct HostSyncState {
     pub transfer_source_cid: String,
     pub transfer_target_folder: String,
     pub transfer_target_cid: String,
+    #[serde(default)]
+    pub transfer_task_name: String,
+    #[serde(default = "default_true")]
+    pub has_flowlink_transfer_template: bool,
     pub protected_cids: Vec<String>,
     pub last_synced: u64,
 }
