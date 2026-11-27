@@ -1,0 +1,156 @@
+{
+  "api_version": 1,
+  "id": "medifind",
+  "name": "MediFind 网盘聚合引擎",
+  "version": "3.2.0",
+  "min_mediary_version": "3.4.6",
+  "description": "面向 Mediary 3.4.6+ 的 Rust 上游找片与转存进货引擎：原生接入宿主参数化 TMDB 发现与同源海报代理、分季已入库集号比对、确定性库诊断、115 分享与 ED2K/Magnet 指定目录离线进货，支持影巢中转/HDHive、Telegram MTProto 频道订阅、AYClub、RSS 与 NextFind 同款权重打分",
+  "action_runtime": {
+    "entrypoint": "./plugin"
+  },
+  "resource_search": {
+    "source_id": -10,
+    "name": "MediFind",
+    "action": "resource_search",
+    "transfer_action": "resource_transfer",
+    "default_selected": true,
+    "timeout_seconds": 60
+  },
+  "ui": {
+    "dir": "./ui",
+    "entry": "index.html",
+    "title": "MediFind 网盘聚合引擎",
+    "eyebrow": "HDHive · TG · AYClub · RSS · 115 预览与中转进货工作台",
+    "trigger": {
+      "label": "工作台",
+      "icon": "search"
+    }
+  },
+  "scheduled_actions": [
+    {
+      "action": "tick",
+      "label": "追更巡检与待审重试",
+      "manual": true,
+      "cron": "*/20 * * * *",
+      "timeout_seconds": 1200
+    },
+    {
+      "action": "daily_checkin",
+      "label": "每日签到与配额刷新",
+      "manual": true,
+      "cron": "15 8 * * *",
+      "timeout_seconds": 180
+    }
+  ],
+  "requested_scopes": [
+    "catalog:read",
+    "subscriptions:read",
+    "subscriptions:write",
+    "media-library:read",
+    "integrations:read",
+    "integrations:run",
+    "open115:read",
+    "open115:write",
+    "settings:read",
+    "notifications:send"
+  ],
+  "auto_grant_scopes": false,
+  "settings_schema": {
+    "sections": [
+      {
+        "title": "基础开关",
+        "alert": "所有资源渠道（Telegram 频道、HDHive、AYClub、RSS）、初筛规则、115 中转目录分流与私有神盾索引请在插件卡片点「工作台」操作。115 凭证、FlowLink 与系统代理已自动复用 Mediary 宿主配置。",
+        "fields": [
+          {
+            "key": "$enabled",
+            "type": "switch",
+            "label": "启用插件",
+            "default": false
+          },
+          {
+            "key": "auto_chase",
+            "type": "switch",
+            "label": "订阅联动自动追更补缺",
+            "help": "定时对比 Mediary 订阅与媒体库缺集，自动检索多源网盘资源、择优转存并重试 115 审核中队列",
+            "default": true
+          },
+          {
+            "key": "auto_unlock_hdhive",
+            "type": "switch",
+            "label": "允许自动积分兑换 HDHive",
+            "help": "在工作台设定的单次积分上限（默认 10 分）内允许追更与转存自动解锁影巢资源；关闭时仅处理免费或已解锁资源",
+            "default": true
+          },
+          {
+            "key": "notify",
+            "type": "switch",
+            "label": "发送转存与签到通知",
+            "default": true
+          }
+        ]
+      }
+    ]
+  },
+  "data_view": {
+    "title": "聚合转存与运行记录",
+    "file": "data/dashboard.json",
+    "item_label": "执行记录",
+    "summary": [
+      {
+        "key": "enabled_channels",
+        "label": "启用渠道"
+      },
+      {
+        "key": "cached_resources",
+        "label": "缓存资源"
+      },
+      {
+        "key": "reviewing_count",
+        "label": "审核待重试"
+      },
+      {
+        "key": "shield_files",
+        "label": "神盾索引"
+      },
+      {
+        "key": "transferred_count",
+        "label": "已转存"
+      },
+      {
+        "key": "last_result",
+        "label": "最近状态"
+      }
+    ],
+    "fields": [
+      {
+        "key": "title",
+        "label": "资源/任务",
+        "primary": true
+      },
+      {
+        "key": "source",
+        "label": "来源渠道"
+      },
+      {
+        "key": "episodes",
+        "label": "季集/规格"
+      },
+      {
+        "key": "action",
+        "label": "动作"
+      },
+      {
+        "key": "status",
+        "label": "状态"
+      },
+      {
+        "key": "detail",
+        "label": "说明"
+      },
+      {
+        "key": "updated_at",
+        "label": "时间"
+      }
+    ]
+  }
+}

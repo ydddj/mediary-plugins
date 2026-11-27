@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediPlug 插件源与 GitHub 桥接</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="mp-shell">
+    <aside class="mp-sidebar">
+      <div class="mp-brand">
+        <div class="mp-brand-badge">MP</div>
+        <div>
+          <div class="mp-brand-title">MediPlug</div>
+          <div class="mp-brand-sub" id="mp-version-label">插件源 · GitHub 桥接</div>
+        </div>
+      </div>
+
+      <nav class="mp-nav" id="mp-nav">
+        <button type="button" class="mp-nav-btn active" data-tab="sources">
+          <span>宿主插件源管理</span>
+          <span class="mp-nav-badge" id="badge-sources">0</span>
+        </button>
+        <button type="button" class="mp-nav-btn" data-tab="github">
+          <span>GitHub 仓库桥接</span>
+          <span class="mp-nav-badge" id="badge-github">0</span>
+        </button>
+        <button type="button" class="mp-nav-btn" data-tab="store">
+          <span>插件中心预览</span>
+          <span class="mp-nav-badge" id="badge-store">0</span>
+        </button>
+        <button type="button" class="mp-nav-btn" data-tab="builder">
+          <span>包校验与索引生成</span>
+          <span class="mp-nav-badge" id="badge-builder">0</span>
+        </button>
+        <button type="button" class="mp-nav-btn" data-tab="settings">
+          <span>全局设置与记录</span>
+          <span class="mp-nav-badge" id="badge-logs">0</span>
+        </button>
+      </nav>
+
+      <div class="mp-sidebar-foot">
+        <div class="mp-status-pill" id="mp-daemon-pill">桥接服务检测中...</div>
+        <div class="mp-status-pill" id="mp-auth-pill">宿主源鉴权检测中...</div>
+        <div class="mp-status-pill" id="mp-bridge-pill">聚合注册状态检测中...</div>
+        <div class="mp-subnote" id="mp-sync-note">就绪</div>
+      </div>
+    </aside>
+
+    <main class="mp-main">
+      <div id="mp-toast" class="mp-toast hidden"></div>
+      <div id="mp-view"></div>
+    </main>
+  </div>
+
+  <div id="mp-modal-backdrop" class="mp-modal-backdrop hidden">
+    <div class="mp-modal" id="mp-modal-box">
+      <div class="mp-modal-head">
+        <h3 id="mp-modal-title">设置</h3>
+        <button type="button" class="mp-btn ghost sm" id="mp-modal-close">✕</button>
+      </div>
+      <div class="mp-modal-body" id="mp-modal-body"></div>
+    </div>
+  </div>
+
+  <input type="file" id="mp-hidden-archive" class="hidden" accept=".tar.gz,.tgz,application/gzip" />
+  <input type="file" id="mp-hidden-config" class="hidden" accept=".json,application/json" />
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

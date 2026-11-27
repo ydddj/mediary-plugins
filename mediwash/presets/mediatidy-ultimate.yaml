@@ -1,0 +1,490 @@
+quality:
+
+  - name: 顶级精准
+    id: ultimate-precision
+
+    source_extract_metadata: true
+    dest_extract_metadata: true
+
+    scoring:
+
+      resolution:
+        enabled: true
+        weight: 6
+        priority:
+          - 4320p
+          - 2160p
+          - 1440p
+          - 1080p
+          - 1080i
+          - 720p
+          - 576p
+          - 480p
+          - 360p
+          - Unknown
+
+      source:
+        enabled: true
+        weight: 7
+        priority:
+          - Remux+UHD BluRay
+          - Remux+BluRay
+          - Remux+BD
+          - UHD BluRay
+          - BluRay
+          - BD
+          - BDRip
+          - WEB-DL
+          - WEBRip
+          - WEB
+          - Unknown
+          - HDTV
+          - DVDRip
+          - DVD
+          - SDTV
+          - CAM
+
+      video_codec:
+        enabled: true
+        weight: 1
+        priority:
+          - AV1
+          - H.265
+          - H.264
+          - VP9
+          - VC-1
+          - MPEG-4
+          - MPEG-2
+          - Xvid
+          - DivX
+
+      audio_codec:
+        enabled: true
+        weight: 4
+        priority:
+          - codecs:
+              - DTS:X
+          - codecs:
+              - Dolby TrueHD
+            atmos: true
+          - codecs:
+              - TrueHD Dolby Atmos 7.1
+          - codecs:
+              - TrueHD Dolby Atmos 5.1
+          - codecs:
+              - TrueHD Dolby Atmos
+          - codecs:
+              - DTS-HD MA 7.1
+          - codecs:
+              - DTS-HD MA 5.1
+          - codecs:
+              - DTS-HD MA
+          - codecs:
+              - PCM
+          - codecs:
+              - Dolby TrueHD
+          - codecs:
+              - FLAC
+          - codecs:
+              - DTS-HD
+          - codecs:
+              - Dolby Digital Plus Atmos
+          - codecs:
+              - Dolby Digital Plus
+          - codecs:
+              - DTS
+          - codecs:
+              - Dolby Digital
+          - codecs:
+              - AAC
+          - codecs:
+              - Opus
+          - codecs:
+              - MP3
+          - codecs:
+              - Unknown
+
+      hdr:
+        enabled: true
+        weight: 4
+        priority:
+          - Dolby Vision P7
+          - Dolby Vision P8
+          - Dolby Vision P5
+          - Dolby Vision
+          - HDR10+
+          - HDR10
+          - HLG
+          - HDR
+          - SDR
+          - Unknown
+
+      color_depth:
+        enabled: true
+        weight: 1
+        priority:
+          - 12-bit
+          - 10-bit
+          - 8-bit
+          - Unknown
+
+      frame_rate:
+        enabled: true
+        weight: 2
+        priority:
+          - 120fps
+          - 119.88fps
+          - 60fps
+          - 59.94fps
+          - 50fps
+          - 30fps
+          - 29.97fps
+          - 25fps
+          - 24fps
+          - 23.976fps
+          - Other
+          - Unknown
+
+      subtitle:
+        enabled: true
+        weight: 4
+        priority:
+          - languages:
+              - zh-CN
+            formats:
+              - PGS
+            source: any
+            score: 10.00
+          - languages:
+              - zh-CN
+            formats:
+              - ASS
+              - SSA
+            source: any
+            score: 9.96
+          - languages:
+              - zh-CN
+            formats:
+              - SRT
+              - VTT
+            source: any
+            score: 9.92
+          - languages:
+              - zh-TW
+              - zh-HK
+              - yue
+            formats:
+              - PGS
+            source: any
+            score: 9.88
+          - languages:
+              - zh-TW
+              - zh-HK
+              - yue
+            formats:
+              - ASS
+              - SSA
+            source: any
+            score: 9.84
+          - languages:
+              - zh-TW
+              - zh-HK
+              - yue
+            formats:
+              - SRT
+              - VTT
+            source: any
+            score: 9.80
+          - languages:
+              - zh
+            formats:
+              - PGS
+            source: any
+            score: 9.76
+          - languages:
+              - zh
+            formats:
+              - ASS
+              - SSA
+            source: any
+            score: 9.72
+          - languages:
+              - zh
+            formats:
+              - SRT
+              - VTT
+            source: any
+            score: 9.68
+          - languages:
+              - yue
+            source: any
+            score: 9.64
+          - languages:
+              - und
+            source: any
+            score: 2.00
+          - source: any
+            score: 1.00
+
+      file_extension:
+        enabled: true
+        weight: 1
+        priority:
+          - mkv
+          - mp4
+          - ts
+          - m2ts
+          - avi
+          - mov
+          - Unknown
+
+      file_size:
+        enabled: true
+        weight: 20
+
+      bitrate:
+        enabled: true
+        weight: 25
+
+      video_bitrate:
+        enabled: true
+        weight: 25
+
+    exclude:
+      resolutions:
+        - 360p
+      codecs:
+        - MPEG-2
+        - MPEG-4
+        - Xvid
+        - DivX
+      hdr_types: []
+
+    version:
+      enabled: true
+      unique: true
+      max_versions: 27
+
+      unmatched: skip
+
+      slots:
+        - name: 8K-Dolby Vision
+          match:
+            resolution:
+              - 4320p
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 8K-HDR
+          match:
+            resolution:
+              - 4320p
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 8K-SDR
+          match:
+            resolution:
+              - 4320p
+            hdr:
+              - SDR
+
+        - name: 4K-Dolby Vision
+          match:
+            resolution:
+              - 2160p
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 4K-HDR
+          match:
+            resolution:
+              - 2160p
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 4K-SDR
+          match:
+            resolution:
+              - 2160p
+            hdr:
+              - SDR
+        - name: 4K-HFR
+          match:
+            resolution:
+              - 2160p
+            frame_rate:
+              - 120fps
+              - 119.88fps
+
+        - name: 1440p-Dolby Vision
+          match:
+            resolution:
+              - 1440p
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 1440p-HDR
+          match:
+            resolution:
+              - 1440p
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 1440p-SDR
+          match:
+            resolution:
+              - 1440p
+            hdr:
+              - SDR
+        - name: 1440p-HFR
+          match:
+            resolution:
+              - 1440p
+            frame_rate:
+              - 120fps
+              - 119.88fps
+
+        - name: 1080p-Dolby Vision
+          match:
+            resolution:
+              - 1080p
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 1080p-HDR
+          match:
+            resolution:
+              - 1080p
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 1080p-SDR
+          match:
+            resolution:
+              - 1080p
+            hdr:
+              - SDR
+        - name: 1080p-HFR
+          match:
+            resolution:
+              - 1080p
+            frame_rate:
+              - 120fps
+              - 119.88fps
+
+        - name: 1080i-Dolby Vision
+          match:
+            resolution:
+              - 1080i
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 1080i-HDR
+          match:
+            resolution:
+              - 1080i
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 1080i-SDR
+          match:
+            resolution:
+              - 1080i
+            hdr:
+              - SDR
+
+        - name: 720p-Dolby Vision
+          match:
+            resolution:
+              - 720p
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 720p-HDR
+          match:
+            resolution:
+              - 720p
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 720p-SDR
+          match:
+            resolution:
+              - 720p
+            hdr:
+              - SDR
+
+        - name: 576p-Dolby Vision
+          match:
+            resolution:
+              - 576p
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 576p-HDR
+          match:
+            resolution:
+              - 576p
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 576p-SDR
+          match:
+            resolution:
+              - 576p
+            hdr:
+              - SDR
+
+        - name: 480p-Dolby Vision
+          match:
+            resolution:
+              - 480p
+            hdr:
+              - Dolby Vision
+              - Dolby Vision P5
+              - Dolby Vision P7
+              - Dolby Vision P8
+        - name: 480p-HDR
+          match:
+            resolution:
+              - 480p
+            hdr:
+              - HDR10+
+              - HDR10
+              - HLG
+              - HDR
+        - name: 480p-SDR
+          match:
+            resolution:
+              - 480p
+            hdr:
+              - SDR

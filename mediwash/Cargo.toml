@@ -1,0 +1,20 @@
+[package]
+name = "mediwash"
+version = "3.1.5"
+edition = "2021"
+rust-version = "1.86"
+
+[dependencies]
+anyhow = "1"
+fancy-regex = "0.14"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+ureq = { version = "2.12", default-features = false, features = ["json", "tls"] }
+url = "=2.5.2"
+
+[profile.release]
+strip = true
+lto = "thin"

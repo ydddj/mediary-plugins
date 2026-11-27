@@ -1,0 +1,1136 @@
+{
+  "name": "收藏满分100(电影≧75分,剧集≧65分收藏级)-V5(降低了组的权重把权重加到了画质核心)",
+  "source_file_extract_metadata": true,
+  "dest_file_extract_metadata": true,
+  "audioCodec": {
+    "blacklist": [],
+    "whitelist": [],
+    "dts_x": {
+      "name": "DTS:X",
+      "pattern": "DTS:X",
+      "score": 10,
+      "description": "次世代无损全景声"
+    },
+    "truehd_dolby_atmos_7_1": {
+      "name": "TrueHD Dolby Atmos 7.1",
+      "pattern": "TrueHD Dolby Atmos 7.1",
+      "score": 10,
+      "description": "杜比无损全景声"
+    },
+    "truehd_dolby_atmos_5_1": {
+      "name": "TrueHD Dolby Atmos 5.1",
+      "pattern": "TrueHD Dolby Atmos 5.1",
+      "score": 9.5,
+      "description": "杜比无损全景声"
+    },
+    "dts_hd_ma_7_1": {
+      "name": "DTS-HD MA 7.1",
+      "pattern": "DTS-HD MA 7.1",
+      "score": 9,
+      "description": "DTS无损7.1"
+    },
+    "dts_hd_ma_5_1": {
+      "name": "DTS-HD MA 5.1",
+      "pattern": "DTS-HD MA 5.1",
+      "score": 8.5,
+      "description": "DTS无损5.1"
+    },
+    "truehd_7_1": {
+      "name": "TrueHD 7.1",
+      "pattern": "TrueHD 7.1",
+      "score": 8,
+      "description": "TrueHD无损7.1"
+    },
+    "truehd_5_1": {
+      "name": "TrueHD 5.1",
+      "pattern": "TrueHD 5.1",
+      "score": 7.5,
+      "description": "TrueHD无损5.1"
+    },
+    "dts_hd": {
+      "name": "DTS-HD",
+      "pattern": "DTS-HD",
+      "score": 6,
+      "description": "DTS高清有损"
+    },
+    "ddp_atmos_5_1": {
+      "name": "DDP Dolby Atmos 5.1",
+      "pattern": "DDP Dolby Atmos 5.1",
+      "score": 7,
+      "description": "杜比数字+全景声"
+    },
+    "ddp_5_1": {
+      "name": "DDP 5.1",
+      "pattern": "DDP 5.1",
+      "score": 5,
+      "description": "杜比数字+"
+    },
+    "dts": {
+      "name": "DTS",
+      "pattern": "DTS",
+      "score": 4,
+      "description": "传统DTS"
+    },
+    "pcm": {
+      "name": "PCM",
+      "pattern": "PCM",
+      "score": 5,
+      "description": "PCM无损"
+    },
+    "dolby_digital": {
+      "name": "Dolby Digital",
+      "pattern": "Dolby Digital|AC3",
+      "score": 4,
+      "description": "AC3普通音轨"
+    },
+    "ac3": {
+      "name": "AC3",
+      "pattern": "AC3",
+      "score": 4,
+      "description": "AC3"
+    },
+    "aac": {
+      "name": "AAC",
+      "pattern": "AAC",
+      "score": 3,
+      "description": "普通AAC音轨"
+    }
+  },
+  "audioCodec_weight": 1.2346,
+  "videoCodec": {
+    "blacklist": [],
+    "whitelist": [],
+    "av1": {
+      "name": "AV1",
+      "pattern": "AV1",
+      "score": 10,
+      "description": "AV1"
+    },
+    "h264": {
+      "name": "H.264",
+      "pattern": "H.264|x264",
+      "score": 6,
+      "description": "H.264"
+    },
+    "h265": {
+      "name": "H.265",
+      "pattern": "H.265|HEVC|x265",
+      "score": 9,
+      "description": "H.265"
+    }
+  },
+  "videoCodec_weight": 1.2288,
+  "color_depth": {
+    "blacklist": [],
+    "whitelist": [],
+    "bit_12": {
+      "name": "12-bit",
+      "pattern": "12-bit",
+      "score": 10,
+      "description": "12位色深"
+    },
+    "bit_10": {
+      "name": "10-bit",
+      "pattern": "10-bit",
+      "score": 9,
+      "description": "10位色深"
+    },
+    "bit_8": {
+      "name": "8-bit",
+      "pattern": "8-bit",
+      "score": 5,
+      "description": "8位色深"
+    }
+  },
+  "color_depth_weight": 1.023,
+  "frame_rate": {
+    "blacklist": [],
+    "whitelist": [],
+    "fps_120": {
+      "name": "120fps",
+      "pattern": "120fps",
+      "score": 10,
+      "description": "120帧率"
+    },
+    "fps_60": {
+      "name": "60fps",
+      "pattern": "60fps",
+      "score": 9,
+      "description": "60帧率"
+    },
+    "fps_30": {
+      "name": "30fps",
+      "pattern": "30fps",
+      "score": 6,
+      "description": "30帧率"
+    },
+    "fps_25": {
+      "name": "25fps",
+      "pattern": "25fps",
+      "score": 5,
+      "description": "25帧率"
+    },
+    "fps_24": {
+      "name": "24fps",
+      "pattern": "24fps",
+      "score": 5,
+      "description": "24帧率"
+    }
+  },
+  "frame_rate_weight": 0.2586,
+  "dolby_vision": {
+    "blacklist": [],
+    "whitelist": [],
+    "dolby_vision_p7": {
+      "name": "Dolby Vision P7",
+      "pattern": "Dolby Vision P7",
+      "score": 10,
+      "description": "杜比视界 P7"
+    },
+    "dolby_vision_p5": {
+      "name": "Dolby Vision P5",
+      "pattern": "Dolby Vision P5",
+      "score": 9.8,
+      "description": "杜比视界 P5"
+    },
+    "dolby_vision_p8": {
+      "name": "Dolby Vision P8",
+      "pattern": "Dolby Vision P8",
+      "score": 9.5,
+      "description": "杜比视界 P8"
+    },
+    "dolby_vision": {
+      "name": "Dolby Vision",
+      "pattern": "Dolby Vision",
+      "score": 9,
+      "description": "杜比视界"
+    }
+  },
+  "dolby_vision_weight": 1,
+  "dynamic_range": {
+    "blacklist": [],
+    "whitelist": [],
+    "hdr10_plus": {
+      "name": "HDR10+",
+      "pattern": "HDR10\\+",
+      "score": 8.5,
+      "description": "HDR10+"
+    },
+    "hdr10": {
+      "name": "HDR10",
+      "pattern": "HDR10",
+      "score": 7.5,
+      "description": "HDR10"
+    },
+    "hdr": {
+      "name": "HDR",
+      "pattern": "HDR",
+      "score": 7,
+      "description": "HDR"
+    },
+    "hlg": {
+      "name": "HLG",
+      "pattern": "HLG",
+      "score": 6.5,
+      "description": "HLG"
+    },
+    "sdr": {
+      "name": "SDR",
+      "pattern": "SDR",
+      "score": 6,
+      "description": "SDR"
+    }
+  },
+  "dynamic_range_weight": 1,
+  "resourceType": {
+    "blacklist": [],
+    "whitelist": [],
+    "UHD": {
+      "name": "Ultra HD",
+      "pattern": "Ultra HD|UHD",
+      "score": 10,
+      "description": "超高清蓝光"
+    },
+    "Bluray": {
+      "name": "Blu-Ray",
+      "pattern": "Blu-Ray",
+      "score": 9.5,
+      "description": "蓝光"
+    },
+    "Remux": {
+      "name": "Remux",
+      "pattern": "Remux",
+      "score": 9,
+      "description": "原盘重封装"
+    },
+    "WEB_DL": {
+      "name": "WEB-DL",
+      "pattern": "WEB-DL",
+      "score": 7,
+      "description": "网络高清"
+    }
+  },
+  "resourceType_weight": 0.8518,
+  "videoFormat": {
+    "blacklist": [],
+    "whitelist": [],
+    "screen_4320p": {
+      "name": "4320p",
+      "pattern": "4320p",
+      "score": 10,
+      "description": "8K"
+    },
+    "screen_2160p": {
+      "name": "2160p",
+      "pattern": "2160p|4K",
+      "score": 10,
+      "description": "4K"
+    },
+    "screen_1080p": {
+      "name": "1080p",
+      "pattern": "1080p",
+      "score": 7,
+      "description": "1080P"
+    },
+    "screen_720p": {
+      "name": "720p",
+      "pattern": "720p",
+      "score": 3,
+      "description": "720P"
+    },
+    "screen_576p": {
+      "name": "576p",
+      "pattern": "576p",
+      "score": -1,
+      "description": "标清"
+    },
+    "screen_480p": {
+      "name": "480p",
+      "pattern": "480p",
+      "score": -1,
+      "description": "标清"
+    },
+    "screen_360p": {
+      "name": "360p",
+      "pattern": "360p",
+      "score": -1,
+      "description": "低清"
+    }
+  },
+  "videoFormat_weight": 1.5432,
+  "releaseGroup": [
+    {
+      "name": "CHD",
+      "pattern": "CHD|CHDBits",
+      "score": 10,
+      "description": "国内顶级官方压制组"
+    },
+    {
+      "name": "HDS",
+      "pattern": "HDS|HDSky|HDSWEB",
+      "score": 10,
+      "description": "天空官方组"
+    },
+    {
+      "name": "MTeam",
+      "pattern": "MTeam|MT",
+      "score": 10,
+      "description": "馒头官方组"
+    },
+    {
+      "name": "OurBits",
+      "pattern": "OurBits|OB",
+      "score": 10,
+      "description": "我堡官方组"
+    },
+    {
+      "name": "HDHome",
+      "pattern": "HDHome",
+      "score": 10,
+      "description": "家园官方组"
+    },
+    {
+      "name": "WIKI",
+      "pattern": "WIKI|TTG",
+      "score": 10,
+      "description": "TTG顶级压制组"
+    },
+    {
+      "name": "NGB",
+      "pattern": "NGB",
+      "score": 10,
+      "description": "TTG精品压制组"
+    },
+    {
+      "name": "MySiLU",
+      "pattern": "QHstudIo",
+      "score": 10,
+      "description": "杜比"
+    },
+    {
+      "name": "FRDS",
+      "pattern": "FRDS",
+      "score": 10,
+      "description": "朋友官方组"
+    },
+    {
+      "name": "PTer",
+      "pattern": "PTer",
+      "score": 10,
+      "description": "猫站官方组"
+    },
+    {
+      "name": "SSD",
+      "pattern": "CMCT|CMCTV",
+      "score": 10,
+      "description": "春天官方组"
+    },
+    {
+      "name": "HHWEB",
+      "pattern": "HHWEB",
+      "score": 10,
+      "description": "憨憨官方组"
+    },
+    {
+      "name": "ADweb",
+      "pattern": "ADweb|Audies",
+      "score": 10,
+      "description": "观众组"
+    },
+    {
+      "name": "HiveWeb",
+      "pattern": "HiveWeb",
+      "score": 10,
+      "description": "影巢官方组"
+    },
+    {
+      "name": "AY",
+      "pattern": "AY",
+      "score": 10,
+      "description": "爱影官方组"
+    },
+    {
+      "name": "自定义属性1775353780065",
+      "pattern": "TuoXie|LGNB@oSpecialCN|UBWEB|UBits|404",
+      "score": 10,
+      "description": "有组"
+    },
+    {
+      "name": "自定义属性1776598277328",
+      "pattern": "XH",
+      "score": -5,
+      "description": "星河"
+    },
+    {
+      "name": "自定义属性1779440378727",
+      "pattern": "Gimy",
+      "score": 10,
+      "description": "剧迷"
+    }
+  ],
+  "releaseGroup_weight": 0.6,
+  "releaseGroup_blacklist": [],
+  "releaseGroup_whitelist": [],
+  "custom_attributes": [
+    {
+      "name": "自定义属性1775374349502",
+      "pattern": "[1-2]Audios",
+      "score": 5,
+      "description": "1-2多音轨+0.5分"
+    },
+    {
+      "name": "自定义属性1775374938618",
+      "pattern": "[3-9]Audios|\\d{2}Audios",
+      "score": 10,
+      "description": "3条及以上多音轨+1分"
+    }
+  ],
+  "custom_weight": 0.1,
+  "custom_attributes_blacklist": [],
+  "custom_attributes_whitelist": [],
+  "subtitle": {
+    "blacklist": [
+      "儿童动漫"
+    ],
+    "whitelist": [],
+    "pgs_chinese_bilingual_effects": {
+      "name": "PGS 中文双语特效",
+      "pattern": "PGS 简英特效|PGS 中英特效|PGS 中文双语特效",
+      "score": 10,
+      "description": "PGS中英双语特效字幕"
+    },
+    "pgs_chinese_effects": {
+      "name": "PGS 中文特效",
+      "pattern": "PGS 简中特效|PGS 中文特效",
+      "score": 9.2,
+      "description": "PGS中文特效字幕"
+    },
+    "pgs_chinese_bilingual": {
+      "name": "PGS 中文双语",
+      "pattern": "PGS 简英双语|PGS 简中双语|PGS 中英双语|PGS 中文双语",
+      "score": 10,
+      "description": "PGS中英双语字幕"
+    },
+    "pgs_chinese": {
+      "name": "PGS 简体中文",
+      "pattern": "PGS 简体中文",
+      "score": 9,
+      "description": "PGS简体中文字幕"
+    },
+    "pgs_chinese_traditional": {
+      "name": "PGS 繁体中文",
+      "pattern": "PGS 繁体中文",
+      "score": 9,
+      "description": "PGS繁体中文字幕"
+    },
+    "ass_chinese_bilingual_effects": {
+      "name": "ASS 中英双语特效",
+      "pattern": "ASS.*中英.*特效|ASS.*简英.*特效",
+      "score": 10,
+      "description": "最强字幕：ASS中英双语特效"
+    },
+    "ass_chinese_effects": {
+      "name": "ASS 中文特效",
+      "pattern": "ASS 简中特效|ASS 中文特效",
+      "score": 9,
+      "description": "ASS中文特效字幕"
+    },
+    "ass_chinese_bilingual": {
+      "name": "ASS 中英双语",
+      "pattern": "ASS.*中英双语|ASS.*简英双语",
+      "score": 10,
+      "description": "ASS中英双语"
+    },
+    "ass_chinese": {
+      "name": "ASS 简体中文",
+      "pattern": "ASS.*简体中文",
+      "score": 8,
+      "description": "ASS中文字幕"
+    },
+    "ass_chinese_traditional": {
+      "name": "ASS 繁体中文",
+      "pattern": "ASS 繁体中文",
+      "score": 9,
+      "description": "ASS繁体中文字幕"
+    },
+    "srt_chinese_bilingual": {
+      "name": "SRT 中英双语",
+      "pattern": "SRT.*中英双语|SRT.*简英双语",
+      "score": 10,
+      "description": "SRT中英双语"
+    },
+    "srt_chinese": {
+      "name": "SRT 简体中文",
+      "pattern": "SRT.*简体中文",
+      "score": 7,
+      "description": "SRT中文字幕"
+    },
+    "srt_chinese_traditional": {
+      "name": "SRT 繁体中文",
+      "pattern": "SRT 繁体中文",
+      "score": 10,
+      "description": "SRT繁体中文字幕"
+    },
+    "pgs": {
+      "name": "PGS",
+      "pattern": "PGS",
+      "score": 7,
+      "description": "PGS字幕"
+    },
+    "ass": {
+      "name": "ASS",
+      "pattern": "ASS",
+      "score": 5,
+      "description": "ASS字幕"
+    },
+    "srt": {
+      "name": "SRT",
+      "pattern": "SRT",
+      "score": 4,
+      "description": "SRT字幕"
+    },
+    "pgs_non_chinese": {
+      "name": "PGS 非中文",
+      "pattern": "PGS 英文|PGS 日文|PGS 韩文",
+      "score": -1,
+      "description": "PGS非中文字幕（英文/日文/韩文等）"
+    },
+    "ass_non_chinese": {
+      "name": "ASS 非中文",
+      "pattern": "ASS 英文|ASS 日文|ASS 韩文",
+      "score": -1,
+      "description": "ASS非中文字幕（英文/日文/韩文等）"
+    },
+    "srt_non_chinese": {
+      "name": "SRT 非中文",
+      "pattern": "SRT 英文|SRT 日文|SRT 韩文",
+      "score": -1,
+      "description": "SRT非中文字幕（英文/日文/韩文等）"
+    }
+  },
+  "subtitle_weight": 1.1317,
+  "file_extension": {
+    "blacklist": [],
+    "whitelist": [],
+    "mkv": {
+      "name": "MKV",
+      "pattern": ".mkv",
+      "score": 10,
+      "description": "MKV"
+    },
+    "mp4": {
+      "name": "MP4",
+      "pattern": ".mp4",
+      "score": 8.5,
+      "description": "MP4"
+    },
+    "ts": {
+      "name": "TS",
+      "pattern": ".ts",
+      "score": 6,
+      "description": "TS"
+    },
+    "m2ts": {
+      "name": "M2TS",
+      "pattern": ".m2ts",
+      "score": 7,
+      "description": "M2TS"
+    },
+    "iso": {
+      "name": "ISO",
+      "pattern": ".iso",
+      "score": -100,
+      "description": "ISO原盘，直接洗掉"
+    },
+    "avi": {
+      "name": "AVI",
+      "pattern": ".avi",
+      "score": 5,
+      "description": "AVI"
+    },
+    "rmvb": {
+      "name": "RMVB",
+      "pattern": ".rmvb",
+      "score": 4,
+      "description": "RMVB"
+    },
+    "wmv": {
+      "name": "WMV",
+      "pattern": ".wmv",
+      "score": 3,
+      "description": "WMV"
+    },
+    "mpeg": {
+      "name": "MPEG",
+      "pattern": ".mpeg",
+      "score": 2.5,
+      "description": "MPEG"
+    },
+    "mov": {
+      "name": "MOV",
+      "pattern": ".mov",
+      "score": 2,
+      "description": "MOV"
+    }
+  },
+  "file_extension_weight": 0.4115,
+  "file_size_score": 8,
+  "file_size_weight": 0.2,
+  "file_size_blacklist": [],
+  "file_size_whitelist": [],
+  "always_override_score": 999999,
+  "always_override_weight": 0,
+  "always_override_blacklist": [],
+  "always_override_whitelist": [],
+  "version_control_enabled": true,
+  "version_control_delete_invalid_dest_files": false,
+  "version_control_versions": [
+    {
+      "name": "DV",
+      "include_conditions": [
+        {
+          "attribute": "dolby_vision",
+          "values": []
+        }
+      ],
+      "exclude_conditions": [],
+      "file_name_regex": "",
+      "__ui_key": "72febb22-4eb3-45e8-8112-f641956564ed"
+    },
+    {
+      "name": "HDR",
+      "include_conditions": [
+        {
+          "attribute": "dynamic_range",
+          "values": [
+            "hdr10_plus",
+            "hdr10",
+            "hdr"
+          ]
+        }
+      ],
+      "exclude_conditions": [],
+      "file_name_regex": "",
+      "__ui_key": "84bfdfac-5dcf-491a-8dcd-2053936cd8e5"
+    },
+    {
+      "name": "非DV非HDR",
+      "include_conditions": [],
+      "exclude_conditions": [
+        {
+          "attribute": "dolby_vision",
+          "values": []
+        },
+        {
+          "attribute": "dynamic_range",
+          "values": [
+            "hdr10_plus",
+            "hdr10",
+            "hdr"
+          ]
+        }
+      ],
+      "file_name_regex": "",
+      "__ui_key": "6ad120e8-00ea-4a24-9e52-eeecd4fb47bb"
+    }
+  ],
+  "version_control_attribute_options": [
+    {
+      "attribute": "videoFormat",
+      "label": "分辨率",
+      "values": [
+        {
+          "value": "screen_4320p",
+          "label": "4320p",
+          "pattern": "4320p"
+        },
+        {
+          "value": "screen_2160p",
+          "label": "2160p",
+          "pattern": "2160p"
+        },
+        {
+          "value": "screen_1080p",
+          "label": "1080p",
+          "pattern": "1080p"
+        },
+        {
+          "value": "screen_720p",
+          "label": "720p",
+          "pattern": "720p"
+        },
+        {
+          "value": "screen_576p",
+          "label": "576p",
+          "pattern": "576p"
+        },
+        {
+          "value": "screen_480p",
+          "label": "480p",
+          "pattern": "480p"
+        },
+        {
+          "value": "screen_360p",
+          "label": "360p",
+          "pattern": "360p"
+        }
+      ]
+    },
+    {
+      "attribute": "audioCodec",
+      "label": "音频编码",
+      "values": [
+        {
+          "value": "dts_x",
+          "label": "DTS:X",
+          "pattern": "DTS:X"
+        },
+        {
+          "value": "truehd_dolby_atmos_7_1",
+          "label": "TrueHD Dolby Atmos 7.1",
+          "pattern": "TrueHD Dolby Atmos 7.1"
+        },
+        {
+          "value": "truehd_dolby_atmos_5_1",
+          "label": "TrueHD Dolby Atmos 5.1",
+          "pattern": "TrueHD Dolby Atmos 5.1"
+        },
+        {
+          "value": "dts_hd_ma_7_1",
+          "label": "DTS-HD MA 7.1",
+          "pattern": "DTS-HD MA 7.1"
+        },
+        {
+          "value": "dts_hd_ma_5_1",
+          "label": "DTS-HD MA 5.1",
+          "pattern": "DTS-HD MA 5.1"
+        },
+        {
+          "value": "truehd_7_1",
+          "label": "TrueHD 7.1",
+          "pattern": "TrueHD 7.1"
+        },
+        {
+          "value": "truehd_5_1",
+          "label": "TrueHD 5.1",
+          "pattern": "TrueHD 5.1"
+        },
+        {
+          "value": "dts_hd",
+          "label": "DTS-HD",
+          "pattern": "DTS-HD"
+        },
+        {
+          "value": "ddp_atmos_5_1",
+          "label": "DDP Dolby Atmos 5.1",
+          "pattern": "DDP Dolby Atmos 5.1"
+        },
+        {
+          "value": "ddp_5_1",
+          "label": "DDP 5.1",
+          "pattern": "DDP 5.1"
+        },
+        {
+          "value": "dts",
+          "label": "DTS",
+          "pattern": "DTS"
+        },
+        {
+          "value": "pcm",
+          "label": "PCM",
+          "pattern": "PCM"
+        },
+        {
+          "value": "dolby_digital",
+          "label": "Dolby Digital",
+          "pattern": "Dolby Digital|DDP"
+        },
+        {
+          "value": "ac3",
+          "label": "AC3",
+          "pattern": "AC3"
+        },
+        {
+          "value": "aac",
+          "label": "AAC",
+          "pattern": "AAC"
+        }
+      ]
+    },
+    {
+      "attribute": "videoCodec",
+      "label": "视频编码",
+      "values": [
+        {
+          "value": "av1",
+          "label": "AV1",
+          "pattern": "AV1"
+        },
+        {
+          "value": "h264",
+          "label": "H.264",
+          "pattern": "H.264"
+        },
+        {
+          "value": "h265",
+          "label": "H.265",
+          "pattern": "H.265"
+        }
+      ]
+    },
+    {
+      "attribute": "color_depth",
+      "label": "色深",
+      "values": [
+        {
+          "value": "bit_12",
+          "label": "12-bit",
+          "pattern": "12-bit"
+        },
+        {
+          "value": "bit_10",
+          "label": "10-bit",
+          "pattern": "10-bit"
+        },
+        {
+          "value": "bit_8",
+          "label": "8-bit",
+          "pattern": "8-bit"
+        }
+      ]
+    },
+    {
+      "attribute": "frame_rate",
+      "label": "帧率",
+      "values": [
+        {
+          "value": "fps_120",
+          "label": "120fps",
+          "pattern": "120fps"
+        },
+        {
+          "value": "fps_60",
+          "label": "60fps",
+          "pattern": "60fps"
+        },
+        {
+          "value": "fps_30",
+          "label": "30fps",
+          "pattern": "30fps"
+        },
+        {
+          "value": "fps_25",
+          "label": "25fps",
+          "pattern": "25fps"
+        },
+        {
+          "value": "fps_24",
+          "label": "24fps",
+          "pattern": "24fps"
+        }
+      ]
+    },
+    {
+      "attribute": "dolby_vision",
+      "label": "杜比视界",
+      "values": [
+        {
+          "value": "dolby_vision_p7",
+          "label": "Dolby Vision P7",
+          "pattern": "Dolby Vision P7"
+        },
+        {
+          "value": "dolby_vision_p5",
+          "label": "Dolby Vision P5",
+          "pattern": "Dolby Vision P5"
+        },
+        {
+          "value": "dolby_vision_p8",
+          "label": "Dolby Vision P8",
+          "pattern": "Dolby Vision P8"
+        },
+        {
+          "value": "dolby_vision",
+          "label": "Dolby Vision",
+          "pattern": "Dolby Vision"
+        }
+      ]
+    },
+    {
+      "attribute": "dynamic_range",
+      "label": "动态范围",
+      "values": [
+        {
+          "value": "hdr10_plus",
+          "label": "HDR10+",
+          "pattern": "HDR10\\+"
+        },
+        {
+          "value": "hdr10",
+          "label": "HDR10",
+          "pattern": "HDR10"
+        },
+        {
+          "value": "hdr",
+          "label": "HDR",
+          "pattern": "HDR"
+        },
+        {
+          "value": "hlg",
+          "label": "HLG",
+          "pattern": "HLG"
+        },
+        {
+          "value": "sdr",
+          "label": "SDR",
+          "pattern": "SDR"
+        }
+      ]
+    },
+    {
+      "attribute": "resourceType",
+      "label": "资源类型",
+      "values": [
+        {
+          "value": "UHD",
+          "label": "Ultra HD",
+          "pattern": "Ultra HD"
+        },
+        {
+          "value": "Bluray",
+          "label": "Blu-Ray",
+          "pattern": "Blu-Ray"
+        },
+        {
+          "value": "Remux",
+          "label": "Remux",
+          "pattern": "Remux"
+        },
+        {
+          "value": "WEB_DL",
+          "label": "WEB-DL",
+          "pattern": "WEB-DL"
+        }
+      ]
+    },
+    {
+      "attribute": "subtitle",
+      "label": "字幕",
+      "values": [
+        {
+          "value": "pgs_chinese_bilingual_effects",
+          "label": "PGS 中文双语特效",
+          "pattern": "PGS 简英特效|PGS 中英特效|PGS 中文双语特效"
+        },
+        {
+          "value": "pgs_chinese_effects",
+          "label": "PGS 中文特效",
+          "pattern": "PGS 简中特效|PGS 中文特效"
+        },
+        {
+          "value": "pgs_chinese_bilingual",
+          "label": "PGS 中文双语",
+          "pattern": "PGS 简英双语|PGS 简中双语|PGS 中英双语|PGS 中文双语"
+        },
+        {
+          "value": "pgs_chinese",
+          "label": "PGS 简体中文",
+          "pattern": "PGS 简体中文"
+        },
+        {
+          "value": "pgs_chinese_traditional",
+          "label": "PGS 繁体中文",
+          "pattern": "PGS 繁体中文"
+        },
+        {
+          "value": "ass_chinese_bilingual_effects",
+          "label": "ASS 中文双语特效",
+          "pattern": "ASS 简英特效|ASS 简中特效|ASS 中英特效|ASS 中文双语特效"
+        },
+        {
+          "value": "ass_chinese_effects",
+          "label": "ASS 中文特效",
+          "pattern": "ASS 简中特效|ASS 中文特效"
+        },
+        {
+          "value": "ass_chinese_bilingual",
+          "label": "ASS 中文双语",
+          "pattern": "ASS 简英双语|ASS 简中双语|ASS 中英双语|ASS 中文双语"
+        },
+        {
+          "value": "ass_chinese",
+          "label": "ASS 简体中文",
+          "pattern": "ASS 简体中文"
+        },
+        {
+          "value": "ass_chinese_traditional",
+          "label": "ASS 繁体中文",
+          "pattern": "ASS 繁体中文"
+        },
+        {
+          "value": "srt_chinese_bilingual",
+          "label": "SRT 中文双语",
+          "pattern": "SRT 简英双语|SRT 简中双语|SRT 中英双语|SRT 中文双语"
+        },
+        {
+          "value": "srt_chinese",
+          "label": "SRT 简体中文",
+          "pattern": "SRT 简体中文"
+        },
+        {
+          "value": "srt_chinese_traditional",
+          "label": "SRT 繁体中文",
+          "pattern": "SRT 繁体中文"
+        },
+        {
+          "value": "pgs",
+          "label": "PGS",
+          "pattern": "PGS"
+        },
+        {
+          "value": "ass",
+          "label": "ASS",
+          "pattern": "ASS"
+        },
+        {
+          "value": "srt",
+          "label": "SRT",
+          "pattern": "SRT"
+        },
+        {
+          "value": "pgs_non_chinese",
+          "label": "PGS 非中文",
+          "pattern": "PGS 英文|PGS 日文|PGS 韩文"
+        },
+        {
+          "value": "ass_non_chinese",
+          "label": "ASS 非中文",
+          "pattern": "ASS 英文|ASS 日文|ASS 韩文"
+        },
+        {
+          "value": "srt_non_chinese",
+          "label": "SRT 非中文",
+          "pattern": "SRT 英文|SRT 日文|SRT 韩文"
+        }
+      ]
+    },
+    {
+      "attribute": "file_extension",
+      "label": "文件后缀",
+      "values": [
+        {
+          "value": "mkv",
+          "label": "MKV",
+          "pattern": ".mkv"
+        },
+        {
+          "value": "mp4",
+          "label": "MP4",
+          "pattern": ".mp4"
+        },
+        {
+          "value": "ts",
+          "label": "TS",
+          "pattern": ".ts"
+        },
+        {
+          "value": "m2ts",
+          "label": "M2TS",
+          "pattern": ".m2ts"
+        },
+        {
+          "value": "iso",
+          "label": "ISO",
+          "pattern": ".iso"
+        },
+        {
+          "value": "avi",
+          "label": "AVI",
+          "pattern": ".avi"
+        },
+        {
+          "value": "rmvb",
+          "label": "RMVB",
+          "pattern": ".rmvb"
+        },
+        {
+          "value": "wmv",
+          "label": "WMV",
+          "pattern": ".wmv"
+        },
+        {
+          "value": "mpeg",
+          "label": "MPEG",
+          "pattern": ".mpeg"
+        },
+        {
+          "value": "mov",
+          "label": "MOV",
+          "pattern": ".mov"
+        }
+      ]
+    }
+  ],
+  "effect": null,
+  "effect_weight": 1
+}

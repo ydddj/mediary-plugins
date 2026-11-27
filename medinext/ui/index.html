@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediNext 302 播放负载与风控</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="mn-shell">
+    <aside class="mn-sidebar">
+      <div class="mn-brand">
+        <div class="mn-brand-badge">MN</div>
+        <div>
+          <div class="mn-brand-title">MediNext</div>
+          <div class="mn-brand-sub" id="mn-version-label">302 负载 · 秒传 · 风控</div>
+        </div>
+      </div>
+
+      <nav class="mn-nav" id="mn-nav">
+        <button type="button" class="mn-nav-btn active" data-tab="overview">
+          <span>概览与会话</span>
+          <span class="mn-nav-badge" id="badge-sessions">0</span>
+        </button>
+        <button type="button" class="mn-nav-btn" data-tab="accounts">
+          <span>115 号池与扫码</span>
+          <span class="mn-nav-badge" id="badge-accounts">0</span>
+        </button>
+        <button type="button" class="mn-nav-btn" data-tab="users">
+          <span>用户策略与模板</span>
+          <span class="mn-nav-badge" id="badge-users">0</span>
+        </button>
+        <button type="button" class="mn-nav-btn" data-tab="risk">
+          <span>播放风控与防爬</span>
+          <span class="mn-nav-badge" id="badge-risk">0</span>
+        </button>
+        <button type="button" class="mn-nav-btn" data-tab="settings">
+          <span>全局、缓存与迁移</span>
+          <span class="mn-nav-badge" id="badge-cache">0</span>
+        </button>
+        <button type="button" class="mn-nav-btn" data-tab="history">
+          <span>播放调度历史</span>
+          <span class="mn-nav-badge" id="badge-history">0</span>
+        </button>
+      </nav>
+
+      <div class="mn-sidebar-foot">
+        <div class="mn-status-pill" id="mn-mode-pill">播放钩子检测中...</div>
+        <div class="mn-status-pill" id="mn-scope-pill">媒体服务权限检测中...</div>
+        <div class="mn-status-pill" id="mn-pool-pill">负载均衡池检测中...</div>
+        <div class="mn-subnote" id="mn-sync-note">就绪</div>
+      </div>
+    </aside>
+
+    <main class="mn-main">
+      <div id="mn-toast" class="mn-toast hidden"></div>
+      <div id="mn-view"></div>
+    </main>
+  </div>
+
+  <div id="mn-modal-backdrop" class="mn-modal-backdrop hidden">
+    <div class="mn-modal" id="mn-modal-box">
+      <div class="mn-modal-head">
+        <h3 id="mn-modal-title">设置</h3>
+        <button type="button" class="mn-btn ghost sm" id="mn-modal-close">✕</button>
+      </div>
+      <div class="mn-modal-body" id="mn-modal-body"></div>
+    </div>
+  </div>
+
+  <input type="file" id="mn-hidden-file" class="hidden" accept=".db,.sqlite,.sqlite3,.bak,.json" />
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

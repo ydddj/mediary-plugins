@@ -1,0 +1,106 @@
+{
+  "api_version": 1,
+  "id": "mediplug",
+  "name": "MediPlug 插件源与 GitHub 桥接",
+  "version": "1.0.0",
+  "min_mediary_version": "3.4.6",
+  "description": "面向 Mediary 3.4.6+ 的第三方插件源可视化管理与 GitHub Releases 自动桥接插件：免命令图形化增删启停 /api/plugin-store/sources 插件源，自动将无 catalog.json 的普通 GitHub Release 仓库转换为本地标准 HTTP catalog.json 源并注册进原生「插件中心」一键安装与热更新，内置 .tar.gz 包规范校验与 catalog.json 生成器。",
+  "runtime": {
+    "entrypoint": "./plugin",
+    "args": ["daemon"]
+  },
+  "action_runtime": {
+    "entrypoint": "./plugin"
+  },
+  "ui": {
+    "dir": "./ui",
+    "entry": "index.html",
+    "title": "MediPlug 插件源与 GitHub 桥接",
+    "eyebrow": "插件源可视化管理 · 无 catalog.json 仓库自动转换 · 包规范校验与索引生成",
+    "trigger": {
+      "label": "工作台",
+      "icon": "edit"
+    }
+  },
+  "requested_scopes": [
+    "plugins:read",
+    "settings:read",
+    "notifications:send"
+  ],
+  "auto_grant_scopes": false,
+  "scheduled_actions": [
+    {
+      "action": "tick",
+      "label": "同步 GitHub Releases 仓库与刷新本地桥接源",
+      "manual": true,
+      "cron": "18 */2 * * *",
+      "timeout_seconds": 180
+    },
+    {
+      "action": "health_check",
+      "label": "巡检宿主插件源连通性与可更新提示",
+      "manual": true,
+      "cron": "5 */6 * * *",
+      "timeout_seconds": 120
+    }
+  ],
+  "settings_schema": {
+    "sections": [
+      {
+        "title": "桥接服务与自动同步开关",
+        "alert": "启用本插件后，常驻轻量回环服务（默认 http://127.0.0.1:18119/catalog.json）会自动将任意无 catalog.json 的 GitHub Release 仓库转换为宿主原生标准源。请在插件卡片点击「工作台」配置 Mediary 管理员 API Token（设置 → 安全）以可视化管理 /api/plugin-store/sources。",
+        "fields": [
+          {
+            "key": "$enabled",
+            "type": "switch",
+            "label": "启用插件（启动本地 catalog.json 桥接服务）",
+            "default": false
+          },
+          {
+            "key": "auto_sync_releases",
+            "type": "switch",
+            "label": "定时同步已接入的 GitHub Release 仓库",
+            "help": "定时检测 GitHub Releases 新版本资产、更新本地 catalog.json，使宿主「插件中心」自动亮起「可更新」按钮",
+            "default": true
+          },
+          {
+            "key": "auto_register_bridge",
+            "type": "switch",
+            "label": "新增或同步 GitHub 仓库后自动注册至宿主插件源",
+            "help": "当已配置管理员 API Token 时，自动确保本地桥接 catalog.json 源已注册进 Mediary /api/plugin-store/sources",
+            "default": true
+          },
+          {
+            "key": "notify",
+            "type": "switch",
+            "label": "发现第三方插件新版本时发送主程序通知",
+            "help": "复用 Mediary 主程序已配置的企业微信 / Telegram / Bark 通知渠道",
+            "default": true
+          }
+        ]
+      }
+    ]
+  },
+  "data_view": {
+    "title": "第三方插件源与 GitHub 桥接记录",
+    "file": "data/dashboard.json",
+    "item_label": "桥接记录",
+    "summary": [
+      { "key": "bridge_status", "label": "本地桥接服务" },
+      { "key": "host_sources", "label": "宿主插件源" },
+      { "key": "github_repos", "label": "GitHub 转换仓" },
+      { "key": "bridged_plugins", "label": "已转换插件" },
+      { "key": "updates_available", "label": "可更新插件" },
+      { "key": "last_result", "label": "最近同步状态" }
+    ],
+    "fields": [
+      { "key": "title", "label": "仓库 / 插件源", "primary": true },
+      { "key": "source", "label": "来源类型" },
+      { "key": "version", "label": "版本 / 数量" },
+      { "key": "action", "label": "动作" },
+      { "key": "status", "label": "状态" },
+      { "key": "detail", "label": "说明" },
+      { "key": "updated_at", "label": "时间" }
+    ]
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "api_version": 1,
+  "id": "mediwash",
+  "name": "MediWash 归档入库与权重洗版",
+  "version": "3.1.5",
+  "min_mediary_version": "3.4.6",
+  "description": "面向 Mediary 3.4.6+ 的 115 单目录全自动权重洗版与原生归档入库插件：胜出文件调用宿主原生 files/organize 一步完成二级分类、模板重命名、字幕跟随与 STRM 入库，淘汰/重复文件调用 files/delete 直移 115 官方回收站；支持新源入库自动删旧、存量库精洗与 PT 升级。",
+  "action_runtime": {
+    "entrypoint": "./plugin"
+  },
+  "ui": {
+    "dir": "./ui",
+    "entry": "index.html",
+    "title": "MediWash 入库与权重洗版",
+    "eyebrow": "115 中转守门整理 · 存量多版本精洗 · PT 升级 · Symedia & MediaTidy 双引擎",
+    "trigger": {
+      "label": "工作台",
+      "icon": "edit"
+    }
+  },
+  "requested_scopes": [
+    "media-library:read",
+    "media-library:delete",
+    "media-library:scan",
+    "open115:read",
+    "open115:write",
+    "integrations:read",
+    "integrations:run",
+    "catalog:read",
+    "settings:read",
+    "filters:read",
+    "sites:read",
+    "torrents:read",
+    "media-downloads:create",
+    "media-downloads:organize",
+    "downloads:read",
+    "notifications:send"
+  ],
+  "auto_grant_scopes": false,
+  "scheduled_actions": [
+    {
+      "action": "tick",
+      "label": "中转守门入库、删旧核验与 PT 巡检",
+      "manual": true,
+      "cron": "3-59/15 * * * *",
+      "timeout_seconds": 300
+    },
+    {
+      "action": "scan_library",
+      "label": "存量库后台续扫与批量清理",
+      "manual": true,
+      "cron": "7-59/10 * * * *",
+      "timeout_seconds": 180
+    },
+    {
+      "action": "sync_rules",
+      "label": "同步远程规则订阅",
+      "manual": true,
+      "cron": "12 */6 * * *",
+      "timeout_seconds": 90
+    }
+  ],
+  "settings_schema": {
+    "sections": [
+      {
+        "title": "基础开关",
+        "alert": "二级分类、电影/剧集命名模板及 115 OpenAPI/Cookie 凭证自动同步复用 Mediary 宿主配置。115 中转目录分流、存量库精洗、PT 站点与毕业线、Symedia/MediaTidy 权重编辑请点击插件卡片「工作台」操作。",
+        "fields": [
+          {
+            "key": "$enabled",
+            "type": "switch",
+            "label": "启用插件",
+            "default": false
+          },
+          {
+            "key": "dry_run",
+            "type": "switch",
+            "label": "仅预览模式（干跑）",
+            "help": "开启时仅识别、探测打分并生成待确认建议，不执行任何 115 移动、PT 下载或媒体库删旧",
+            "default": true
+          },
+          {
+            "key": "auto_delete_old",
+            "type": "switch",
+            "label": "验证新源入库后自动清理旧低分源",
+            "help": "仅在关闭预览模式且宿主媒体库已确认新源生成 STRM/入库成功、且保留至少 1 个胜出版本时自动删除被淘汰旧源",
+            "default": false
+          },
+          {
+            "key": "notify",
+            "type": "switch",
+            "label": "发送入库与洗版通知",
+            "default": true
+          }
+        ]
+      }
+    ]
+  },
+  "data_view": {
+    "title": "媒体归档与洗版历史记录",
+    "file": "data/dashboard.json",
+    "item_label": "媒体记录",
+    "summary": [
+      { "key": "media_history_count", "label": "媒体历史" },
+      { "key": "staging_pending", "label": "待处理" },
+      { "key": "awaiting_cleanup", "label": "待核验删旧" },
+      { "key": "lib_suggestions", "label": "存量拟清理" },
+      { "key": "categories_synced", "label": "同步分类" },
+      { "key": "last_result", "label": "最近任务状态" }
+    ],
+    "fields": [
+      { "key": "title", "label": "媒体/文件", "primary": true },
+      { "key": "kind", "label": "通道" },
+      { "key": "slot", "label": "分类/槽位" },
+      { "key": "action", "label": "动作" },
+      { "key": "status", "label": "状态" },
+      { "key": "detail", "label": "说明" },
+      { "key": "updated_at", "label": "时间" }
+    ]
+  }
+}

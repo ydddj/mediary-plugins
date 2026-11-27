@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediFind 网盘聚合引擎</title>
+  <link rel="stylesheet" href="./style.css?v=3.2.0" />
+</head>
+<body>
+  <div id="app" class="mf-shell">
+    <aside class="mf-sidebar">
+      <div class="mf-brand">
+        <div class="mf-brand-badge">MF</div>
+        <div>
+          <div class="mf-brand-title">MediFind</div>
+          <div class="mf-brand-sub">网盘聚合工作台 v3.2.0</div>
+        </div>
+      </div>
+      <nav id="nav" class="mf-nav"></nav>
+      <div class="mf-sidebar-foot">
+        <div id="status-115" class="mf-pill neutral">检测 115…</div>
+        <div id="status-proxy" class="mf-subnote"></div>
+      </div>
+    </aside>
+    <main class="mf-main">
+      <div id="toast" class="mf-toast hidden"></div>
+      <div id="view" class="mf-view">
+        <div class="mf-loading">正在加载 MediFind 工作台…</div>
+      </div>
+    </main>
+  </div>
+  <div id="modal-root" class="mf-modal-backdrop hidden"></div>
+  <div id="mf-floating-tip" class="mf-floating-tip hidden" role="tooltip"></div>
+  <script type="module" src="./app.js?v=3.2.0"></script>
+</body>
+</html>

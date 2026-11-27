@@ -1,0 +1,24 @@
+[package]
+name = "mediplug"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.86"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+flate2 = "1.1"
+form_urlencoded = "1.2"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "io-util", "sync", "signal", "macros"] }
+ureq = { version = "2.12", default-features = false, features = ["json", "tls", "socks-proxy"] }
+url = "=2.5.2"
+
+[profile.release]
+strip = true
+lto = "thin"
