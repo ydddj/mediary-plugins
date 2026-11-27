@@ -67,12 +67,30 @@ static RE_LABELED_TITLE_LINE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:[\s📺🎬🎞️🎥📽️🔥✨📌🔔💿📀🆕✅☑️]*)(?:\[(?:电影|剧集|电视剧|动漫|动画|番剧|综艺|纪录片|短剧)\]\s*[：:]\s*|(?:名称|片名|标题|剧名|译名|影视|电影|剧集|电视剧|连续剧|动漫|动画|番剧|综艺|纪录片|短剧|◎\s*片\s*名|◎\s*译\s*名)\s*[：:]+\s*)(.+)$").unwrap()
 });
 static RE_RELEASE_SPEC_CUT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:^|[\s._\[\(【（-])(?:2160p|1080p|1080i|720p|576p|480p|4k|uhd|web-dl|webdl|webrip|bluray|blu-ray|bdrip|remux|hdr10\+?|dovi|dv|h\.?265|h\.?264|x265|x264|hevc|avc|ddp?\d|dts|truehd|atmos|hq|hfr|60fps|120fps)\b").unwrap()
+    Regex::new(r"(?i)(?:^|[\s._\[\(【（-])(?:2160p|1080p|1080i|720p|576p|480p|4k|uhd|web-dl|webdl|webrip|bluray|blu-ray|bdrip|remux|hdr10\+?|dovi|dv|h\.?265|h\.?264|x265|x264|hevc|avc|av1|ddp?\d|dts|truehd|atmos|hq|hfr|60fps|120fps|amzn|dsnp|atvp|hmax|pmtp|pcok|itun|bili|bilibili|iqiyi|youku|wetv|mgtv|mangotv|baha|kktv|mytv|mytvsuper|netflix|crunchyroll|(?:nf|iq|yk|tx|cr|viu|friday|hulu|amazon|peacock|itunes)[\s._-]+web[-.]?(?:dl|rip))\b").unwrap()
+});
+static RE_PLATFORM_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)(?:^|[\s📡📺🎬]+)平台\s*[：:]\s*([^\r\n|｜]+)").unwrap()
+});
+static RE_WEB_SOURCE_BEFORE_WEB: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[\s._\[\(【（/+-])(netflix|nf|amzn|amazon|prime[\s._-]*video|dsnp|disney\+|disneyplus|disney[\s._-]*plus|atvp|apple[\s._-]*tv\+|appletv\+|appletvplus|hmax|hbo[\s._-]*max|hbomax|hulu|pmtp|paramount\+|paramountplus|pcok|peacock|itun|itunes|cr|crunchyroll|bili|bilibili|iq|iqiyi|yk|youku|tx|wetv|mgtv|mangotv|mango[\s._-]*tv|baha|kktv|mytv[\s._-]*super|mytvsuper|mytv|viu|friday)[\s._-]+web[-.]?(?:dl|rip)(?:$|[\s._\]\)】）/+-])").unwrap()
+});
+static RE_WEB_SOURCE_AFTER_WEB: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[\s._\[\(【（/+-])web[-.]?(?:dl|rip)[\s._-]+(netflix|nf|amzn|amazon|prime[\s._-]*video|dsnp|disney\+|disneyplus|disney[\s._-]*plus|atvp|apple[\s._-]*tv\+|appletv\+|appletvplus|hmax|hbo[\s._-]*max|hbomax|hulu|pmtp|paramount\+|paramountplus|pcok|peacock|itun|itunes|cr|crunchyroll|bili|bilibili|iq|iqiyi|yk|youku|tx|wetv|mgtv|mangotv|mango[\s._-]*tv|baha|kktv|mytv[\s._-]*super|mytvsuper|mytv|viu|friday)(?:$|[\s._\]\)】）/+-])").unwrap()
+});
+static RE_WEB_SOURCE_BRACKET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)[\[\(【（]\s*(nf|iq|yk|tx|cr|viu|friday)\s*[\]\)】）]").unwrap()
+});
+static RE_WEB_SOURCE_AFTER_RES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[\s._\[\(【（/+-])(?:2160p|1080p|1080i|720p|4k|uhd)[\s._-]+(nf|iq|yk|tx|cr|viu|friday)(?:$|[\s._\]\)】）/+-])").unwrap()
 });
 static RE_HASHTAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#([^\s#，,。！!？?|｜/\\]+)").unwrap());
 static RE_TMDB_BRACKET_TAG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\s*[\[\(【（]?\s*tmdb(?:\s*id)?[-_:：\s=]*\d+\s*[\]\)】）]?").unwrap()
+});
+static RE_GROUP_BEFORE_EXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)-([A-Za-z0-9@]{2,20})\.(?:mkv|mp4|ts|m2ts|iso|avi|mov|wmv|flv|rmvb|m4v|webm)\b").unwrap()
 });
 static RE_GROUP_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"-([A-Za-z0-9@._]{2,20})(?:\.[a-zA-Z0-9]{2,5})?$").unwrap());
@@ -395,6 +413,9 @@ pub fn is_suspect_banner_title(s: &str) -> bool {
 fn is_bracket_tag_noise(inner: &str) -> bool {
     let low = inner.trim().to_lowercase();
     if low.is_empty() {
+        return true;
+    }
+    if web_source_canonical(&low).is_some() {
         return true;
     }
     for kw in [
@@ -735,6 +756,238 @@ pub fn format_bytes(b: i64) -> String {
     }
 }
 
+/// Maps streaming platform abbreviations, English names, and Chinese names to
+/// Mediary v3.4.8 canonical search-page display labels. Never matches bare "WEB".
+pub fn web_source_canonical(raw: &str) -> Option<&'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let norm: String = trimmed
+        .to_lowercase()
+        .replace(['.', '_', '-'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact = norm.replace(' ', "");
+    match compact.as_str() {
+        "nf" | "netflix" | "网飞" | "奈飞" => Some("Netflix"),
+        "amzn" | "amazon" | "primevideo" | "amazonprime" | "亚马逊" => Some("Amazon"),
+        "dsnp" | "disney+" | "disneyplus" | "迪士尼" | "迪士尼+" => Some("Disney+"),
+        "atvp" | "appletv+" | "appletvplus" | "appletv" => Some("Apple TV+"),
+        "hmax" | "hbomax" => Some("HBO Max"),
+        "hulu" => Some("Hulu"),
+        "pmtp" | "paramount+" | "paramountplus" | "派拉蒙+" => Some("Paramount+"),
+        "pcok" | "peacock" => Some("Peacock"),
+        "itun" | "itunes" => Some("iTunes"),
+        "cr" | "crunchyroll" => Some("Crunchyroll"),
+        "bili" | "bilibili" | "b站" | "哔哩哔哩" => Some("Bilibili"),
+        "iq" | "iqiyi" | "爱奇艺" => Some("爱奇艺"),
+        "yk" | "youku" | "优酷" => Some("优酷"),
+        "tx" | "wetv" | "腾讯视频" | "腾讯" => Some("腾讯视频"),
+        "mgtv" | "mangotv" | "芒果tv" | "芒果台" => Some("芒果TV"),
+        "baha" | "巴哈姆特" | "动画疯" | "動畫瘋" => Some("巴哈姆特"),
+        "kktv" => Some("KKTV"),
+        "mytv" | "mytvsuper" => Some("myTV SUPER"),
+        "viu" => Some("Viu"),
+        "friday" | "friday影音" => Some("friDay"),
+        _ => None,
+    }
+}
+
+fn contains_plus_brand(haystack_lower: &str, token_lower: &str) -> bool {
+    for (idx, _) in haystack_lower.match_indices(token_lower) {
+        let before_ok = idx == 0
+            || !haystack_lower[..idx]
+                .chars()
+                .next_back()
+                .map(|c| c.is_ascii_alphanumeric())
+                .unwrap_or(false);
+        let after_pos = idx + token_lower.len();
+        let after_ok = after_pos >= haystack_lower.len()
+            || !haystack_lower[after_pos..]
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false);
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Boundary-safe streaming platform (`web_source`) detector aligned with Mediary v3.4.8.
+/// Plain `WEB-DL`/`WEBRip` returns empty string (never `"WEB"`), and ambiguous title words
+/// (e.g. "Friday", "Amazon", "Peacock", "IQ", "TX", "CR") require release-spec context.
+pub fn parse_web_source(text: &str) -> String {
+    if text.trim().is_empty() {
+        return String::new();
+    }
+
+    // 1. Explicit TG/post metadata line: `📡 平台：优酷` / `平台: Netflix`
+    for cap in RE_PLATFORM_LINE.captures_iter(text) {
+        let val = cap[1].trim();
+        if let Some(canon) = web_source_canonical(val) {
+            return canon.to_string();
+        }
+        for part in val.split(&['/', '、', ',', '，', '·', ' '][..]) {
+            if let Some(canon) = web_source_canonical(part) {
+                return canon.to_string();
+            }
+        }
+    }
+
+    // 2. Directly adjacent to WEB-DL / WEBDL / WEBRip (highest precision for all 20 platforms)
+    if let Some(cap) = RE_WEB_SOURCE_BEFORE_WEB.captures(text) {
+        if let Some(canon) = web_source_canonical(&cap[1]) {
+            return canon.to_string();
+        }
+    }
+    if let Some(cap) = RE_WEB_SOURCE_AFTER_WEB.captures(text) {
+        if let Some(canon) = web_source_canonical(&cap[1]) {
+            return canon.to_string();
+        }
+    }
+
+    // 3. Unambiguous streaming platform tokens with strict ASCII-alphanumeric boundaries
+    let low = format!(" {} ", text.to_lowercase());
+    if contains_token(&low, "netflix") || low.contains("网飞") || low.contains("奈飞") {
+        return "Netflix".into();
+    }
+    if contains_token(&low, "amzn")
+        || contains_token(&low, "prime video")
+        || contains_token(&low, "primevideo")
+    {
+        return "Amazon".into();
+    }
+    if contains_token(&low, "dsnp")
+        || contains_plus_brand(&low, "disney+")
+        || contains_token(&low, "disneyplus")
+        || contains_token(&low, "disney plus")
+    {
+        return "Disney+".into();
+    }
+    if contains_token(&low, "atvp")
+        || contains_plus_brand(&low, "apple tv+")
+        || contains_plus_brand(&low, "appletv+")
+        || contains_token(&low, "appletvplus")
+        || contains_token(&low, "apple tv plus")
+    {
+        return "Apple TV+".into();
+    }
+    if contains_token(&low, "hmax")
+        || contains_token(&low, "hbo max")
+        || contains_token(&low, "hbomax")
+    {
+        return "HBO Max".into();
+    }
+    if contains_token(&low, "hulu") {
+        return "Hulu".into();
+    }
+    if contains_token(&low, "pmtp")
+        || contains_plus_brand(&low, "paramount+")
+        || contains_token(&low, "paramountplus")
+        || contains_token(&low, "paramount plus")
+    {
+        return "Paramount+".into();
+    }
+    if contains_token(&low, "pcok") {
+        return "Peacock".into();
+    }
+    if contains_token(&low, "itun") || contains_token(&low, "itunes") {
+        return "iTunes".into();
+    }
+    if contains_token(&low, "crunchyroll") {
+        return "Crunchyroll".into();
+    }
+    if contains_token(&low, "bili")
+        || contains_token(&low, "bilibili")
+        || low.contains("哔哩哔哩")
+        || low.contains("b站")
+    {
+        return "Bilibili".into();
+    }
+    if contains_token(&low, "iqiyi") || low.contains("爱奇艺") {
+        return "爱奇艺".into();
+    }
+    if contains_token(&low, "youku") || low.contains("优酷") {
+        return "优酷".into();
+    }
+    if contains_token(&low, "wetv") || low.contains("腾讯视频") {
+        return "腾讯视频".into();
+    }
+    if contains_token(&low, "mgtv")
+        || contains_token(&low, "mangotv")
+        || contains_token(&low, "mango tv")
+        || low.contains("芒果tv")
+        || low.contains("芒果台")
+    {
+        return "芒果TV".into();
+    }
+    if contains_token(&low, "baha")
+        || low.contains("巴哈姆特")
+        || low.contains("动画疯")
+        || low.contains("動畫瘋")
+    {
+        return "巴哈姆特".into();
+    }
+    if contains_token(&low, "kktv") {
+        return "KKTV".into();
+    }
+    if contains_token(&low, "mytv")
+        || contains_token(&low, "mytv super")
+        || contains_token(&low, "mytvsuper")
+    {
+        return "myTV SUPER".into();
+    }
+    if low.contains("friday影音") {
+        return "friDay".into();
+    }
+
+    // 4. Short/ambiguous codes only when bracketed `[NF]` or immediately following resolution `2160p.NF`
+    if let Some(cap) = RE_WEB_SOURCE_BRACKET.captures(text) {
+        if let Some(canon) = web_source_canonical(&cap[1]) {
+            return canon.to_string();
+        }
+    }
+    if let Some(cap) = RE_WEB_SOURCE_AFTER_RES.captures(text) {
+        if let Some(canon) = web_source_canonical(&cap[1]) {
+            return canon.to_string();
+        }
+    }
+
+    String::new()
+}
+
+/// Extracts canonical video codec label aligned with Mediary v3.4.8 Search page filters.
+pub fn parse_video_encode(text: &str) -> String {
+    let low = format!(" {} ", text.to_lowercase());
+    if contains_token(&low, "av1") {
+        "AV1".into()
+    } else if low.contains("h.265")
+        || contains_token(&low, "h265")
+        || contains_token(&low, "x265")
+        || contains_token(&low, "hevc")
+    {
+        "H.265".into()
+    } else if low.contains("h.264")
+        || contains_token(&low, "h264")
+        || contains_token(&low, "x264")
+        || contains_token(&low, "avc")
+    {
+        "H.264".into()
+    } else if contains_token(&low, "vp9") {
+        "VP9".into()
+    } else if contains_token(&low, "vc-1") || contains_token(&low, "vc1") {
+        "VC-1".into()
+    } else if contains_token(&low, "mpeg2") || contains_token(&low, "mpeg-2") {
+        "MPEG2".into()
+    } else {
+        String::new()
+    }
+}
+
 pub fn parse_movie_attributes(text: &str) -> MovieAttributes {
     let low = format!(" {} ", text.to_lowercase());
     let mut a = MovieAttributes::default();
@@ -754,6 +1007,8 @@ pub fn parse_movie_attributes(text: &str) -> MovieAttributes {
     } else if low.contains("web-dl") || low.contains("webdl") || low.contains("webrip") {
         a.remux = "WEB-DL".into();
     }
+
+    a.web_source = parse_web_source(text);
 
     let has_dv = low.contains("dolby vision")
         || low.contains("杜比视界")
@@ -785,11 +1040,19 @@ pub fn parse_movie_attributes(text: &str) -> MovieAttributes {
         a.audio = "DTS-X".into();
     } else if low.contains("dts-hd") {
         a.audio = "DTS-HD".into();
-    } else if contains_token(&low, "dts") {
+    } else if contains_token(&low, "dts")
+        || low.contains("dts5.1")
+        || low.contains("dts7.1")
+        || low.contains("dts2.0")
+    {
         a.audio = "DTS".into();
     } else if low.contains("ddp") || low.contains("eac3") || low.contains("dd+") {
         a.audio = "EAC3".into();
-    } else if contains_token(&low, "ac3") || contains_token(&low, "dd") {
+    } else if contains_token(&low, "ac3")
+        || contains_token(&low, "dd")
+        || low.contains("dd5.1")
+        || low.contains("dd2.0")
+    {
         a.audio = "AC3".into();
     } else if low.contains("flac") {
         a.audio = "FLAC".into();
@@ -814,14 +1077,62 @@ pub fn parse_movie_attributes(text: &str) -> MovieAttributes {
         a.subtitle = "中字".into();
     }
 
-    if let Some(first_line) = text.lines().next() {
-        if let Some(cap) = RE_GROUP_SUFFIX.captures(first_line.trim()) {
-            let grp = &cap[1];
-            if !matches!(
-                grp.to_ascii_lowercase().as_str(),
-                "10bit" | "x265" | "h265" | "dl"
-            ) {
-                a.group = grp.to_string();
+    let is_valid_group = |grp: &str| -> bool {
+        if grp.len() < 2 || grp.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        !matches!(
+            grp.to_ascii_lowercase().as_str(),
+            "10bit"
+                | "8bit"
+                | "x265"
+                | "h265"
+                | "h.265"
+                | "hevc"
+                | "x264"
+                | "h264"
+                | "h.264"
+                | "avc"
+                | "av1"
+                | "dl"
+                | "web-dl"
+                | "webdl"
+                | "webrip"
+                | "2160p"
+                | "1080p"
+                | "720p"
+                | "4k"
+                | "aac"
+                | "ddp"
+                | "hdr"
+                | "hdr10"
+                | "dv"
+                | "sdr"
+        )
+    };
+    if let Some(cap) = RE_GROUP_BEFORE_EXT.captures(text) {
+        let grp = &cap[1];
+        if is_valid_group(grp) {
+            a.group = grp.to_string();
+        }
+    }
+    if a.group.is_empty() {
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty()
+                || trimmed.contains("http://")
+                || trimmed.contains("https://")
+                || trimmed.contains("ed2k://")
+                || trimmed.contains("magnet:?")
+            {
+                continue;
+            }
+            if let Some(cap) = RE_GROUP_SUFFIX.captures(trimmed) {
+                let grp = &cap[1];
+                if is_valid_group(grp) {
+                    a.group = grp.to_string();
+                    break;
+                }
             }
         }
     }
@@ -835,6 +1146,12 @@ pub fn merge_movie_attributes(outer: &MovieAttributes, inner: &MovieAttributes) 
     }
     if m.remux.is_empty() {
         m.remux = outer.remux.clone();
+    }
+    if m.web_source.is_empty() {
+        m.web_source = outer.web_source.clone();
+    }
+    if let Some(canon) = web_source_canonical(&m.web_source) {
+        m.web_source = canon.to_string();
     }
     if m.audio.is_empty() {
         m.audio = outer.audio.clone();
@@ -1197,10 +1514,13 @@ pub fn score_resource(
     let clean_raw = strip_ignored_texts(&item.raw_title, &eff.ignored_texts);
     let clean_remark = strip_ignored_texts(&item.remark, &eff.ignored_texts);
 
-    if !eff.ignored_texts.is_empty() {
-        let reparsed = parse_movie_attributes(&format!("{} {} {}", clean_title, clean_raw, clean_remark));
+    if !eff.ignored_texts.is_empty() || item.movie_attributes.web_source.is_empty() {
+        let reparsed = parse_movie_attributes(&format!("{}\n{}\n{}", clean_title, clean_raw, clean_remark));
         if item.movie_attributes.resolution.is_empty() {
             item.movie_attributes.resolution = reparsed.resolution;
+        }
+        if item.movie_attributes.web_source.is_empty() {
+            item.movie_attributes.web_source = reparsed.web_source;
         }
         if item.movie_attributes.color.is_empty() {
             item.movie_attributes.color = reparsed.color;
@@ -1214,13 +1534,14 @@ pub fn score_resource(
     }
 
     let blob = format!(
-        " {} {} {} {} {} {} {} {} {} {} {} ",
+        " {} {} {} {} {} {} {} {} {} {} {} {} ",
         clean_title,
         clean_raw,
         clean_remark,
         item.parsed_episodes,
         item.movie_attributes.resolution,
         item.movie_attributes.remux,
+        item.movie_attributes.web_source,
         item.movie_attributes.color,
         item.movie_attributes.audio,
         item.movie_attributes.subtitle,
@@ -1359,7 +1680,7 @@ pub fn score_resource(
     }
     for gc in &eff.group_items {
         let w = gc.name.trim();
-        if !w.is_empty() && !gc.enabled && matches_keyword_in_blob(&blob, w) {
+        if !w.is_empty() && !gc.enabled && matches_group_keyword(item, &blob, w) {
             return ScoreResult {
                 accepted: false,
                 score: -80.0,
@@ -1461,7 +1782,7 @@ pub fn score_resource(
                 let mut best_pts = 0.0f64;
                 for (pos, gc) in enabled.iter().enumerate() {
                     let w = gc.name.trim();
-                    if matches_keyword_in_blob(&blob, w) {
+                    if matches_group_keyword(item, &blob, w) {
                         kw_hits.push(w.to_string());
                         let pts = weighted_chip_points(pos, enabled.len(), cat_max);
                         if pts > best_pts {
@@ -1623,10 +1944,24 @@ fn matches_keyword_in_blob(blob: &str, word: &str) -> bool {
     }
 }
 
+fn matches_group_keyword(item: &ResourceItem, blob: &str, word: &str) -> bool {
+    let w = word.trim();
+    if w.is_empty() {
+        return false;
+    }
+    if let Some(canon) = web_source_canonical(w) {
+        return item.movie_attributes.web_source.eq_ignore_ascii_case(canon);
+    }
+    matches_keyword_in_blob(blob, w)
+}
+
 fn matches_filter_tag(tag: &str, pan_label: &str, item: &ResourceItem, blob: &str) -> bool {
     let t = tag.trim();
     if t.is_empty() {
         return false;
+    }
+    if let Some(canon) = web_source_canonical(t) {
+        return item.movie_attributes.web_source.eq_ignore_ascii_case(canon);
     }
     let up = t.to_ascii_uppercase();
     match up.as_str() {
@@ -1679,8 +2014,11 @@ pub fn rank_and_dedupe(
         if it.clean_slug.is_empty() {
             it.clean_slug = clean_slug(&it.slug);
         }
-        if it.movie_attributes.resolution.is_empty() && it.movie_attributes.color.is_empty() {
-            let outer = parse_movie_attributes(&format!("{} {}", it.title, it.remark));
+        if it.movie_attributes.resolution.is_empty()
+            || it.movie_attributes.color.is_empty()
+            || it.movie_attributes.web_source.is_empty()
+        {
+            let outer = parse_movie_attributes(&format!("{}\n{}\n{}", it.title, it.raw_title, it.remark));
             it.movie_attributes = merge_movie_attributes(&outer, &it.movie_attributes);
         }
         let res = score_resource(&mut it, cfg, target_title, keyword);
@@ -1986,5 +2324,112 @@ mod tests {
         let jojo_post = "✅新片送达–请您检阅\n🎬 影视：JOJO的奇妙冒险\n📺 季集：S06E11\n📶 计划：连载中 · 下集 12-04（周五）S06E12";
         assert_eq!(extract_pure_title(jojo_post), "JOJO的奇妙冒险");
         assert_eq!(parse_shallow_episodes(jojo_post, "tv", None), "S06E11");
+    }
+
+    #[test]
+    fn test_web_source_boundary_and_rules() {
+        // 1. International & domestic/Asian streaming platform recognition (Mediary v3.4.8)
+        let cases = [
+            ("Once.Upon.a.Time.2026.2160p.YOUKU.WEB-DL.DTS5.1.H.265-SalmonWeb.mkv", "优酷"),
+            ("凡人修仙传.S01E01.2160p.BILI.WEB-DL.H265.mkv", "Bilibili"),
+            ("Stranger.Things.S05E01.2160p.NF.WEB-DL.DDP5.1.DV.H.265.mkv", "Netflix"),
+            ("The.Boys.S04E01.2160p.AMZN.WEB-DL.DDP5.1.H265.mkv", "Amazon"),
+            ("Andor.S02E01.2160p.DSNP.WEB-DL.DDP5.1.DV.mkv", "Disney+"),
+            ("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.DV.mkv", "Apple TV+"),
+            ("House.of.the.Dragon.S02E01.2160p.HMAX.WEB-DL.mkv", "HBO Max"),
+            ("Shogun.S01E01.2160p.HULU.WEB-DL.H265.mkv", "Hulu"),
+            ("Halo.S02E01.2160p.PMTP.WEB-DL.H265.mkv", "Paramount+"),
+            ("Poker.Face.S01E01.2160p.PCOK.WEB-DL.H265.mkv", "Peacock"),
+            ("Movie.2025.2160p.ITUN.WEB-DL.DDP5.1.mkv", "iTunes"),
+            ("Frieren.S01E01.1080p.CR.WEB-DL.AAC.mkv", "Crunchyroll"),
+            ("庆余年.S02E01.2160p.IQ.WEB-DL.H265.mkv", "爱奇艺"),
+            ("庆余年.S02E01.2160p.iQIYI.WEB-DL.H265.mkv", "爱奇艺"),
+            ("藏海传.S01E01.2160p.YK.WEB-DL.H265.mkv", "优酷"),
+            ("三体.S01E01.2160p.TX.WEB-DL.H265.mkv", "腾讯视频"),
+            ("繁花.S01E01.2160p.WeTV.WEB-DL.H265.mkv", "腾讯视频"),
+            ("声生不息.S01E01.1080p.MGTV.WEB-DL.H265.mkv", "芒果TV"),
+            ("浪姐.S05E01.1080p.MangoTV.WEB-DL.H265.mkv", "芒果TV"),
+            ("葬送的芙莉莲.S01E01.1080p.BAHA.WEB-DL.AAC.mkv", "巴哈姆特"),
+            ("日剧.S01E01.1080p.KKTV.WEB-DL.AAC.mkv", "KKTV"),
+            ("新闻女王.S01E01.1080p.MYTV.WEB-DL.H264.mkv", "myTV SUPER"),
+            ("港剧.S01E01.1080p.VIU.WEB-DL.H264.mkv", "Viu"),
+            ("台剧.S01E01.1080p.friDay.WEB-DL.H264.mkv", "friDay"),
+            ("台剧.S01E01.1080p.FRIDAY.WEB-DL.H264.mkv", "friDay"),
+            ("🎬 影视：欢迎来龙餐馆\n📡 平台：优酷\n📦 质量：2160p", "优酷"),
+            ("[NF] 怪奇物语 4K DV", "Netflix"),
+        ];
+        for (input, expected) in cases {
+            let attrs = parse_movie_attributes(input);
+            assert_eq!(attrs.web_source, expected, "failed for input: {}", input);
+        }
+
+        // 2. Plain WEB-DL MUST yield empty web_source (never "WEB"), and normal title words MUST NOT false-match
+        let negatives = [
+            "Movie.2025.2160p.WEB-DL.H265.AAC.mkv",
+            "Movie.2025.1080p.WEBRip.x264.mkv",
+            "Freaky.Friday.2003.1080p.WEB-DL.H264.mkv",
+            "Friday.the.13th.1980.1080p.BluRay.x264.mkv",
+            "The.Amazon.2020.1080p.BluRay.x265.mkv",
+            "Peacock.2010.1080p.BluRay.x264.mkv",
+            "High.IQ.2024.1080p.BluRay.x264.mkv",
+            "Ability.2025.1080p.WEB-DL.H265.mkv",
+            "NextFind.2025.1080p.WEB-DL.H265-SalmonWeb.mkv",
+        ];
+        for input in negatives {
+            let attrs = parse_movie_attributes(input);
+            assert!(
+                attrs.web_source.is_empty(),
+                "unexpected web_source '{}' for '{}'",
+                attrs.web_source,
+                input
+            );
+        }
+
+        // 3. Pure title cleaning with streaming tags vs title words
+        assert_eq!(extract_pure_title("庆余年.YOUKU.WEB-DL.2160p.mkv"), "庆余年");
+        assert_eq!(extract_pure_title("怪奇物语.NF.WEB-DL.2160p.mkv"), "怪奇物语");
+        assert_eq!(extract_pure_title("Freaky.Friday.2003.1080p.WEB-DL.mkv"), "Freaky Friday");
+
+        // 4. Backward-compatible deserialization of cached MovieAttributes JSON without web_source
+        let old_attrs: MovieAttributes =
+            serde_json::from_str(r#"{"resolution":"4K","remux":"WEB-DL","color":"DV"}"#).unwrap();
+        assert_eq!(old_attrs.resolution, "4K");
+        assert!(old_attrs.web_source.is_empty());
+
+        // 5. Rule scoring & block filter decoupling (abbreviation <-> canonical platform display name)
+        let mut cfg = RuleConfig::default();
+        cfg.ensure_weights_initialized();
+        cfg.group_items.push(RuleChipItem::simple("Netflix", true));
+        cfg.block_filters.push(crate::models::BlockFilterGroup {
+            id: "bf-yk".into(),
+            tags: vec!["优酷".into()],
+        });
+
+        let mut nf_item = ResourceItem {
+            title: "怪奇物语 S05E01 2160p NF.WEB-DL DV.mkv".into(),
+            share_size: "6.5GB".into(),
+            is_unlocked: true,
+            movie_attributes: parse_movie_attributes("怪奇物语 S05E01 2160p NF.WEB-DL DV.mkv"),
+            ..Default::default()
+        };
+        let nf_res = score_resource(&mut nf_item, &cfg, "怪奇物语", "");
+        assert!(nf_res.accepted);
+        assert!(nf_item.custom_keywords.iter().any(|k| k == "Netflix"));
+
+        let mut yk_item = ResourceItem {
+            title: "藏海传 S01E01 2160p YOUKU.WEB-DL.mkv".into(),
+            share_size: "5.2GB".into(),
+            is_unlocked: true,
+            movie_attributes: parse_movie_attributes("藏海传 S01E01 2160p YOUKU.WEB-DL.mkv"),
+            ..Default::default()
+        };
+        let yk_res = score_resource(&mut yk_item, &cfg, "藏海传", "");
+        assert!(!yk_res.accepted);
+        assert!(yk_res.reasons[0].contains("优酷"));
+
+        // Video encode extraction
+        assert_eq!(parse_video_encode("Movie.2025.2160p.WEB-DL.H.265.mkv"), "H.265");
+        assert_eq!(parse_video_encode("Movie.2025.1080p.BluRay.x264.mkv"), "H.264");
+        assert_eq!(parse_video_encode("Movie.2025.2160p.AV1.mkv"), "AV1");
     }
 }

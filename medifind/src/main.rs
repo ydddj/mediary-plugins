@@ -1036,6 +1036,7 @@ fn run() -> Result<()> {
 
             let pure = rules::extract_pure_title(&text);
             let attrs = rules::parse_movie_attributes(&text);
+            let video_encode = rules::parse_video_encode(&text);
             let eps = rules::parse_shallow_episodes(&text, &mtype, None);
             let links = rules::extract_all_resource_links(&raw_text);
             let detected_pan = if !pan_type.is_empty() {
@@ -1065,6 +1066,7 @@ fn run() -> Result<()> {
                 "tmdb_id": rules::extract_tmdb_id(&text),
                 "parsed_episodes": eps,
                 "attributes": attrs,
+                "video_encode": video_encode,
                 "links": links,
                 "score": score_res,
             })
@@ -1214,6 +1216,14 @@ fn build_bootstrap(
     })
 }
 
+fn norm_badge_key(s: &str) -> String {
+    s.trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '_' | '-'))
+        .collect()
+}
+
 fn build_host_resource_results(items: &[ResourceItem]) -> Vec<Value> {
     let mut out = Vec::new();
     let now_rfc = Utc::now().to_rfc3339();
@@ -1240,18 +1250,86 @@ fn build_host_resource_results(items: &[ResourceItem]) -> Vec<Value> {
             _ => {}
         }
 
-        let mut labels = vec![cat.to_string(), it.source_type.to_ascii_uppercase()];
-        if !it.movie_attributes.resolution.is_empty() {
-            labels.push(it.movie_attributes.resolution.clone());
+        let spec_text = format!("{}\n{}\n{}", it.title, it.raw_title, it.remark);
+        let fallback_attrs = rules::parse_movie_attributes(&spec_text);
+        let attrs = rules::merge_movie_attributes(&fallback_attrs, &it.movie_attributes);
+        let video_encode = rules::parse_video_encode(&spec_text);
+
+        // Structured `parsed` object matching Mediary v3.4.8 Search page fields
+        let mut parsed = serde_json::Map::new();
+        parsed.insert("title".into(), json!(it.title));
+        parsed.insert("raw_title".into(), json!(it.title));
+        if !attrs.web_source.is_empty() {
+            parsed.insert("web_source".into(), json!(attrs.web_source));
         }
-        if !it.movie_attributes.color.is_empty() {
-            labels.push(it.movie_attributes.color.clone());
+        if !attrs.resolution.is_empty() {
+            parsed.insert("resolution".into(), json!(attrs.resolution));
+        }
+        if !attrs.remux.is_empty() {
+            parsed.insert("resource_type".into(), json!(attrs.remux));
+        }
+        if !attrs.color.is_empty() {
+            parsed.insert("resource_effect".into(), json!(attrs.color));
+        }
+        if !video_encode.is_empty() {
+            parsed.insert("video_encode".into(), json!(video_encode));
+        }
+        if !attrs.audio.is_empty() {
+            parsed.insert("audio_encode".into(), json!(attrs.audio));
+        }
+        if !attrs.group.is_empty() {
+            parsed.insert("resource_team".into(), json!(attrs.group));
+        }
+        if !it.parsed_episodes.is_empty() {
+            parsed.insert("season_episode".into(), json!(it.parsed_episodes));
+        }
+        if !attrs.subtitle.is_empty() {
+            parsed.insert("subtitle".into(), json!(attrs.subtitle));
+        }
+        if !it.year.is_empty() {
+            parsed.insert("year".into(), json!(it.year));
+        }
+
+        // Deduplicate `labels` against `category` and all structured `parsed` badge fields
+        let mut seen_badges: HashSet<String> = HashSet::new();
+        for existing in [
+            cat,
+            attrs.web_source.as_str(),
+            attrs.resolution.as_str(),
+            attrs.remux.as_str(),
+            attrs.color.as_str(),
+            video_encode.as_str(),
+            attrs.audio.as_str(),
+            attrs.group.as_str(),
+        ] {
+            let k = norm_badge_key(existing);
+            if !k.is_empty() {
+                seen_badges.insert(k);
+            }
+        }
+
+        let mut labels: Vec<String> = Vec::new();
+        let mut push_label = |lbl: &str| {
+            let trimmed = lbl.trim();
+            if trimmed.is_empty() {
+                return;
+            }
+            let k = norm_badge_key(trimmed);
+            if !k.is_empty() && seen_badges.insert(k) {
+                labels.push(trimmed.to_string());
+            }
+        };
+        if !it.source_type.trim().is_empty() {
+            push_label(&it.source_type.to_ascii_uppercase());
+        }
+        if !attrs.subtitle.is_empty() {
+            push_label(&attrs.subtitle);
         }
         if it.shield_matched {
-            labels.push("神盾匹配".into());
+            push_label("神盾匹配");
         }
         if !it.missing_eps_hit.is_empty() {
-            labels.push("含缺集".into());
+            push_label("含缺集");
         }
 
         let mut desc_parts = Vec::new();
@@ -1296,10 +1374,7 @@ fn build_host_resource_results(items: &[ResourceItem]) -> Vec<Value> {
             "plugin_action_kind": action_kind,
             "plugin_action_label": action_label,
             "plugin_action_pending_label": pending_label,
-            "parsed": {
-                "title": it.title,
-                "raw_title": it.title,
-            }
+            "parsed": Value::Object(parsed),
         }));
     }
     out
@@ -1359,4 +1434,83 @@ fn first_i32(v: &Value, keys: &[&str]) -> i32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_host_resource_results_structured_parsed_and_deduped_labels() {
+        let raw1 = "Once.Upon.a.Time.in.the.Middle.East.2026.2160p.YOUKU.WEB-DL.DTS5.1.DV.H.265-SalmonWeb.mkv 中字";
+        let item1 = ResourceItem {
+            slug: "https://115.com/s/sw11223344".into(),
+            clean_slug: "115:sw11223344".into(),
+            title: "欢迎来龙餐馆".into(),
+            raw_title: raw1.into(),
+            year: "2026".into(),
+            source_type: "telegram".into(),
+            channel_name: "TG · 精选".into(),
+            pan_type: "115".into(),
+            size_bytes: 58_000_000_000,
+            share_size: "54.4GB".into(),
+            movie_attributes: rules::parse_movie_attributes(raw1),
+            shield_matched: true,
+            missing_eps_hit: vec!["S01E01".into()],
+            parsed_episodes: "S01E01".into(),
+            rule_score: 92.5,
+            ..Default::default()
+        };
+
+        let raw2 = "Ordinary.Show.2025.1080p.WEB-DL.AAC.H.264.mkv";
+        let item2 = ResourceItem {
+            slug: "https://115.com/s/sw99887766".into(),
+            clean_slug: "115:sw99887766".into(),
+            title: "普通剧集".into(),
+            raw_title: raw2.into(),
+            source_type: "hdhive".into(),
+            pan_type: "115".into(),
+            movie_attributes: rules::parse_movie_attributes(raw2),
+            ..Default::default()
+        };
+
+        let res = build_host_resource_results(&[item1, item2]);
+        assert_eq!(res.len(), 2);
+
+        let p1 = &res[0]["parsed"];
+        assert_eq!(p1["web_source"], "优酷");
+        assert_eq!(p1["resolution"], "4K");
+        assert_eq!(p1["resource_type"], "WEB-DL");
+        assert_eq!(p1["resource_effect"], "DV");
+        assert_eq!(p1["video_encode"], "H.265");
+        assert_eq!(p1["audio_encode"], "DTS");
+        assert_eq!(p1["resource_team"], "SalmonWeb");
+        assert_eq!(p1["season_episode"], "S01E01");
+        assert_eq!(p1["subtitle"], "中字");
+        assert_eq!(p1["year"], "2026");
+
+        let labels1: Vec<&str> = res[0]["labels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        // Structured fields (`115`, `4K`, `DV`, `优酷`, `WEB-DL`, `SalmonWeb`) must NOT duplicate in `labels`
+        assert!(labels1.contains(&"TELEGRAM"));
+        assert!(labels1.contains(&"中字"));
+        assert!(labels1.contains(&"神盾匹配"));
+        assert!(labels1.contains(&"含缺集"));
+        assert!(!labels1.contains(&"115"));
+        assert!(!labels1.contains(&"4K"));
+        assert!(!labels1.contains(&"DV"));
+        assert!(!labels1.contains(&"优酷"));
+
+        // Plain WEB-DL must NOT emit `web_source`
+        let p2 = &res[1]["parsed"];
+        assert!(p2.get("web_source").is_none());
+        assert_eq!(p2["resolution"], "1080P");
+        assert_eq!(p2["resource_type"], "WEB-DL");
+        assert_eq!(p2["video_encode"], "H.264");
+        assert_eq!(p2["audio_encode"], "AAC");
+    }
 }

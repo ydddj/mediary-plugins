@@ -623,6 +623,7 @@ function renderResourceRow(it, idx) {
   tags.push(`<span class="mf-pill info">${esc(it.channel_name || it.source_type)}</span>`);
   tags.push(`<span class="mf-pill">${esc(it.pan_type.toUpperCase())}</span>`);
   if (attrs.resolution) tags.push(`<span class="mf-pill success">${esc(attrs.resolution)}</span>`);
+  if (attrs.web_source) tags.push(`<span class="mf-pill stream">${esc(attrs.web_source)}</span>`);
   if (attrs.remux) tags.push(`<span class="mf-pill">${esc(attrs.remux)}</span>`);
   if (attrs.color) tags.push(`<span class="mf-pill info">${esc(attrs.color)}</span>`);
   if (attrs.audio) tags.push(`<span class="mf-pill">${esc(attrs.audio)}</span>`);
@@ -827,6 +828,7 @@ async function openInspectModal(item) {
         <div class="mf-modal-head">
           <div>
             <strong>${esc(data.precise_title || item.title)}</strong>
+            ${data.movie_attributes?.web_source ? ` <span class="mf-pill stream">${esc(data.movie_attributes.web_source)}</span>` : ''}
             ${data.share_url ? `<div class="mf-card-sub">${esc(data.share_url)}</div>` : ''}
           </div>
           <div class="mf-actions">
@@ -2446,6 +2448,16 @@ const WEIGHT_CAT_META = {
   groups: { field: 'group_items', label: '关键词' },
 };
 
+const STREAM_PLATFORMS_INTL = [
+  'Netflix', 'Amazon', 'Disney+', 'Apple TV+', 'HBO Max',
+  'Hulu', 'Paramount+', 'Peacock', 'iTunes', 'Crunchyroll',
+];
+const STREAM_PLATFORMS_ASIA = [
+  'Bilibili', '爱奇艺', '优酷', '腾讯视频', '芒果TV',
+  '巴哈姆特', 'KKTV', 'myTV SUPER', 'Viu', 'friDay',
+];
+const STREAM_PLATFORMS_ALL = [...STREAM_PLATFORMS_INTL, ...STREAM_PLATFORMS_ASIA];
+
 function buildDefaultRulesDraft() {
   return {
     resource_types: [
@@ -2694,6 +2706,8 @@ function openBlockFilterModal(rd, root) {
   const presetRows = [
     { label: '资源/分辨率', items: ['115', 'ED2K', 'MAGNET', '4K', '1080P', '720P及以下'] },
     { label: '色彩/片源', items: ['DV&HDR', 'DV', 'HDR10', 'HDR', 'HLG', 'SDR', 'REMUX', 'BluRay', 'WEB-DL'] },
+    { label: '流媒体平台 (国际)', items: STREAM_PLATFORMS_INTL },
+    { label: '流媒体平台 (国内/亚洲)', items: STREAM_PLATFORMS_ASIA },
     { label: '音轨/后缀', items: ['TRUEHD', 'DTS-HD MA', 'EAC3', 'AC3', 'AAC', 'MKV', 'MP4', 'TS', 'ISO', 'RMVB'] },
     { label: '常见低质词', items: ['枪版', '偷拍', 'CAM', 'HC字幕', '韩版', '博彩', '水印', '尝鲜'] },
   ];
@@ -2952,9 +2966,16 @@ function renderRulesTab(root) {
                 ${catKey === 'groups'
                   ? (state.addingGroupKw
                     ? `<div class="nf-inline-add-box">
-                         <input id="inp-new-group-kw" class="nf-inline-add-input" value="${esc(state.newGroupKw)}" placeholder="输入关键词/压制组" />
+                         <input id="inp-new-group-kw" class="nf-inline-add-input" value="${esc(state.newGroupKw)}" placeholder="输入关键词/流媒体/压制组" />
                          <button type="button" class="mf-btn sm primary" style="height:26px;padding:0 8px" id="btn-confirm-group-kw">✓ 确认</button>
                          <button type="button" class="mf-btn sm" style="height:26px;padding:0 7px" id="btn-cancel-group-kw">×</button>
+                       </div>
+                       <div class="nf-quick-stream-bar">
+                         <span class="nf-quick-stream-label">快捷点选流媒体平台：</span>
+                         ${STREAM_PLATFORMS_ALL.map((p) => {
+                           const exists = rd.group_items.some((x) => x.name.toLowerCase() === p.toLowerCase());
+                           return `<button type="button" class="nf-quick-stream-btn ${exists ? 'added' : ''}" data-quick-group-kw="${esc(p)}" ${exists ? 'disabled' : ''}>${exists ? '✓ ' : '+ '}${esc(p)}</button>`;
+                         }).join('')}
                        </div>`
                     : `<button type="button" class="nf-add-chip-btn" id="btn-show-add-group">+ 添加</button>`)
                   : ''}
@@ -3057,7 +3078,7 @@ function renderRulesTab(root) {
         <div class="mf-code" style="margin-top:10px">
           <div><strong>提取纯片名：</strong>${esc(tOut.pure_title || '-')} · <strong>年份：</strong>${esc(tOut.year || '-')} · <strong>TMDB：</strong>${esc(tOut.tmdb_id || '-')}</div>
           <div><strong>识别季集范围：</strong>${esc(tOut.parsed_episodes || '无')} · <strong>链接数：</strong>${(tOut.links || []).length} 条</div>
-          <div><strong>规格属性：</strong>分辨率=${esc(tOut.attributes?.resolution || '-')} | 片源=${esc(tOut.attributes?.remux || '-')} | 色域=${esc(tOut.attributes?.color || '-')} | 音频=${esc(tOut.attributes?.audio || '-')} | 字幕=${esc(tOut.attributes?.subtitle || '-')} | 后缀=${esc(tOut.attributes?.ext || '-')}</div>
+          <div><strong>规格属性：</strong>分辨率=${esc(tOut.attributes?.resolution || '-')} | 流媒体平台=${esc(tOut.attributes?.web_source || '-')} | 片源=${esc(tOut.attributes?.remux || '-')} | 色域=${esc(tOut.attributes?.color || '-')} | 编码=${esc(tOut.video_encode || '-')} | 音频=${esc(tOut.attributes?.audio || '-')} | 字幕=${esc(tOut.attributes?.subtitle || '-')} | 压制组=${esc(tOut.attributes?.group || '-')} | 后缀=${esc(tOut.attributes?.ext || '-')}</div>
           <div><strong>权重打分结果：</strong>${tOut.score?.accepted ? '✅ 准入通过' : '❌ 已拦截'} · 总分 <strong>${tOut.score?.score}</strong> (${esc((tOut.score?.reasons || []).join(' · '))})</div>
         </div>
       ` : ''}
@@ -3280,6 +3301,16 @@ function renderRulesTab(root) {
       if (e.key === 'Escape') { state.addingGroupKw = false; renderRulesTab(root); }
     };
   }
+  root.querySelectorAll('[data-quick-group-kw]').forEach((btn) => {
+    btn.onclick = () => {
+      syncRulesTopDOM(root, rd);
+      const val = (btn.dataset.quickGroupKw || '').trim();
+      if (val && !rd.group_items.some((x) => x.name.toLowerCase() === val.toLowerCase())) {
+        rd.group_items.push({ name: val, enabled: true });
+      }
+      renderRulesTab(root);
+    };
+  });
 
   // Block Filters (`且` combinations) add & delete
   root.querySelector('#btn-add-block-filter').onclick = () => {

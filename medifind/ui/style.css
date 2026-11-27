@@ -335,6 +335,8 @@ html, body {
 .mf-pill.warn { color: var(--mf-warn); border-color: color-mix(in srgb, var(--mf-warn) 45%, transparent); }
 .mf-pill.danger { color: var(--mf-danger); border-color: color-mix(in srgb, var(--mf-danger) 45%, transparent); }
 .mf-pill.info { color: var(--mf-primary); border-color: color-mix(in srgb, var(--mf-primary) 45%, transparent); }
+.mf-pill.stream { color: #06b6d4; border-color: color-mix(in srgb, #06b6d4 45%, transparent); background: color-mix(in srgb, #06b6d4 10%, transparent); }
+html[data-theme="light"] .mf-pill.stream { color: #0e7490; }
 
 .mf-input, .mf-select, .mf-textarea {
   width: 100%;
@@ -1439,6 +1441,41 @@ html[data-theme="light"] .nf-size-inline-input {
   border-color: #ef4444;
   color: #f87171;
   font-weight: 600;
+}
+.nf-quick-stream-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--mf-surface-2);
+  border: 1px dashed var(--mf-border);
+}
+.nf-quick-stream-label {
+  font-size: 11px;
+  color: var(--mf-muted);
+  margin-right: 2px;
+}
+.nf-quick-stream-btn {
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, #06b6d4 35%, var(--mf-border));
+  background: color-mix(in srgb, #06b6d4 9%, transparent);
+  color: var(--mf-text);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.14s;
+}
+.nf-quick-stream-btn:hover {
+  border-color: #06b6d4;
+  background: color-mix(in srgb, #06b6d4 20%, transparent);
+}
+.nf-quick-stream-btn.added {
+  opacity: 0.45;
+  cursor: default;
 }
 
 @media (max-width: 720px) {

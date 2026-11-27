@@ -69,6 +69,8 @@ pub struct MovieAttributes {
     #[serde(skip_serializing_if = "String::is_empty", deserialize_with = "null_default")]
     pub remux: String,
     #[serde(skip_serializing_if = "String::is_empty", deserialize_with = "null_default")]
+    pub web_source: String,
+    #[serde(skip_serializing_if = "String::is_empty", deserialize_with = "null_default")]
     pub color: String,
     #[serde(skip_serializing_if = "String::is_empty", deserialize_with = "null_default")]
     pub audio: String,
