@@ -275,7 +275,10 @@ function renderNav() {
   `).join('');
   const activeBtn = nav.querySelector('.mf-nav-btn.active');
   if (activeBtn && window.innerWidth <= 720) {
-    try { activeBtn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch (_) {}
+    // Scroll ONLY the horizontal `#nav` bar itself — never call `scrollIntoView()`
+    // which can shift ancestor containers or the entire iframe viewport horizontally.
+    const targetLeft = activeBtn.offsetLeft - (nav.clientWidth - activeBtn.offsetWidth) / 2;
+    nav.scrollLeft = Math.max(0, targetLeft);
   }
   nav.querySelectorAll('[data-tab]').forEach((btn) => {
     btn.onclick = () => {
