@@ -34,6 +34,7 @@ def make_plugin_tgz(
     *,
     include_forbidden_config: bool = False,
     executable_bin: bool = True,
+    extra_manifest: dict | None = None,
 ) -> tuple[bytes, str]:
     buf = io.BytesIO()
     manifest = {
@@ -45,6 +46,8 @@ def make_plugin_tgz(
         "description": f"{name} Automated Test Package",
         "requested_scopes": scopes,
     }
+    if extra_manifest:
+        manifest.update(extra_manifest)
     manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
     bin_bytes = f"#!/bin/sh\necho '{plugin_id}:{version}'\n".encode("utf-8")
 
@@ -163,12 +166,61 @@ def main():
         "MediFind 网盘聚合引擎",
         "3.2.0",
         ["catalog:read", "open115:read", "open115:write"],
+        extra_manifest={
+            "action_runtime": {"entrypoint": "./plugin"},
+            "resource_search": {
+                "source_id": -10,
+                "name": "MediFind",
+                "action": "resource_search",
+                "transfer_action": "resource_transfer",
+                "timeout_seconds": 60,
+            },
+            "ui": {"dir": "./ui", "entry": "index.html"},
+        },
     )
     mn_amd64_bytes, mn_amd64_sha = make_plugin_tgz(
         "medinext",
         "MediNext 302 播放负载与风控",
         "2.1.1",
         ["media-service:read", "media-service:write", "open115:read"],
+        extra_manifest={
+            "runtime": {"entrypoint": "./plugin", "args": ["daemon"]},
+            "action_runtime": {"entrypoint": "./plugin"},
+            "playback_hook": {
+                "transport": "unix",
+                "socket": "data/playback-hook.sock",
+                "path": "/resolve",
+                "timeout_ms": 1500,
+            },
+            "ui": {"dir": "./ui", "entry": "index.html"},
+        },
+    )
+    bad_hook_bytes, _ = make_plugin_tgz(
+        "badhook",
+        "Bad PlaybackHook Plugin",
+        "1.0.0",
+        ["media-service:read"],
+        extra_manifest={
+            "playback_hook": {
+                "transport": "http",
+                "endpoint": "http://192.168.1.9:8080",
+                "path": "resolve",
+                "timeout_ms": 50000,
+            }
+        },
+    )
+    bad_rs_bytes, _ = make_plugin_tgz(
+        "badrs",
+        "Bad ResourceSearch Plugin",
+        "1.0.0",
+        ["catalog:read"],
+        extra_manifest={
+            "resource_search": {
+                "source_id": -1,
+                "action": "bad action!",
+                "timeout_seconds": 999,
+            }
+        },
     )
     # Official namespace collision plugin (`emby-sync` already exists in official catalog!)
     dup_bytes, _ = make_plugin_tgz("emby-sync", "Fake Official Collision", "9.9.9", ["settings:read"])
@@ -605,7 +657,7 @@ def main():
 
             # 1. Verify bootstrap BEFORE Admin API Token is configured + SQLite WAL mode + dashboard.json
             boot0 = run_action(binary, data_dir, "ui_bootstrap", {}, api_url, f"{gh_base}/api", f"{gh_base}/raw")
-            assert boot0["version"] == "1.0.1"
+            assert boot0["version"] == "1.0.2"
             assert boot0["host_status"]["plugin_enabled"] is True
             assert boot0["host_status"]["daemon_ready"] is True
             assert boot0["host_status"]["active_port"] == daemon_port
@@ -762,6 +814,12 @@ def main():
             )["bootstrap"]
             store_ids = {p["id"] for p in suite_boot["store"]["plugins"]}
             assert {"medifind", "medinext", "mediwash", "emby-sync"} <= store_ids, store_ids
+            # Verify Mediary v3.4.8 extension capability badges propagated to store cards!
+            mn_card = [p for p in suite_boot["store"]["plugins"] if p["id"] == "medinext"][0]
+            mf_card = [p for p in suite_boot["store"]["plugins"] if p["id"] == "medifind"][0]
+            assert any(c["label"] == "playback_hook (+/prefetch)" for c in mn_card["capabilities"]), mn_card
+            assert any(c["id"] == "ui" for c in mn_card["capabilities"]), mn_card
+            assert any(c["id"] == "resource_search" for c in mf_card["capabilities"]), mf_card
             # Official `emby-sync` kept at v1.2.0 while rogue `emby-sync@9.9.9` is recorded in `conflicts`!
             emby_entry = [p for p in suite_boot["store"]["plugins"] if p["id"] == "emby-sync"][0]
             assert emby_entry["official"] is True and emby_entry["version"] == "1.2.0"
@@ -805,7 +863,43 @@ def main():
                 f"{gh_base}/raw",
             )
             assert good_ins["inspection"]["valid_for_mediary_346"] is True
+            assert good_ins["inspection"]["valid_for_mediary_348"] is True
+            assert any(c["label"] == "playback_hook (+/prefetch)" for c in good_ins["inspection"]["capabilities"]), good_ins["inspection"]
             assert good_ins["inspection"]["sha256"] == mn_amd64_sha
+
+            # v3.4.8 manifest extension validation: non-loopback playback_hook & invalid resource_search must fail!
+            bad_hook_ins = run_action(
+                binary,
+                data_dir,
+                "ui_inspect_archive",
+                {
+                    "filename": "badhook-1.0.0-linux-amd64.tar.gz",
+                    "file_base64": base64.b64encode(bad_hook_bytes).decode("ascii"),
+                    "add_to_hosted": False,
+                },
+                api_url,
+                f"{gh_base}/api",
+                f"{gh_base}/raw",
+            )
+            assert bad_hook_ins["inspection"]["valid_for_mediary_348"] is False, bad_hook_ins
+            assert any("本机回环" in msg for msg in bad_hook_ins["inspection"]["issues"]), bad_hook_ins["inspection"]["issues"]
+
+            bad_rs_ins = run_action(
+                binary,
+                data_dir,
+                "ui_inspect_archive",
+                {
+                    "filename": "badrs-1.0.0-linux-amd64.tar.gz",
+                    "file_base64": base64.b64encode(bad_rs_bytes).decode("ascii"),
+                    "add_to_hosted": False,
+                },
+                api_url,
+                f"{gh_base}/api",
+                f"{gh_base}/raw",
+            )
+            assert bad_rs_ins["inspection"]["valid_for_mediary_348"] is False, bad_rs_ins
+            assert any("action_runtime" in msg for msg in bad_rs_ins["inspection"]["issues"]), bad_rs_ins["inspection"]["issues"]
+            assert any("source_id" in msg for msg in bad_rs_ins["inspection"]["issues"]), bad_rs_ins["inspection"]["issues"]
 
             bad_b64 = base64.b64encode(bad_tgz_bytes).decode("ascii")
             bad_ins = run_action(
@@ -849,7 +943,7 @@ def main():
             daemon.wait(timeout=5)
             assert not os.path.exists(os.path.join(data_dir, "daemon_state.json")), "daemon_state.json must be cleaned up on SIGTERM"
 
-        print("ALL MEDIPLUG v1.0.0 WORKFLOW TESTS PASSED!")
+        print("ALL MEDIPLUG v1.0.2 WORKFLOW TESTS PASSED!")
     finally:
         gh_httpd.shutdown()
         host_httpd.shutdown()

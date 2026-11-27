@@ -1,11 +1,11 @@
 use crate::models::{
     now_datetime_str, now_ts, AppConfig, CatalogDocument, CatalogPluginEntry, DaemonRuntimeState,
-    PluginSettings,
+    ParsedPluginManifest, PluginSettings,
 };
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -140,6 +140,29 @@ pub fn get_cached_asset(
     }
     let manifest = serde_json::from_str(&manifest_raw).ok();
     Some((sha256, manifest))
+}
+
+pub fn load_cached_manifests_by_plugin_id(conn: &Connection) -> HashMap<String, ParsedPluginManifest> {
+    let mut map = HashMap::new();
+    let mut stmt = match conn.prepare(
+        "SELECT manifest_json FROM release_asset_cache ORDER BY updated_at DESC LIMIT 500",
+    ) {
+        Ok(s) => s,
+        Err(_) => return map,
+    };
+    let rows = match stmt.query_map([], |r| r.get::<_, String>(0)) {
+        Ok(it) => it,
+        Err(_) => return map,
+    };
+    for raw in rows.flatten() {
+        if let Ok(m) = serde_json::from_str::<ParsedPluginManifest>(&raw) {
+            let pid = m.id.trim().to_string();
+            if !pid.is_empty() && !map.contains_key(&pid) {
+                map.insert(pid, m);
+            }
+        }
+    }
+    map
 }
 
 pub fn put_cached_asset(

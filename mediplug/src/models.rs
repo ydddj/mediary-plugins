@@ -141,7 +141,7 @@ impl Default for PluginSettings {
     }
 }
 
-/// Exact Mediary v3.4.6 `catalog.json` document format.
+/// Exact Mediary v3.4.6 ~ v3.4.8+ `catalog.json` document format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CatalogDocument {
@@ -159,7 +159,7 @@ impl Default for CatalogDocument {
     }
 }
 
-/// Exact Mediary v3.4.6 `catalog.json` plugin entry format.
+/// Exact Mediary v3.4.6 ~ v3.4.8+ `catalog.json` plugin entry format.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CatalogPluginEntry {
@@ -202,6 +202,62 @@ pub struct CatalogArtifact {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
+pub struct ManifestRuntime {
+    #[serde(deserialize_with = "null_default")]
+    pub entrypoint: String,
+    #[serde(deserialize_with = "null_default")]
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ManifestPlaybackHook {
+    #[serde(deserialize_with = "null_default")]
+    pub transport: String,
+    #[serde(deserialize_with = "null_default")]
+    pub socket: String,
+    #[serde(deserialize_with = "null_default")]
+    pub endpoint: String,
+    #[serde(deserialize_with = "null_default")]
+    pub path: String,
+    pub timeout_ms: Option<u64>,
+    pub priority: Option<i32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ManifestResourceSearch {
+    pub source_id: Option<i64>,
+    #[serde(deserialize_with = "null_default")]
+    pub name: String,
+    #[serde(deserialize_with = "null_default")]
+    pub action: String,
+    pub transfer_action: Option<String>,
+    pub default_selected: Option<bool>,
+    pub timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ManifestUi {
+    #[serde(deserialize_with = "null_default")]
+    pub dir: String,
+    #[serde(deserialize_with = "null_default")]
+    pub entry: String,
+    #[serde(deserialize_with = "null_default")]
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct PluginCapability {
+    pub id: String,
+    pub label: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ParsedPluginManifest {
     #[serde(deserialize_with = "flex_id")]
     pub id: String,
@@ -225,6 +281,115 @@ pub struct ParsedPluginManifest {
     pub min_mediary_version: String,
     #[serde(deserialize_with = "null_default")]
     pub requested_scopes: Vec<String>,
+    pub runtime: Option<ManifestRuntime>,
+    pub action_runtime: Option<ManifestRuntime>,
+    pub playback_hook: Option<ManifestPlaybackHook>,
+    pub resource_search: Option<ManifestResourceSearch>,
+    pub ui: Option<ManifestUi>,
+    #[serde(deserialize_with = "null_default")]
+    pub scheduled_actions: Vec<Value>,
+}
+
+impl ParsedPluginManifest {
+    pub fn capabilities(&self) -> Vec<PluginCapability> {
+        let mut caps = Vec::new();
+        if let Some(ref hook) = self.playback_hook {
+            let transport = hook.transport.trim().to_ascii_lowercase();
+            let target = if transport == "http" {
+                hook.endpoint.trim()
+            } else {
+                hook.socket.trim()
+            };
+            let path = if hook.path.trim().is_empty() {
+                "/resolve"
+            } else {
+                hook.path.trim()
+            };
+            let timeout_str = hook
+                .timeout_ms
+                .map(|ms| format!(" · {ms}ms"))
+                .unwrap_or_default();
+            caps.push(PluginCapability {
+                id: "playback_hook".to_string(),
+                label: "playback_hook (+/prefetch)".to_string(),
+                detail: format!(
+                    "{transport}: {target} · {path}{timeout_str}（v3.4.8+ 同通道自动转发 POST /prefetch，4s 超时、404 自动回退）"
+                ),
+            });
+        }
+        if let Some(ref rs) = self.resource_search {
+            let sid = rs
+                .source_id
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "未设置".to_string());
+            let act = rs.action.trim();
+            let transfer = rs
+                .transfer_action
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("-");
+            let timeout_str = rs
+                .timeout_seconds
+                .map(|s| format!(" · {s}s"))
+                .unwrap_or_default();
+            caps.push(PluginCapability {
+                id: "resource_search".to_string(),
+                label: "resource_search".to_string(),
+                detail: format!("source_id={sid} · action={act} · transfer={transfer}{timeout_str}"),
+            });
+        }
+        if let Some(ref ui) = self.ui {
+            let dir = if ui.dir.trim().is_empty() {
+                "./ui"
+            } else {
+                ui.dir.trim()
+            };
+            let entry = if ui.entry.trim().is_empty() {
+                "index.html"
+            } else {
+                ui.entry.trim()
+            };
+            caps.push(PluginCapability {
+                id: "ui".to_string(),
+                label: "ui".to_string(),
+                detail: format!("工作台 {dir}/{entry}"),
+            });
+        }
+        if !self.scheduled_actions.is_empty() {
+            caps.push(PluginCapability {
+                id: "scheduled_actions".to_string(),
+                label: format!("定时任务({})", self.scheduled_actions.len()),
+                detail: format!("声明 {} 项宿主定时任务", self.scheduled_actions.len()),
+            });
+        }
+        if let Some(ref rt) = self.runtime {
+            if !rt.entrypoint.trim().is_empty() {
+                caps.push(PluginCapability {
+                    id: "runtime".to_string(),
+                    label: "runtime".to_string(),
+                    detail: format!("常驻后台进程 {}", rt.entrypoint.trim()),
+                });
+            }
+        }
+        caps
+    }
+
+    pub fn compat_note(&self) -> String {
+        let min_ver = if self.min_mediary_version.trim().is_empty() {
+            "3.4.6"
+        } else {
+            self.min_mediary_version.trim()
+        };
+        let mut notes = vec![format!("兼容 Mediary v{min_ver} ~ v3.4.8+")];
+        if self.playback_hook.is_some() {
+            notes.push("支持 v3.4.8+ playback_hook 同通道 POST /prefetch 预热转发（4s 独立超时、404 自动回退）".to_string());
+        }
+        if self.resource_search.is_some() {
+            notes.push("符合 v3.4.8 resource_search 扩展规范（action_runtime + source_id <= -2）".to_string());
+        }
+        notes.join(" · ")
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -240,7 +405,11 @@ pub struct ArchiveInspection {
     pub plugin_bin_executable: bool,
     pub forbidden_entries: Vec<String>,
     pub valid_for_mediary_346: bool,
+    pub valid_for_mediary_348: bool,
+    pub compat_note: String,
+    pub capabilities: Vec<PluginCapability>,
     pub issues: Vec<String>,
+    pub warnings: Vec<String>,
     pub manifest: Option<ParsedPluginManifest>,
     pub catalog_entry: Option<CatalogPluginEntry>,
 }
@@ -452,6 +621,11 @@ pub struct HostStorePluginView {
     pub min_mediary_version: String,
     #[serde(deserialize_with = "null_default")]
     pub permissions: Vec<String>,
+    pub compatible: Option<bool>,
+    pub available_for_platform: Option<bool>,
+    pub playback_hook_approved: Option<bool>,
+    #[serde(deserialize_with = "null_default")]
+    pub capabilities: Vec<PluginCapability>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

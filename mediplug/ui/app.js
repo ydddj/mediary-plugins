@@ -46,6 +46,25 @@ function fmtAgo(ts) {
   return `${Math.floor(diff / 86400)}天前`;
 }
 
+function renderCapBadges(caps, compact = false) {
+  const list = Array.isArray(caps) ? caps : [];
+  if (list.length === 0) return '';
+  const clsFor = (id) => {
+    if (id === 'playback_hook') return 'cap-hook';
+    if (id === 'resource_search') return 'cap-search';
+    if (id === 'ui') return 'cap-ui';
+    return '';
+  };
+  return `<div class="mp-cap-list"${compact ? ' style="margin-top:4px"' : ''}>${list
+    .map((c) => {
+      const label = typeof c === 'string' ? c : c.label || c.id;
+      const detail = typeof c === 'string' ? c : c.detail || label;
+      const cls = clsFor(typeof c === 'string' ? c : c.id);
+      return `<span class="mp-tag ${cls}" title="${esc(detail)}">${esc(label)}</span>`;
+    })
+    .join('')}</div>`;
+}
+
 let toastTimer = null;
 function toast(msg, kind = 'info') {
   const box = el('mp-toast');
@@ -152,7 +171,7 @@ function updateChrome() {
     bridgePill.className = bridgedCount > 0 ? 'mp-status-pill warn' : 'mp-status-pill';
   }
 
-  el('mp-sync-note').textContent = d.last_sync_summary || 'Mediary 3.4.6+ 原生多源聚合';
+  el('mp-sync-note').textContent = d.last_sync_summary || '兼容 Mediary v3.4.6 ~ v3.4.8+';
 }
 
 function renderAuthBanner(hs, engine) {
@@ -163,7 +182,7 @@ function renderAuthBanner(hs, engine) {
         <div>
           <div class="mp-card-title" style="color:var(--mp-warn)">🔑 配置 Mediary 管理员 API Token 以管理插件源</div>
           <div class="mp-card-sub">
-            Mediary v3.4.6 的 <code>/api/plugin-store/sources</code> 接口要求使用管理员 API Token 鉴权。请打开宿主「<b>设置 → 安全</b>」复制 API Token 粘贴在下方保存：
+            Mediary v3.4.6 ~ v3.4.8+ 的 <code>/api/plugin-store/sources</code> 接口要求使用管理员 API Token 鉴权。请打开宿主「<b>设置 → 安全</b>」复制 API Token 粘贴在下方保存：
           </div>
         </div>
       </div>
@@ -257,7 +276,7 @@ function renderSourcesTab(view) {
       <div class="mp-card-head">
         <div>
           <h3 class="mp-card-title">已注册插件源列表</h3>
-          <div class="mp-card-sub">官方内置源 <code>official</code> 命名空间受宿主保护；第三方源支持 <code>http://</code> 与 <code>https://</code> 标准 catalog.json 地址</div>
+          <div class="mp-card-sub">兼容 Mediary v3.4.6 ~ v3.4.8+：官方内置源 <code>official</code> 命名空间受宿主保护；v3.4.8 宿主对第三方源启用数量上限与公网 HTTPS 校验（桥接仓可自动经由 GitHub Gist 托管）</div>
         </div>
         <div class="mp-actions">
           <button type="button" class="mp-btn sm" id="btn-copy-bridge-url">复制本地桥接 URL</button>
@@ -519,7 +538,8 @@ function renderGithubTab(view) {
                   <td>
                     ${plugins.length === 0 ? '<span style="color:var(--mp-muted)">-</span>' : plugins.map((p) => {
                       const archs = Object.keys(p.artifacts || {}).join(', ');
-                      return `<div style="margin-bottom:3px"><b>${esc(p.id)}</b> <span class="mp-tag ok">v${esc(p.version)}</span> <span style="font-size:11px;color:var(--mp-muted)">[${esc(archs)} · ${p.permissions?.length || 0} 权限]</span></div>`;
+                      const caps = d.plugin_capabilities?.[p.id] || [];
+                      return `<div style="margin-bottom:5px"><b>${esc(p.id)}</b> <span class="mp-tag ok">v${esc(p.version)}</span> <span style="font-size:11px;color:var(--mp-muted)">[${esc(archs)} · ${p.permissions?.length || 0} 权限]</span>${renderCapBadges(caps, true)}</div>`;
                     }).join('')}
                   </td>
                   <td>
@@ -767,11 +787,14 @@ function renderStoreTab(view) {
                   : `<span class="mp-tag ok">${esc(p.source_name || '第三方')}</span>`}
               </div>
               <div class="mp-plugin-desc" style="margin-top:8px">${esc(p.description || '暂无简介')}</div>
+              ${renderCapBadges(p.capabilities || [])}
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--mp-border)">
               <div style="font-size:11.5px;color:var(--mp-muted)">
-                ${p.permissions?.length || 0} 项权限${p.min_mediary_version ? ` · >= v${esc(p.min_mediary_version)}` : ''}
+                ${p.permissions?.length || 0} 项权限${p.min_mediary_version ? ` · 兼容 v${esc(p.min_mediary_version)} ~ v3.4.8+` : ' · 兼容 v3.4.6 ~ v3.4.8+'}
+                ${p.compatible === false ? ' <span class="mp-tag danger">宿主不兼容</span>' : ''}
+                ${p.installed && (p.capabilities || []).some((c) => c.id === 'playback_hook') && p.playback_hook_approved === false ? ' <span class="mp-tag warn">待批准播放钩子</span>' : ''}
               </div>
               <div class="mp-actions">
                 ${p.update_available ? `
@@ -831,7 +854,7 @@ function renderBuilderTab(view) {
     <div class="mp-header">
       <div>
         <h2>插件 .tar.gz 规范校验与标准 catalog.json 生成器</h2>
-        <p>按宿主 v3.4.6 严格标准校验打包产物（根目录 plugin.json、plugin 0755 权限、严禁含 config.json 或 data/、解压 &lt;= 250MB），自动生成精确 sha256 与 permissions 索引</p>
+        <p>对齐 Mediary v3.4.6 ~ v3.4.8+ 严格规范：校验根目录 plugin.json / plugin (0755)、禁含 config.json 或 data/、解压 &lt;= 250MB，以及 <code>playback_hook</code>（unix/http 与 /prefetch）和 <code>resource_search</code>（action_runtime 与 source_id &lt;= -2）扩展声明</p>
       </div>
       <div class="mp-actions">
         <button type="button" class="mp-btn primary" id="btn-pick-tgz">📦 选择本地 .tar.gz 包校验</button>
@@ -867,18 +890,28 @@ function renderBuilderTab(view) {
     </div>
 
     ${ins ? `
-      <div class="mp-card" style="border-color:${ins.valid_for_mediary_346 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.55)'}">
+      <div class="mp-card" style="border-color:${(ins.valid_for_mediary_348 ?? ins.valid_for_mediary_346) ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.55)'}">
         <div class="mp-card-head">
           <div>
             <h3 class="mp-card-title">
-              ${ins.valid_for_mediary_346 ? '✅ 通过 Mediary v3.4.6 安装器规范校验' : '❌ 未通过 Mediary v3.4.6 安装器规范校验'}
+              ${(ins.valid_for_mediary_348 ?? ins.valid_for_mediary_346) ? '✅ 通过 Mediary v3.4.6 ~ v3.4.8+ 安装器与扩展规范校验' : '❌ 未通过 Mediary v3.4.6 ~ v3.4.8+ 安装器与扩展规范校验'}
               — <code>${esc(ins.filename)}</code>
             </h3>
             <div class="mp-card-sub">
               架构: <b>${esc(ins.arch)}</b> · 压缩包大小 (size): <b>${ins.compressed_size}</b> (${fmtBytes(ins.compressed_size)}) · 解压体积: ${fmtBytes(ins.unpacked_size)}
             </div>
+            ${ins.compat_note ? `<div class="mp-card-sub" style="margin-top:3px;color:var(--mp-text)">${esc(ins.compat_note)}</div>` : ''}
           </div>
         </div>
+        ${(ins.capabilities || []).length > 0 ? `
+          <div style="margin-bottom:10px">
+            <div style="font-size:11.5px;color:var(--mp-muted);margin-bottom:4px">检测到的扩展能力徽章（悬停查看详情）：</div>
+            ${renderCapBadges(ins.capabilities, true)}
+            <div style="margin-top:6px;font-size:11.5px;color:var(--mp-muted)">
+              ${ins.capabilities.map((c) => `<div>• <b>${esc(c.label)}</b>: ${esc(c.detail)}</div>`).join('')}
+            </div>
+          </div>
+        ` : ''}
         <div class="mp-code-box" style="margin-bottom:10px">sha256: ${esc(ins.sha256)}</div>
         ${(ins.issues || []).length > 0 ? `
           <div style="color:var(--mp-danger);font-size:12.5px">
@@ -889,9 +922,15 @@ function renderBuilderTab(view) {
             ✓ 根目录包含 plugin.json (<code>${esc(ins.manifest?.id)}@${esc(ins.manifest?.version)}</code>) &nbsp;|&nbsp;
             ✓ 可执行文件 plugin (0755) &nbsp;|&nbsp;
             ✓ 无 config.json 或 data/ 污染 &nbsp;|&nbsp;
-            ✓ 同步 ${ins.manifest?.requested_scopes?.length || 0} 项 requested_scopes 权限
+            ✓ 同步 ${ins.manifest?.requested_scopes?.length || 0} 项 requested_scopes 权限 &nbsp;|&nbsp;
+            ✓ 扩展声明符合 v3.4.8 规范
           </div>
         `}
+        ${(ins.warnings || []).length > 0 ? `
+          <div style="color:var(--mp-warn);font-size:12px;margin-top:6px">
+            ${ins.warnings.map((w) => `<div>⚠️ ${esc(w)}</div>`).join('')}
+          </div>
+        ` : ''}
       </div>
     ` : ''}
 
@@ -945,7 +984,7 @@ function renderBuilderTab(view) {
         add_to_hosted: addHosted,
       });
       state.lastInspection = res.inspection;
-      if (res.inspection?.valid_for_mediary_346 && res.inspection.catalog_entry) {
+      if ((res.inspection?.valid_for_mediary_348 ?? res.inspection?.valid_for_mediary_346) && res.inspection.catalog_entry) {
         mergeBuilderEntry(res.inspection.catalog_entry);
         toast(`校验通过：已将 ${res.inspection.catalog_entry.id} 加入 catalog.json`, 'success');
       } else {
@@ -973,7 +1012,7 @@ function renderBuilderTab(view) {
       add_to_hosted: addHosted,
     });
     state.lastInspection = res.inspection;
-    if (res.inspection?.valid_for_mediary_346 && res.inspection.catalog_entry) {
+    if ((res.inspection?.valid_for_mediary_348 ?? res.inspection?.valid_for_mediary_346) && res.inspection.catalog_entry) {
       mergeBuilderEntry(res.inspection.catalog_entry);
       toast(`校验通过：已加入 ${res.inspection.catalog_entry.id}`, 'success');
     }

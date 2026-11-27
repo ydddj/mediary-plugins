@@ -324,12 +324,200 @@ fn normalize_tar_entry_path(raw: &str) -> (String, bool) {
     (parts.join("/"), unsafe_path)
 }
 
+fn is_valid_action_ident(s: &str) -> bool {
+    let t = s.trim();
+    !t.is_empty()
+        && t.len() <= 64
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+fn is_safe_relative_path(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.is_empty() || t.starts_with('/') || t.starts_with('\\') || t.contains('\\') || t.contains('\0') {
+        return false;
+    }
+    let mut has_normal = false;
+    for seg in t.split('/') {
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
+        if seg == ".." {
+            return false;
+        }
+        has_normal = true;
+    }
+    has_normal
+}
+
+fn is_loopback_http_endpoint(raw: &str) -> bool {
+    let t = raw.trim();
+    let Ok(u) = Url::parse(t) else {
+        return false;
+    };
+    if !matches!(u.scheme(), "http" | "https") {
+        return false;
+    }
+    if !u.username().is_empty() || u.password().is_some() {
+        return false;
+    }
+    matches!(
+        u.host_str(),
+        Some("127.0.0.1" | "::1" | "[::1]" | "localhost")
+    )
+}
+
+/// Validates Mediary v3.4.6 ~ v3.4.8+ manifest extension rules (`playback_hook`, `resource_search`, `ui`).
+pub fn validate_manifest_extensions(
+    m: &ParsedPluginManifest,
+    symlink_entries: &[String],
+    issues: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    if let Some(ref hook) = m.playback_hook {
+        let transport = hook.transport.trim().to_ascii_lowercase();
+        match transport.as_str() {
+            "unix" => {
+                let sock = hook.socket.trim();
+                if sock.is_empty() {
+                    issues.push("playback_hook.transport=unix 时必须填写 socket 相对路径（如 data/playback-hook.sock）".to_string());
+                } else if !is_safe_relative_path(sock) {
+                    issues.push(format!(
+                        "playback_hook.socket 必须为安全相对路径（禁止绝对路径或 .. 越界）: {sock}"
+                    ));
+                } else {
+                    let (norm_sock, _) = normalize_tar_entry_path(sock);
+                    if symlink_entries.iter().any(|s| {
+                        s == &norm_sock || norm_sock.starts_with(&format!("{s}/"))
+                    }) {
+                        issues.push(format!(
+                            "playback_hook.socket 路径不可指向符号链接: {sock}"
+                        ));
+                    }
+                }
+                if !hook.endpoint.trim().is_empty() {
+                    warnings.push("playback_hook.transport=unix 时无需设置 endpoint 字段".to_string());
+                }
+                if m.runtime
+                    .as_ref()
+                    .map(|r| r.entrypoint.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    warnings.push(
+                        "playback_hook 使用 unix 传输但未声明 runtime，请确认常驻进程由宿主托管或插件自行拉起"
+                            .to_string(),
+                    );
+                }
+            }
+            "http" => {
+                let ep = hook.endpoint.trim();
+                if ep.is_empty() {
+                    issues.push(
+                        "playback_hook.transport=http 时必须填写本机回环 endpoint（如 http://127.0.0.1:18120）"
+                            .to_string(),
+                    );
+                } else if !is_loopback_http_endpoint(ep) {
+                    issues.push(format!(
+                        "playback_hook.endpoint 必须为不含凭据的本机回环地址（127.0.0.1 / ::1 / localhost）: {ep}"
+                    ));
+                }
+            }
+            other => {
+                issues.push(format!(
+                    "playback_hook.transport 必须为 \"unix\" 或 \"http\"（当前: \"{other}\"）"
+                ));
+            }
+        }
+
+        let path = hook.path.trim();
+        if !path.is_empty() {
+            if !path.starts_with('/') || path.contains("..") || path.chars().any(char::is_whitespace) {
+                issues.push(format!(
+                    "playback_hook.path 必须以 / 开头且不含空白或 ..（如 /resolve）: {path}"
+                ));
+            }
+        }
+        if let Some(ms) = hook.timeout_ms {
+            if ms == 0 || ms > 30_000 {
+                issues.push(format!(
+                    "playback_hook.timeout_ms 超出合法范围（要求 1 ~ 30000 ms，当前: {ms}）"
+                ));
+            }
+        }
+    }
+
+    if let Some(ref rs) = m.resource_search {
+        let has_action_rt = m
+            .action_runtime
+            .as_ref()
+            .map(|r| !r.entrypoint.trim().is_empty())
+            .unwrap_or(false);
+        if !has_action_rt {
+            issues.push(
+                "声明 resource_search 扩展时必须同时声明有效的 action_runtime（含 entrypoint）"
+                    .to_string(),
+            );
+        }
+        match rs.source_id {
+            Some(id) if id <= -2 => {}
+            Some(id) => {
+                issues.push(format!(
+                    "resource_search.source_id 必须 <= -2（当前: {id}，-1 及以上为宿主保留源 ID）"
+                ));
+            }
+            None => {
+                issues.push("resource_search 缺少必填整数 source_id（要求 <= -2）".to_string());
+            }
+        }
+        if !is_valid_action_ident(&rs.action) {
+            issues.push(format!(
+                "resource_search.action 无效（须非空且仅含字母/数字/下划线/连字符）: \"{}\"",
+                rs.action.trim()
+            ));
+        }
+        match rs.transfer_action {
+            Some(ref ta) => {
+                if !is_valid_action_ident(ta) {
+                    issues.push(format!(
+                        "resource_search.transfer_action 无效（须非空且仅含字母/数字/下划线/连字符）: \"{}\"",
+                        ta.trim()
+                    ));
+                }
+            }
+            None => {
+                warnings.push(
+                    "resource_search 未声明 transfer_action（仅支持资源搜索，不支持宿主一键转存）"
+                        .to_string(),
+                );
+            }
+        }
+        if let Some(secs) = rs.timeout_seconds {
+            if secs == 0 || secs > 300 {
+                issues.push(format!(
+                    "resource_search.timeout_seconds 超出合法范围（要求 1 ~ 300 秒，当前: {secs}）"
+                ));
+            }
+        }
+    }
+
+    if let Some(ref ui) = m.ui {
+        if !ui.dir.trim().is_empty() && !is_safe_relative_path(&ui.dir) {
+            issues.push(format!("ui.dir 必须为安全相对路径: {}", ui.dir));
+        }
+        if !ui.entry.trim().is_empty() && !is_safe_relative_path(&ui.entry) {
+            issues.push(format!("ui.entry 必须为安全相对路径: {}", ui.entry));
+        }
+    }
+}
+
 /// Streams a `.tar.gz` archive, simultaneously computing its exact compressed `size` & `sha256`
-/// AND validating Mediary v3.4.6's strict archive installer contract:
+/// AND validating Mediary v3.4.6 ~ v3.4.8+'s strict archive & manifest extension contract:
 /// - Root `plugin.json` present and valid
 /// - Root `plugin` executable present (`mode & 0o111 != 0`)
 /// - Forbidden runtime files (`config.json`, `data/`) absent
 /// - Unpacked total size `<= 250 MB`
+/// - `playback_hook` (`unix` relative non-symlink socket / `http` loopback endpoint, `path`, `timeout_ms`)
+/// - `resource_search` (`action_runtime` required, `source_id <= -2`, `action`/`transfer_action`, `timeout_seconds`)
 pub fn inspect_tar_gz_reader<R: Read>(
     reader: R,
     filename: &str,
@@ -337,7 +525,9 @@ pub fn inspect_tar_gz_reader<R: Read>(
 ) -> Result<ArchiveInspection> {
     let mut hashing = HashingReader::new(reader, MAX_COMPRESSED_DOWNLOAD_BYTES);
     let mut issues = Vec::new();
+    let mut warnings = Vec::new();
     let mut forbidden_entries = Vec::new();
+    let mut symlink_entries = Vec::new();
     let mut has_plugin_json = false;
     let mut has_plugin_bin = false;
     let mut plugin_bin_executable = false;
@@ -420,6 +610,7 @@ pub fn inspect_tar_gz_reader<R: Read>(
                 issues.push(format!("归档包含非法越界路径: {raw_path}"));
             }
             if matches!(typeflag, b'2' | b'1') {
+                symlink_entries.push(norm_path.clone());
                 issues.push(format!("归档包含符号链接/硬链接条目: {raw_path}"));
             }
 
@@ -494,9 +685,20 @@ pub fn inspect_tar_gz_reader<R: Read>(
         if m.version.trim().is_empty() {
             issues.push("plugin.json 缺少 version 字段".to_string());
         }
+        validate_manifest_extensions(m, &symlink_entries, &mut issues, &mut warnings);
     }
 
-    let valid_for_mediary_346 = issues.is_empty() && manifest.is_some();
+    let valid_for_mediary_348 = issues.is_empty() && manifest.is_some();
+    let valid_for_mediary_346 = valid_for_mediary_348;
+    let capabilities = manifest
+        .as_ref()
+        .map(ParsedPluginManifest::capabilities)
+        .unwrap_or_default();
+    let compat_note = manifest
+        .as_ref()
+        .map(ParsedPluginManifest::compat_note)
+        .unwrap_or_else(|| "兼容 Mediary v3.4.6 ~ v3.4.8+".to_string());
+
     let catalog_entry = manifest.as_ref().map(|m| {
         let mut artifacts = BTreeMap::new();
         let art_url = if !download_url_hint.trim().is_empty() {
@@ -529,7 +731,11 @@ pub fn inspect_tar_gz_reader<R: Read>(
         plugin_bin_executable,
         forbidden_entries,
         valid_for_mediary_346,
+        valid_for_mediary_348,
+        compat_note,
+        capabilities,
         issues,
+        warnings,
         manifest,
         catalog_entry,
     })
@@ -638,7 +844,7 @@ impl GithubClient {
         let mut builder = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10))
             .timeout(Duration::from_secs(60))
-            .user_agent("Mediary-MediPlug/1.0.0");
+            .user_agent(concat!("Mediary-MediPlug/", env!("CARGO_PKG_VERSION")));
 
         // Do NOT route local 127.0.0.1 mock URLs through external proxy
         let api_base = github_api_base();
@@ -1304,6 +1510,116 @@ mod tests {
         )
         .unwrap();
         assert!(!bad_res.valid_for_mediary_346);
+        assert!(!bad_res.valid_for_mediary_348);
         assert_eq!(bad_res.forbidden_entries.len(), 2);
+    }
+
+    #[test]
+    fn test_validate_v348_playback_hook_and_resource_search() {
+        // 1. Valid unix playback_hook + ui
+        let hook_ok = br#"{
+            "api_version": 1,
+            "id": "medinext",
+            "name": "MediNext",
+            "version": "2.1.2",
+            "runtime": {"entrypoint": "./plugin", "args": ["daemon"]},
+            "action_runtime": {"entrypoint": "./plugin"},
+            "playback_hook": {"transport": "unix", "socket": "data/playback-hook.sock", "path": "/resolve", "timeout_ms": 1500},
+            "ui": {"dir": "./ui", "entry": "index.html"},
+            "requested_scopes": ["media-service:read"]
+        }"#;
+        let tgz_hook_ok = build_tgz(&[("plugin.json", 0o644, hook_ok), ("plugin", 0o755, b"BIN")]);
+        let r1 = inspect_tar_gz_reader(Cursor::new(&tgz_hook_ok), "medinext-2.1.2-linux-amd64.tar.gz", "").unwrap();
+        assert!(r1.valid_for_mediary_348, "{:?}", r1.issues);
+        assert!(r1.capabilities.iter().any(|c| c.label == "playback_hook (+/prefetch)"));
+        assert!(r1.capabilities.iter().any(|c| c.id == "ui"));
+        assert!(r1.compat_note.contains("POST /prefetch"));
+
+        // 2. Valid http loopback playback_hook
+        let hook_http_ok = br#"{
+            "api_version": 1,
+            "id": "http-hook",
+            "version": "1.0.0",
+            "playback_hook": {"transport": "http", "endpoint": "http://127.0.0.1:18120", "path": "/resolve", "timeout_ms": 2000}
+        }"#;
+        let r2 = inspect_tar_gz_reader(
+            Cursor::new(build_tgz(&[("plugin.json", 0o644, hook_http_ok), ("plugin", 0o755, b"BIN")])),
+            "http-hook-1.0.0-linux-amd64.tar.gz",
+            "",
+        )
+        .unwrap();
+        assert!(r2.valid_for_mediary_348, "{:?}", r2.issues);
+
+        // 3. Invalid playback_hook: non-loopback endpoint + absolute unix socket
+        let hook_http_bad = br#"{
+            "api_version": 1,
+            "id": "bad-http-hook",
+            "version": "1.0.0",
+            "playback_hook": {"transport": "http", "endpoint": "http://10.0.0.5:8080", "path": "resolve", "timeout_ms": 99999}
+        }"#;
+        let r3 = inspect_tar_gz_reader(
+            Cursor::new(build_tgz(&[("plugin.json", 0o644, hook_http_bad), ("plugin", 0o755, b"BIN")])),
+            "bad-http-hook-1.0.0-linux-amd64.tar.gz",
+            "",
+        )
+        .unwrap();
+        assert!(!r3.valid_for_mediary_348);
+        assert!(r3.issues.iter().any(|i| i.contains("本机回环")));
+        assert!(r3.issues.iter().any(|i| i.contains("playback_hook.path")));
+        assert!(r3.issues.iter().any(|i| i.contains("timeout_ms")));
+
+        let hook_unix_bad = br#"{
+            "api_version": 1,
+            "id": "bad-unix-hook",
+            "version": "1.0.0",
+            "playback_hook": {"transport": "unix", "socket": "../escape.sock", "path": "/resolve"}
+        }"#;
+        let r4 = inspect_tar_gz_reader(
+            Cursor::new(build_tgz(&[("plugin.json", 0o644, hook_unix_bad), ("plugin", 0o755, b"BIN")])),
+            "bad-unix-hook-1.0.0-linux-amd64.tar.gz",
+            "",
+        )
+        .unwrap();
+        assert!(!r4.valid_for_mediary_348);
+        assert!(r4.issues.iter().any(|i| i.contains("playback_hook.socket")));
+
+        // 4. Valid resource_search with action_runtime and source_id <= -2
+        let rs_ok = br#"{
+            "api_version": 1,
+            "id": "medifind",
+            "name": "MediFind",
+            "version": "3.2.1",
+            "action_runtime": {"entrypoint": "./plugin"},
+            "resource_search": {"source_id": -10, "name": "MediFind", "action": "resource_search", "transfer_action": "resource_transfer", "timeout_seconds": 60},
+            "ui": {"dir": "./ui", "entry": "index.html"}
+        }"#;
+        let r5 = inspect_tar_gz_reader(
+            Cursor::new(build_tgz(&[("plugin.json", 0o644, rs_ok), ("plugin", 0o755, b"BIN")])),
+            "medifind-3.2.1-linux-amd64.tar.gz",
+            "",
+        )
+        .unwrap();
+        assert!(r5.valid_for_mediary_348, "{:?}", r5.issues);
+        assert!(r5.capabilities.iter().any(|c| c.id == "resource_search"));
+
+        // 5. Invalid resource_search: missing action_runtime, source_id = -1, bad action & timeout
+        let rs_bad = br#"{
+            "api_version": 1,
+            "id": "bad-rs",
+            "version": "1.0.0",
+            "resource_search": {"source_id": -1, "action": "bad action!", "transfer_action": "", "timeout_seconds": 600}
+        }"#;
+        let r6 = inspect_tar_gz_reader(
+            Cursor::new(build_tgz(&[("plugin.json", 0o644, rs_bad), ("plugin", 0o755, b"BIN")])),
+            "bad-rs-1.0.0-linux-amd64.tar.gz",
+            "",
+        )
+        .unwrap();
+        assert!(!r6.valid_for_mediary_348);
+        assert!(r6.issues.iter().any(|i| i.contains("action_runtime")));
+        assert!(r6.issues.iter().any(|i| i.contains("source_id")));
+        assert!(r6.issues.iter().any(|i| i.contains("resource_search.action")));
+        assert!(r6.issues.iter().any(|i| i.contains("transfer_action")));
+        assert!(r6.issues.iter().any(|i| i.contains("timeout_seconds")));
     }
 }

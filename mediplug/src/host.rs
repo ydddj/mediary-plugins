@@ -1,6 +1,8 @@
 use crate::db;
 use crate::models::{
     sanitize_source_id, EngineSettings, HostCatalogSource, HostStorePluginView, HostStoreSnapshot,
+    ManifestPlaybackHook, ManifestResourceSearch, ManifestUi, ParsedPluginManifest,
+    PluginCapability,
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -630,15 +632,15 @@ impl HostClient {
         Ok(res)
     }
 
-    pub fn list_installed_map(&self) -> HashMap<String, (String, bool)> {
+    pub fn list_installed_details(&self) -> HashMap<String, InstalledPluginDetail> {
         let mut map = HashMap::new();
         let v = self
-            .call_plugin_json("GET", "/plugin/plugins", &[], None, 6)
+            .call_store_json("GET", "/plugins", &[], None, 6)
             .ok()
+            .map(|(x, _)| x)
             .or_else(|| {
-                self.call_store_json("GET", "/plugins", &[], None, 6)
+                self.call_plugin_json("GET", "/plugin/plugins", &[], None, 6)
                     .ok()
-                    .map(|(x, _)| x)
             });
         let Some(v) = v else {
             return map;
@@ -655,19 +657,32 @@ impl HostClient {
             if id.is_empty() {
                 continue;
             }
-            let ver = row["version"]
+            let version = row["version"]
                 .as_str()
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            let en = row["enabled"].as_bool() == Some(true);
-            map.insert(id, (ver, en));
+            let enabled = row["enabled"].as_bool() == Some(true);
+            let playback_hook_approved = row.get("playback_hook_approved").and_then(Value::as_bool);
+            let capabilities = extract_capabilities_from_value(&row);
+            map.insert(
+                id,
+                InstalledPluginDetail {
+                    version,
+                    enabled,
+                    playback_hook_approved,
+                    capabilities,
+                },
+            );
         }
         map
     }
 
-    pub fn fetch_plugin_store(&self) -> Result<HostStoreSnapshot> {
-        let installed_map = self.list_installed_map();
+    pub fn fetch_plugin_store(
+        &self,
+        cached_manifests: &HashMap<String, ParsedPluginManifest>,
+    ) -> Result<HostStoreSnapshot> {
+        let installed_map = self.list_installed_details();
         let (v, _) = self
             .call_store_json("GET", "/plugin-store", &[], None, 15)
             .map_err(|(_, msg)| anyhow!("{msg}"))?;
@@ -703,10 +718,11 @@ impl HostClient {
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            let (inst_from_map, en_from_map) = installed_map
-                .get(&id)
-                .cloned()
-                .unwrap_or_else(|| (String::new(), false));
+            let inst_detail = installed_map.get(&id);
+            let inst_from_map = inst_detail
+                .map(|d| d.version.clone())
+                .unwrap_or_default();
+            let en_from_map = inst_detail.map(|d| d.enabled).unwrap_or(false);
             let installed_ver = row["installed_version"]
                 .as_str()
                 .filter(|s| !s.trim().is_empty())
@@ -748,6 +764,15 @@ impl HostClient {
                 })
                 .unwrap_or_default();
 
+            let mut capabilities = Vec::new();
+            if let Some(m) = cached_manifests.get(&id) {
+                merge_capabilities(&mut capabilities, m.capabilities());
+            }
+            if let Some(d) = inst_detail {
+                merge_capabilities(&mut capabilities, d.capabilities.clone());
+            }
+            merge_capabilities(&mut capabilities, extract_capabilities_from_value(&row));
+
             plugins.push(HostStorePluginView {
                 name: row["name"]
                     .as_str()
@@ -776,6 +801,10 @@ impl HostClient {
                     .unwrap_or_default()
                     .to_string(),
                 permissions: perms,
+                compatible: row.get("compatible").and_then(Value::as_bool),
+                available_for_platform: row.get("available_for_platform").and_then(Value::as_bool),
+                playback_hook_approved: inst_detail.and_then(|d| d.playback_hook_approved),
+                capabilities,
             });
         }
 
@@ -812,6 +841,49 @@ impl HostClient {
             .context("提交主程序通知失败（请确认已授予 notifications:send 权限且宿主已配置通知渠道）")?;
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InstalledPluginDetail {
+    pub version: String,
+    pub enabled: bool,
+    pub playback_hook_approved: Option<bool>,
+    pub capabilities: Vec<PluginCapability>,
+}
+
+fn merge_capabilities(base: &mut Vec<PluginCapability>, extra: Vec<PluginCapability>) {
+    for cap in extra {
+        if !base.iter().any(|existing| existing.id == cap.id) {
+            base.push(cap);
+        }
+    }
+}
+
+fn extract_capabilities_from_value(row: &Value) -> Vec<PluginCapability> {
+    let mut manifest = ParsedPluginManifest::default();
+    if let Some(v) = row.get("playback_hook").filter(|v| v.is_object()) {
+        manifest.playback_hook = serde_json::from_value::<ManifestPlaybackHook>(v.clone()).ok();
+    }
+    if let Some(v) = row.get("resource_search").filter(|v| v.is_object()) {
+        manifest.resource_search = serde_json::from_value::<ManifestResourceSearch>(v.clone()).ok();
+    }
+    if let Some(v) = row.get("ui").filter(|v| v.is_object()) {
+        manifest.ui = serde_json::from_value::<ManifestUi>(v.clone()).ok();
+    }
+    if let Some(arr) = row.get("scheduled_actions").and_then(Value::as_array) {
+        manifest.scheduled_actions = arr.clone();
+    }
+    let mut caps = manifest.capabilities();
+    if row.get("managed_runtime").and_then(Value::as_bool) == Some(true)
+        && !caps.iter().any(|c| c.id == "runtime")
+    {
+        caps.push(PluginCapability {
+            id: "runtime".to_string(),
+            label: "runtime".to_string(),
+            detail: "宿主托管常驻进程".to_string(),
+        });
+    }
+    caps
 }
 
 pub fn fast_host_status(data_dir: &Path, engine: &EngineSettings) -> HostStatus {

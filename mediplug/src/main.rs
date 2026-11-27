@@ -100,11 +100,12 @@ fn dispatch(
         "health_check" => {
             let conn = db::open_db(data_dir)?;
             let cfg = db::load_config(&conn)?;
+            let cached_manifests = db::load_cached_manifests_by_plugin_id(&conn);
             let host = HostClient::from_env_with_admin(data_dir, &cfg.engine.admin_api_token);
             let (st, sources, store_snap) = if let Some(ref h) = host {
                 let (st, srcs) = h.inspect_status(data_dir, &cfg.engine);
                 let snap = if st.store_auth_ready {
-                    h.fetch_plugin_store().unwrap_or_default()
+                    h.fetch_plugin_store(&cached_manifests).unwrap_or_default()
                 } else {
                     HostStoreSnapshot::default()
                 };
@@ -529,8 +530,8 @@ fn dispatch(
             let mut cfg = db::load_config(&conn)?;
             if add_to_hosted {
                 ensure!(
-                    inspection.valid_for_mediary_346,
-                    "该压缩包未通过 Mediary 3.4.6 安装规范校验，请先修复问题后再挂载到本地源"
+                    inspection.valid_for_mediary_348,
+                    "该压缩包未通过 Mediary v3.4.6 ~ v3.4.8+ 安装器与扩展规范校验，请先修复问题后再挂载到本地源"
                 );
                 if let Some(ref entry) = inspection.catalog_entry {
                     cfg = merge_entry_into_hosted(&mut conn, entry.clone())?;
@@ -975,11 +976,12 @@ fn build_full_bootstrap(
     settings: &PluginSettings,
     fetch_store: bool,
 ) -> Value {
+    let cached_manifests = db::load_cached_manifests_by_plugin_id(conn);
     let host = HostClient::from_env_with_admin(data_dir, &cfg.engine.admin_api_token);
     let (host_status, host_sources, store_snapshot) = if let Some(ref h) = host {
         let (st, srcs) = h.inspect_status(data_dir, &cfg.engine);
         let snap = if fetch_store && st.store_auth_ready {
-            h.fetch_plugin_store().unwrap_or_default()
+            h.fetch_plugin_store(&cached_manifests).unwrap_or_default()
         } else {
             HostStoreSnapshot::default()
         };
@@ -1020,6 +1022,11 @@ fn build_full_bootstrap(
     let last_sync_summary =
         db::get_kv(conn, "last_sync_summary").unwrap_or_else(|| "就绪".to_string());
 
+    let plugin_capabilities: HashMap<String, Vec<models::PluginCapability>> = cached_manifests
+        .iter()
+        .map(|(k, m)| (k.clone(), m.capabilities()))
+        .collect();
+
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "settings": {
@@ -1033,6 +1040,7 @@ fn build_full_bootstrap(
         "host_sources": host_sources,
         "github_repos": cfg.github_repos,
         "hosted_entries": cfg.hosted_entries,
+        "plugin_capabilities": plugin_capabilities,
         "unified_catalog": unified_doc,
         "store": store_snapshot,
         "logs": logs,
