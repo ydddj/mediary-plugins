@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "medifind",
+      "name": "MediFind 网盘聚合引擎",
+      "version": "3.2.0",
+      "description": "面向 Mediary 3.4.6+ 的 Rust 上游找片与转存进货引擎：原生接入宿主参数化 TMDB 发现与同源海报代理、分季已入库集号比对、确定性库诊断、115 分享与 ED2K/Magnet 指定目录离线进货，支持影巢中转/HDHive、Telegram MTProto 频道订阅、AYClub、RSS 与 NextFind 同款权重打分",
+      "author": "ydddj",
+      "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/medifind",
+      "source": "https://github.com/ydddj/mediary-plugins",
+      "license": "MIT",
+      "api_version": 1,
+      "min_mediary_version": "3.4.6",
+      "permissions": [
+        "catalog:read",
+        "subscriptions:read",
+        "subscriptions:write",
+        "media-library:read",
+        "integrations:read",
+        "integrations:run",
+        "open115:read",
+        "open115:write",
+        "settings:read",
+        "notifications:send"
+      ],
+      "artifacts": {
+        "linux-amd64": {
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/medifind-3.2.0-linux-amd64.tar.gz",
+          "sha256": "c8bb61af247e93086bba6086a44f4a718ba01fe894030dc1469966b6c20af8f0",
+          "size": 6004906
+        }
+      }
+    },
+    {
+      "id": "mediwash",
+      "name": "MediWash 归档入库与权重洗版",
+      "version": "3.1.5",
+      "description": "面向 Mediary 3.4.6+ 的 115 单目录全自动权重洗版与原生归档入库插件：胜出文件调用宿主原生 files/organize 一步完成二级分类、模板重命名、字幕跟随与 STRM 入库，淘汰/重复文件调用 files/delete 直移 115 官方回收站；支持新源入库自动删旧、存量库精洗与 PT 升级。",
+      "author": "ydddj",
+      "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/mediwash",
+      "source": "https://github.com/ydddj/mediary-plugins",
+      "license": "MIT",
+      "api_version": 1,
+      "min_mediary_version": "3.4.6",
+      "permissions": [
+        "media-library:read",
+        "media-library:delete",
+        "media-library:scan",
+        "open115:read",
+        "open115:write",
+        "integrations:read",
+        "integrations:run",
+        "catalog:read",
+        "settings:read",
+        "filters:read",
+        "sites:read",
+        "torrents:read",
+        "media-downloads:create",
+        "media-downloads:organize",
+        "downloads:read",
+        "notifications:send"
+      ],
+      "artifacts": {
+        "linux-amd64": {
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/mediwash-3.1.4-linux-amd64.tar.gz",
+          "sha256": "6ea8ceecb24fb4c4a7e20eba623128043e39c4de86e4b40b93370907992f01f6",
+          "size": 4204540
+        }
+      }
+    },
+    {
+      "id": "medinext",
+      "name": "MediNext 302 播放负载与风控",
+      "version": "2.1.1",
+      "description": "面向 Mediary 3.4.6+ 的原生 302 播放负载与观影风控引擎：基于宿主 playback_hook 常驻 Unix Socket 零额外端口接管 8118 播放，支持 115 多号负载均衡池、用户独立 115 秒传复用、剧集下一集后台同负载号自动预秒传+预签直链、详情页小号负载预热、主程序通知中心实时播放/风控推送、转存配额与回收站自动清理及 NextEmby 一键迁移。",
+      "author": "ydddj",
+      "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/medinext",
+      "source": "https://github.com/ydddj/mediary-plugins",
+      "license": "MIT",
+      "api_version": 1,
+      "min_mediary_version": "3.4.6",
+      "permissions": [
+        "media-library:read",
+        "media-service:read",
+        "media-service:write",
+        "open115:read",
+        "settings:read",
+        "notifications:send"
+      ],
+      "artifacts": {
+        "linux-amd64": {
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/medinext-2.1.1-linux-amd64.tar.gz",
+          "sha256": "a172e37a22452b46bdb7c6decec7c9a08baa69cf30ff4950c9f8e213dce0d43c",
+          "size": 3762581
+        }
+      }
+    },
+    {
+      "id": "mediplug",
+      "name": "MediPlug 插件源与 GitHub 桥接",
+      "version": "1.0.0",
+      "description": "面向 Mediary 3.4.6+ 的第三方插件源可视化管理与 GitHub Releases 自动桥接插件：免命令图形化增删启停 /api/plugin-store/sources 插件源，自动将无 catalog.json 的普通 GitHub Release 仓库转换为本地标准 HTTP catalog.json 源并注册进原生「插件中心」一键安装与热更新，内置 .tar.gz 包规范校验与 catalog.json 生成器。",
+      "author": "ydddj",
+      "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/mediplug",
+      "source": "https://github.com/ydddj/mediary-plugins",
+      "license": "MIT",
+      "api_version": 1,
+      "min_mediary_version": "3.4.6",
+      "permissions": [
+        "plugins:read",
+        "settings:read",
+        "notifications:send"
+      ],
+      "artifacts": {
+        "linux-amd64": {
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/mediplug-1.0.0-linux-amd64.tar.gz",
+          "sha256": "ec25ac2a2cf58e63e58328e60d8e94f7235b219a5870bf9816195d8f5bc81d66",
+          "size": 3542307
+        }
+      }
+    }
+  ]
+}

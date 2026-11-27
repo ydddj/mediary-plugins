@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediWash 入库与权重洗版</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="mw-shell">
+    <aside class="mw-sidebar">
+      <div class="mw-brand">
+        <div class="mw-brand-badge">MW</div>
+        <div>
+          <div class="mw-brand-title">MediWash</div>
+          <div class="mw-brand-sub" id="mw-version-label">入库守门 · 权重洗版</div>
+        </div>
+      </div>
+
+      <nav class="mw-nav" id="mw-nav">
+        <button type="button" class="mw-nav-btn active" data-tab="staging">
+          <span>115 归档入库</span>
+          <span class="mw-nav-badge" id="badge-staging">0</span>
+        </button>
+        <button type="button" class="mw-nav-btn" data-tab="library">
+          <span>存量库精洗</span>
+          <span class="mw-nav-badge" id="badge-library">0</span>
+        </button>
+        <button type="button" class="mw-nav-btn" data-tab="pt">
+          <span>PT 主动洗版</span>
+          <span class="mw-nav-badge" id="badge-pt">0</span>
+        </button>
+        <button type="button" class="mw-nav-btn" data-tab="rules">
+          <span>评分与订阅</span>
+          <span class="mw-nav-badge" id="badge-rules">0</span>
+        </button>
+        <button type="button" class="mw-nav-btn" data-tab="history">
+          <span>历史记录</span>
+          <span class="mw-nav-badge" id="badge-history">0</span>
+        </button>
+      </nav>
+
+      <div class="mw-sidebar-foot">
+        <div class="mw-status-pill" id="mw-mode-pill">模式读取中...</div>
+        <div class="mw-status-pill" id="mw-115-pill">宿主 115 检测中...</div>
+        <div class="mw-subnote" id="mw-host-sync-note">正在同步宿主规则...</div>
+      </div>
+    </aside>
+
+    <main class="mw-main">
+      <div id="mw-toast" class="mw-toast hidden"></div>
+      <div id="mw-view"></div>
+    </main>
+  </div>
+
+  <div id="mw-modal-backdrop" class="mw-modal-backdrop hidden">
+    <div class="mw-modal" id="mw-modal-box">
+      <div class="mw-modal-head">
+        <h3 id="mw-modal-title">弹窗</h3>
+        <button type="button" class="mw-btn ghost sm" id="mw-modal-close">✕</button>
+      </div>
+      <div class="mw-modal-body" id="mw-modal-body"></div>
+    </div>
+  </div>
+
+  <div id="mw-floating-tip" class="mw-floating-tip hidden"></div>
+  <input type="file" id="mw-hidden-file" class="hidden" />
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

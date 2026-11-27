@@ -1,0 +1,25 @@
+[package]
+name = "medifind"
+version = "3.2.0"
+edition = "2021"
+rust-version = "1.86"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+grammers-client = { version = "0.7.0", default-features = false, features = ["proxy", "parse_invite_link"] }
+grammers-mtsender = { version = "0.7.0", default-features = false, features = ["proxy"] }
+grammers-session = "0.7.0"
+grammers-tl-types = "0.7.0"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "io-util", "sync", "fs"] }
+ureq = { version = "2.12", default-features = false, features = ["json", "tls", "socks-proxy"] }
+url = "=2.5.2"
+
+[profile.release]
+strip = true
+lto = "thin"

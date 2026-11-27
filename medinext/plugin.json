@@ -1,0 +1,107 @@
+{
+  "api_version": 1,
+  "id": "medinext",
+  "name": "MediNext 302 播放负载与风控",
+  "version": "2.1.1",
+  "description": "面向 Mediary 3.4.6+ 的原生 302 播放负载与观影风控引擎：基于宿主 playback_hook 常驻 Unix Socket 零额外端口接管 8118 播放，支持 115 多号负载均衡池、用户独立 115 秒传复用、剧集下一集后台同负载号自动预秒传+预签直链、详情页小号负载预热、主程序通知中心实时播放/风控推送、转存配额与回收站自动清理及 NextEmby 一键迁移。",
+  "runtime": {
+    "entrypoint": "./plugin",
+    "args": ["daemon"]
+  },
+  "action_runtime": {
+    "entrypoint": "./plugin"
+  },
+  "playback_hook": {
+    "transport": "unix",
+    "socket": "data/playback-hook.sock",
+    "path": "/resolve",
+    "timeout_ms": 1500
+  },
+  "ui": {
+    "dir": "./ui",
+    "entry": "index.html",
+    "title": "MediNext 302 播放负载与风控",
+    "eyebrow": "原生 playback_hook · 115 多号负载均衡 · 用户秒传复用 · 配额回收站清理 · 播放风控",
+    "trigger": {
+      "label": "工作台",
+      "icon": "play"
+    }
+  },
+  "requested_scopes": [
+    "media-library:read",
+    "media-service:read",
+    "media-service:write",
+    "open115:read",
+    "settings:read",
+    "notifications:send"
+  ],
+  "auto_grant_scopes": false,
+  "scheduled_actions": [
+    {
+      "action": "tick",
+      "label": "会话校准、到期停用与转存配额清理",
+      "manual": true,
+      "cron": "*/15 * * * *",
+      "timeout_seconds": 300
+    },
+    {
+      "action": "health_check",
+      "label": "115 号池存活检测与 405 冷却恢复",
+      "manual": true,
+      "cron": "0 */4 * * *",
+      "timeout_seconds": 180
+    }
+  ],
+  "settings_schema": {
+    "sections": [
+      {
+        "title": "原生 302 钩子与运维开关",
+        "alert": "基于 Mediary 3.4.6+ 原生 playback_hook（Unix Socket 零端口直连），播放器直接连接 Mediary 8118 端口即可生效。首次安装或升级后，请在本页勾选授予 media-service 权限并批准播放决策钩子后保存。115 扫码绑号、负载均衡池、用户风控策略与 NextEmby 数据迁移请点击插件卡片「工作台」操作。",
+        "fields": [
+          {
+            "key": "$enabled",
+            "type": "switch",
+            "label": "启用插件",
+            "default": false
+          },
+          {
+            "key": "auto_clean_quota",
+            "type": "switch",
+            "label": "自动执行转存配额与 115 回收站清理",
+            "help": "开启后定时巡检负载均衡号与用户独立号的秒传缓存用量，超配额时按 FIFO 清理最旧转存文件并清空回收站",
+            "default": true
+          },
+          {
+            "key": "notify",
+            "type": "switch",
+            "label": "启用主程序通知中心联动（播放出流、风控拦截与 405 告警）",
+            "help": "复用 Mediary 主程序已配置的企业微信 / Telegram / Bark 通道，细项开关可在插件工作台调整",
+            "default": true
+          }
+        ]
+      }
+    ]
+  },
+  "data_view": {
+    "title": "302 播放负载与风控记录",
+    "file": "data/dashboard.json",
+    "item_label": "播放记录",
+    "summary": [
+      { "key": "mode_summary", "label": "钩子状态" },
+      { "key": "lb_healthy", "label": "可用负载号" },
+      { "key": "managed_users", "label": "纳管用户" },
+      { "key": "active_streams", "label": "当前并发" },
+      { "key": "cached_links", "label": "有效直链缓存" },
+      { "key": "plays_24h", "label": "24h 调度次数" }
+    ],
+    "fields": [
+      { "key": "title", "label": "媒体/文件", "primary": true },
+      { "key": "username", "label": "用户" },
+      { "key": "route", "label": "调度通道" },
+      { "key": "provider", "label": "出流账号" },
+      { "key": "status", "label": "结果" },
+      { "key": "detail", "label": "说明" },
+      { "key": "updated_at", "label": "时间" }
+    ]
+  }
+}

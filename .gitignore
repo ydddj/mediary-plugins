@@ -1,0 +1,12 @@
+target/
+dist/
+plugin
+data/
+config.json
+*.tar.gz
+*.tgz
+*.zip
+*.db
+*.db-shm
+*.db-wal
+.DS_Store

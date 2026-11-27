@@ -1,0 +1,235 @@
+tmdb_override:
+
+  # ==========================================================================
+  # 一、华语经典（经常被TMDB自动识别错误）
+  # ==========================================================================
+  - tmdb_id: 12882
+    media_type: movie
+    title: "东成西就"
+  - tmdb_id: 10965
+    media_type: movie
+    title: "东邪西毒"
+  - tmdb_id: 11104
+    media_type: movie
+    title: "重庆森林"
+  - tmdb_id: 253
+    media_type: movie
+    title: "花样年华"
+  - tmdb_id: 11245
+    media_type: movie
+    title: "阿飞正传"
+  - tmdb_id: 252
+    media_type: movie
+    title: "春光乍泄"
+  - tmdb_id: 20623
+    media_type: movie
+    title: "悲情城市"
+  - tmdb_id: 48474
+    media_type: movie
+    title: "牯岭街少年杀人事件"
+  - tmdb_id: 41281
+    media_type: movie
+    title: "一一"
+  - tmdb_id: 10067
+    media_type: movie
+    title: "蓝色大门"
+  - tmdb_id: 13400
+    media_type: movie
+    title: "不能说的秘密"
+  - tmdb_id: 76237
+    media_type: movie
+    title: "那些年，我们一起追的女孩"
+
+  # ==========================================================================
+  # 二、特摄系列
+  # ==========================================================================
+  - tmdb_id: 85268
+    media_type: tv
+    title: "奥特曼"
+  - tmdb_id: 28006
+    media_type: tv
+    title: "迪迦奥特曼"
+  - tmdb_id: 18876
+    media_type: tv
+    title: "假面骑士"
+  - tmdb_id: 11722
+    media_type: tv
+    title: "超级战队"
+  - tmdb_id: 4345
+    media_type: tv
+    title: "Power Rangers"
+
+  # ==========================================================================
+  # 三、动漫系列
+  # ==========================================================================
+  - tmdb_id: 46325
+    media_type: tv
+    title: "名侦探柯南"
+  - tmdb_id: 37854
+    media_type: tv
+    title: "海贼王"
+  - tmdb_id: 169
+    media_type: tv
+    title: "火影忍者"
+  - tmdb_id: 524
+    media_type: tv
+    title: "死神"
+  - tmdb_id: 813
+    media_type: tv
+    title: "龙珠"
+  - tmdb_id: 32464
+    media_type: tv
+    title: "数码宝贝"
+  - tmdb_id: 60573
+    media_type: tv
+    title: "宝可梦"
+  - tmdb_id: 19396
+    media_type: tv
+    title: "哆啦A梦"
+  - tmdb_id: 1960
+    media_type: tv
+    title: "蜡笔小新"
+  - tmdb_id: 45918
+    media_type: tv
+    title: "进击的巨人"
+  - tmdb_id: 85937
+    media_type: tv
+    title: "鬼灭之刃"
+  - tmdb_id: 95479
+    media_type: tv
+    title: "咒术回战"
+
+  # ==========================================================================
+  # 四、R级电影（来自远程tmdb_override + 2026年新增补充）
+  # 说明：通过注入 erotic movie 关键词，配合分类规则中的 R级电影 匹配
+  # ==========================================================================
+
+  # --- 原版R级覆盖（全部保留） ---
+  - tmdb_id: 1669050
+    media_type: movie
+    title: "逐爱之心2"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 189025
+    media_type: movie
+    title: "江户川乱步的阴兽"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 67308
+    media_type: movie
+    title: "3D肉蒲团之极乐宝鉴"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 60898
+    media_type: movie
+    title: "聊斋艳谭"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 74887
+    media_type: movie
+    title: "玉蒲团之玉女心经"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 45491
+    media_type: movie
+    title: "玉蒲团之偷情宝鉴"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 47992
+    media_type: movie
+    title: "囡囡"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 134764
+    media_type: movie
+    title: "一路向西"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 402
+    media_type: movie
+    title: "本能"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 1278
+    media_type: movie
+    title: "戏梦巴黎"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 10867
+    media_type: movie
+    title: "西西里的美丽传说"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+
+  # ★★★ 2026年新增R级电影补充 ★★★
+  # 以下为近年热门/话题性R级电影，通过注入 erotic movie 关键词确保被正确分类
+  - tmdb_id: 792307
+    media_type: movie
+    title: "可怜的东西"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 1035048
+    media_type: movie
+    title: "阿诺拉"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 982109
+    media_type: movie
+    title: "挑战者"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 1083065
+    media_type: movie
+    title: "五月十二月"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 870965
+    media_type: movie
+    title: "艾米莉亚·佩雷斯"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 859363
+    media_type: movie
+    title: "爱情生活"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 1037074
+    media_type: movie
+    title: "鸟"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+  - tmdb_id: 948284
+    media_type: movie
+    title: "世界上最糟糕的人"
+    keywords:
+      - id: 190370
+        name: "erotic movie"
+
+# ============================================================================
+# 仅排除自动识别候选
+# ============================================================================
+tmdb_blacklist:
+  - tmdb_id: 328951
+    media_type: tv      # 卧底厨神
+  - tmdb_id: 327843
+    media_type: tv      # 拯救替身千金的是冷酷无情冰之王子的爱
+  - tmdb_id: 318729
+    media_type: tv      # 凡人修仙传
