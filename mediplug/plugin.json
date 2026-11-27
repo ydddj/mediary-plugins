@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "mediplug",
   "name": "MediPlug 插件源与 GitHub 桥接",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "min_mediary_version": "3.4.6",
   "description": "面向 Mediary v3.4.6 ~ v3.4.8+ 的第三方插件源可视化管理与 GitHub Releases 自动桥接插件：免命令图形化增删启停 /api/plugin-store/sources 插件源，自动将无 catalog.json 的普通 GitHub Release 仓库转换为标准 catalog.json（含本地回环与 GitHub Gist 公网 HTTPS 自动桥接）并注册进原生「插件中心」一键安装与热更新，内置对齐 v3.4.8 规范的 .tar.gz / playback_hook / resource_search 包校验器与能力标识展示。",
   "runtime": {

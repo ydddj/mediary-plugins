@@ -91,7 +91,7 @@ function confirmModal(title, message, confirmLabel = '确认执行', danger = fa
     title,
     `
       <div style="font-size:13.5px;line-height:1.6;margin-bottom:16px">${message}</div>
-      <div class="mp-actions" style="justify-content:flex-end">
+      <div class="mp-modal-foot">
         <button type="button" class="mp-btn" id="modal-cancel-btn">取消</button>
         <button type="button" class="mp-btn ${danger ? 'danger' : 'primary'}" id="modal-ok-btn">${esc(confirmLabel)}</button>
       </div>
@@ -106,7 +106,15 @@ function confirmModal(title, message, confirmLabel = '确认执行', danger = fa
   );
 }
 
+function resetOuterViewportScroll() {
+  if (window.scrollX !== 0 || window.scrollY !== 0) {
+    window.scrollTo(0, 0);
+  }
+}
+
 async function runAction(name, payload = {}, okMsg = '') {
+  const mainEl = document.querySelector('.mp-main');
+  const prevScrollTop = mainEl ? mainEl.scrollTop : 0;
   state.busy = true;
   try {
     const res = await bridge.action(name, payload);
@@ -117,6 +125,10 @@ async function runAction(name, payload = {}, okMsg = '') {
     }
     updateChrome();
     render();
+    if (mainEl) {
+      mainEl.scrollTop = prevScrollTop;
+    }
+    resetOuterViewportScroll();
     if (okMsg || res?.notice) toast(okMsg || res.notice, 'success');
     return res;
   } catch (err) {
@@ -186,8 +198,8 @@ function renderAuthBanner(hs, engine) {
           </div>
         </div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input type="password" class="mp-input" id="quick-admin-token" style="flex:1;min-width:240px" placeholder="粘贴 Mediary 管理员 API Token..." />
+      <div class="mp-inline-bar">
+        <input type="password" class="mp-input" id="quick-admin-token" style="flex:1;min-width:220px" placeholder="粘贴 Mediary 管理员 API Token..." />
         <button type="button" class="mp-btn primary" id="btn-save-quick-token">保存并连接插件源接口</button>
       </div>
       ${hs.store_auth_error ? `<div class="mp-card-sub" style="margin-top:6px;color:var(--mp-danger)">${esc(hs.store_auth_error)}</div>` : ''}
@@ -284,7 +296,7 @@ function renderSourcesTab(view) {
       </div>
 
       <div class="mp-table-wrap">
-        <table class="mp-table">
+        <table class="mp-table mp-mobile-cards">
           <thead>
             <tr>
               <th>源名称 / ID</th>
@@ -296,40 +308,50 @@ function renderSourcesTab(view) {
           </thead>
           <tbody>
             ${sources.length === 0 ? `
-              <tr>
+              <tr class="mp-empty-row">
                 <td colspan="5" style="text-align:center;padding:24px;color:var(--mp-muted)">
                   ${hs.store_auth_ready ? '暂无插件源记录' : '完成上方管理员 API Token 配置后即可读取并管理宿主插件源'}
                 </td>
               </tr>
             ` : sources.map((s) => `
               <tr>
-                <td>
-                  <div style="font-weight:600">${esc(s.name)}</div>
-                  <div style="font-size:11.5px;color:var(--mp-muted)"><code>${esc(s.id)}</code></div>
+                <td class="mp-td-primary" data-label="源名称 / ID">
+                  <div class="mp-cell-val">
+                    <div style="font-weight:600">${esc(s.name)}</div>
+                    <div style="font-size:11.5px;color:var(--mp-muted)"><code>${esc(s.id)}</code></div>
+                  </div>
                 </td>
-                <td>
-                  ${s.builtin
-                    ? '<span class="mp-tag primary">官方内置</span>'
-                    : s.is_mediplug_bridge
-                      ? '<span class="mp-tag ok">MediPlug 本地桥接</span>'
-                      : '<span class="mp-tag">第三方直连源</span>'}
+                <td data-label="类型">
+                  <div class="mp-cell-val">
+                    ${s.builtin
+                      ? '<span class="mp-tag primary">官方内置</span>'
+                      : s.is_mediplug_bridge
+                        ? '<span class="mp-tag ok">MediPlug 本地桥接</span>'
+                        : '<span class="mp-tag">第三方直连源</span>'}
+                  </div>
                 </td>
-                <td>
-                  <div style="max-width:440px;word-break:break-all;font-family:monospace;font-size:12px">${esc(s.url || '(宿主默认官方源)')}</div>
-                  ${s.error ? `<div style="font-size:11.5px;color:var(--mp-danger);margin-top:3px">错误: ${esc(s.error)}</div>` : ''}
+                <td data-label="索引地址">
+                  <div class="mp-cell-val">
+                    <div class="mp-url-cell">${esc(s.url || '(宿主默认官方源)')}</div>
+                    ${s.error ? `<div style="font-size:11.5px;color:var(--mp-danger);margin-top:3px">错误: ${esc(s.error)}</div>` : ''}
+                  </div>
                 </td>
-                <td>
-                  ${s.enabled ? '<span class="mp-tag ok">已启用</span>' : '<span class="mp-tag warn">已停用</span>'}
+                <td data-label="状态">
+                  <div class="mp-cell-val">
+                    ${s.enabled ? '<span class="mp-tag ok">已启用</span>' : '<span class="mp-tag warn">已停用</span>'}
+                  </div>
                 </td>
-                <td style="text-align:right;white-space:nowrap">
+                <td class="mp-td-actions" data-label="操作" style="text-align:right;white-space:nowrap">
                   ${s.builtin ? `
                     <span style="font-size:12px;color:var(--mp-muted)">宿主保护</span>
                   ` : `
-                    <button type="button" class="mp-btn sm" data-act="toggle-src" data-id="${esc(s.id)}" data-enabled="${s.enabled ? '0' : '1'}">
-                      ${s.enabled ? '停用' : '启用'}
-                    </button>
-                    <button type="button" class="mp-btn sm" data-act="edit-src" data-id="${esc(s.id)}">编辑</button>
-                    <button type="button" class="mp-btn sm danger" data-act="del-src" data-id="${esc(s.id)}" data-name="${esc(s.name)}">删除</button>
+                    <div class="mp-actions" style="justify-content:flex-end">
+                      <button type="button" class="mp-btn sm" data-act="toggle-src" data-id="${esc(s.id)}" data-enabled="${s.enabled ? '0' : '1'}">
+                        ${s.enabled ? '停用' : '启用'}
+                      </button>
+                      <button type="button" class="mp-btn sm" data-act="edit-src" data-id="${esc(s.id)}">编辑</button>
+                      <button type="button" class="mp-btn sm danger" data-act="del-src" data-id="${esc(s.id)}" data-name="${esc(s.name)}">删除</button>
+                    </div>
                   `}
                 </td>
               </tr>
@@ -407,7 +429,7 @@ function openHostSourceModal(existing) {
         <div class="mp-card-sub">
           提示：如果对方 GitHub 仓库<b>没有编写 catalog.json</b>（仅在 Releases 发布 .tar.gz 包），请切换到左侧「<b>GitHub 仓库桥接</b>」页直接填入仓库地址自动转换！
         </div>
-        <div class="mp-actions" style="justify-content:flex-end;margin-top:4px">
+        <div class="mp-modal-foot">
           <button type="button" class="mp-btn" id="src-cancel">取消</button>
           <button type="button" class="mp-btn primary" id="src-save">保存并注册到宿主</button>
         </div>
@@ -482,8 +504,8 @@ function renderGithubTab(view) {
           <div class="mp-card-sub">支持单插件仓库（如 <code>https://github.com/owner/mediwash</code>）或多插件合集 Release 仓库</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input type="text" class="mp-input" id="quick-gh-repo" style="flex:2;min-width:250px" placeholder="输入 https://github.com/owner/repo 或 owner/repo" />
+      <div class="mp-inline-bar">
+        <input type="text" class="mp-input" id="quick-gh-repo" style="flex:2;min-width:220px" placeholder="输入 https://github.com/owner/repo 或 owner/repo" />
         <select class="mp-select" id="quick-gh-mode" style="flex:1;min-width:190px;max-width:240px">
           <option value="unified">合并入统一桥接源 (/catalog.json)</option>
           <option value="dedicated">注册为独立插件源 (/catalog/id.json)</option>
@@ -501,7 +523,7 @@ function renderGithubTab(view) {
       </div>
 
       <div class="mp-table-wrap">
-        <table class="mp-table">
+        <table class="mp-table mp-mobile-cards">
           <thead>
             <tr>
               <th>GitHub 仓库</th>
@@ -514,7 +536,7 @@ function renderGithubTab(view) {
           </thead>
           <tbody>
             ${repos.length === 0 ? `
-              <tr>
+              <tr class="mp-empty-row">
                 <td colspan="6" style="text-align:center;padding:26px;color:var(--mp-muted)">
                   尚未添加 GitHub Release 仓库，在上方输入任意插件的 GitHub 仓库地址即可一键转换接入
                 </td>
@@ -523,35 +545,47 @@ function renderGithubTab(view) {
               const plugins = r.plugins || [];
               return `
                 <tr>
-                  <td>
-                    <div style="font-weight:600">${esc(r.name || r.repo)}</div>
-                    <div style="font-size:11.5px;color:var(--mp-muted)"><code>${esc(r.repo)}</code> · ID: <code>${esc(r.id)}</code></div>
+                  <td class="mp-td-primary" data-label="GitHub 仓库">
+                    <div class="mp-cell-val">
+                      <div style="font-weight:600">${esc(r.name || r.repo)}</div>
+                      <div style="font-size:11.5px;color:var(--mp-muted)"><code>${esc(r.repo)}</code> · ID: <code>${esc(r.id)}</code></div>
+                    </div>
                   </td>
-                  <td>
-                    ${r.register_mode === 'dedicated'
-                      ? `<span class="mp-tag primary">独立源 (/catalog/${esc(r.id)}.json)</span>`
-                      : '<span class="mp-tag ok">统一聚合源 (/catalog.json)</span>'}
+                  <td data-label="注册方式">
+                    <div class="mp-cell-val">
+                      ${r.register_mode === 'dedicated'
+                        ? `<span class="mp-tag primary">独立源 (/catalog/${esc(r.id)}.json)</span>`
+                        : '<span class="mp-tag ok">统一聚合源 (/catalog.json)</span>'}
+                    </div>
                   </td>
-                  <td>
-                    <span class="mp-tag">${esc(r.last_release_tag || (r.pinned_tag ? `锁定 ${r.pinned_tag}` : '待同步'))}</span>
+                  <td data-label="最新 Release">
+                    <div class="mp-cell-val">
+                      <span class="mp-tag">${esc(r.last_release_tag || (r.pinned_tag ? `锁定 ${r.pinned_tag}` : '待同步'))}</span>
+                    </div>
                   </td>
-                  <td>
-                    ${plugins.length === 0 ? '<span style="color:var(--mp-muted)">-</span>' : plugins.map((p) => {
-                      const archs = Object.keys(p.artifacts || {}).join(', ');
-                      const caps = d.plugin_capabilities?.[p.id] || [];
-                      return `<div style="margin-bottom:5px"><b>${esc(p.id)}</b> <span class="mp-tag ok">v${esc(p.version)}</span> <span style="font-size:11px;color:var(--mp-muted)">[${esc(archs)} · ${p.permissions?.length || 0} 权限]</span>${renderCapBadges(caps, true)}</div>`;
-                    }).join('')}
+                  <td data-label="已转换插件">
+                    <div class="mp-cell-val">
+                      ${plugins.length === 0 ? '<span style="color:var(--mp-muted)">-</span>' : plugins.map((p) => {
+                        const archs = Object.keys(p.artifacts || {}).join(', ');
+                        const caps = d.plugin_capabilities?.[p.id] || [];
+                        return `<div style="margin-bottom:5px"><b>${esc(p.id)}</b> <span class="mp-tag ok">v${esc(p.version)}</span> <span style="font-size:11px;color:var(--mp-muted)">[${esc(archs)} · ${p.permissions?.length || 0} 权限]</span>${renderCapBadges(caps, true)}</div>`;
+                      }).join('')}
+                    </div>
                   </td>
-                  <td>
-                    ${r.last_error
-                      ? `<span class="mp-tag danger">失败</span><div style="font-size:11px;color:var(--mp-danger);max-width:220px;margin-top:2px">${esc(r.last_error)}</div>`
-                      : `<span class="mp-tag ok">${r.enabled ? '正常' : '已停用'}</span><div style="font-size:11px;color:var(--mp-muted);margin-top:2px">${fmtAgo(r.last_synced_at)}</div>`}
+                  <td data-label="同步状态">
+                    <div class="mp-cell-val">
+                      ${r.last_error
+                        ? `<span class="mp-tag danger">失败</span><div style="font-size:11px;color:var(--mp-danger);margin-top:2px">${esc(r.last_error)}</div>`
+                        : `<span class="mp-tag ok">${r.enabled ? '正常' : '已停用'}</span><div style="font-size:11px;color:var(--mp-muted);margin-top:2px">${fmtAgo(r.last_synced_at)}</div>`}
+                    </div>
                   </td>
-                  <td style="text-align:right;white-space:nowrap">
-                    <button type="button" class="mp-btn sm" data-act="sync-gh" data-id="${esc(r.id)}">同步</button>
-                    <button type="button" class="mp-btn sm" data-act="json-gh" data-id="${esc(r.id)}">JSON</button>
-                    <button type="button" class="mp-btn sm" data-act="edit-gh" data-id="${esc(r.id)}">编辑</button>
-                    <button type="button" class="mp-btn sm danger" data-act="del-gh" data-id="${esc(r.id)}" data-repo="${esc(r.repo)}">移除</button>
+                  <td class="mp-td-actions" data-label="操作" style="text-align:right;white-space:nowrap">
+                    <div class="mp-actions" style="justify-content:flex-end">
+                      <button type="button" class="mp-btn sm" data-act="sync-gh" data-id="${esc(r.id)}">同步</button>
+                      <button type="button" class="mp-btn sm" data-act="json-gh" data-id="${esc(r.id)}">JSON</button>
+                      <button type="button" class="mp-btn sm" data-act="edit-gh" data-id="${esc(r.id)}">编辑</button>
+                      <button type="button" class="mp-btn sm danger" data-act="del-gh" data-id="${esc(r.id)}" data-repo="${esc(r.repo)}">移除</button>
+                    </div>
                   </td>
                 </tr>
               `;
@@ -655,7 +689,7 @@ function openGithubRepoModal(existing) {
             <span>启用自动同步转换</span>
           </label>
         </div>
-        <div class="mp-actions" style="justify-content:flex-end;margin-top:4px">
+        <div class="mp-modal-foot">
           <button type="button" class="mp-btn" id="gh-cancel">取消</button>
           <button type="button" class="mp-btn primary" id="gh-save">保存并立即解析 Release</button>
         </div>
@@ -695,7 +729,7 @@ async function previewCatalogModal(repoId) {
     `
       <div style="display:flex;flex-direction:column;gap:10px">
         <textarea class="mp-textarea" style="min-height:300px" readonly>${esc(res.content)}</textarea>
-        <div class="mp-actions" style="justify-content:flex-end">
+        <div class="mp-modal-foot">
           <button type="button" class="mp-btn" id="cat-copy">复制 JSON</button>
           <button type="button" class="mp-btn primary" id="cat-dl">下载 ${esc(res.filename)}</button>
         </div>
@@ -753,8 +787,8 @@ function renderStoreTab(view) {
     ` : ''}
 
     <div class="mp-card">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input type="text" class="mp-input" id="store-search" style="flex:1;min-width:220px" value="${esc(state.storeQuery)}" placeholder="搜索插件名称、ID、作者或来源..." />
+      <div class="mp-inline-bar">
+        <input type="text" class="mp-input" id="store-search" style="flex:1;min-width:200px" value="${esc(state.storeQuery)}" placeholder="搜索插件名称、ID、作者或来源..." />
         <select class="mp-select" id="store-filter" style="width:auto;min-width:160px">
           <option value="all" ${state.storeFilter === 'all' ? 'selected' : ''}>全部插件 (${allPlugins.length})</option>
           <option value="third_party" ${state.storeFilter === 'third_party' ? 'selected' : ''}>第三方源插件</option>
@@ -875,8 +909,8 @@ function renderBuilderTab(view) {
         </div>
         <div class="mp-field">
           <label>或输入容器可访问的本地 .tar.gz 路径校验（选填）</label>
-          <div style="display:flex;gap:8px">
-            <input type="text" class="mp-input" id="builder-local-path" placeholder="/path/to/plugin-1.0.0-linux-amd64.tar.gz" />
+          <div class="mp-inline-bar">
+            <input type="text" class="mp-input" id="builder-local-path" style="flex:1" placeholder="/path/to/plugin-1.0.0-linux-amd64.tar.gz" />
             <button type="button" class="mp-btn" id="btn-inspect-path">路径校验</button>
           </div>
         </div>
@@ -1092,9 +1126,9 @@ function renderSettingsTab(view) {
         </div>
         <div class="mp-field">
           <label>统一桥接源 ID / 显示名称</label>
-          <div style="display:flex;gap:8px">
-            <input type="text" class="mp-input" id="eng-src-id" value="${esc(eng.unified_source_id || 'mediplug-github-bridge')}" placeholder="mediplug-github-bridge" />
-            <input type="text" class="mp-input" id="eng-src-name" value="${esc(eng.unified_source_name || 'MediPlug GitHub Release 聚合源')}" placeholder="显示名称" />
+          <div class="mp-inline-bar">
+            <input type="text" class="mp-input" id="eng-src-id" style="flex:1" value="${esc(eng.unified_source_id || 'mediplug-github-bridge')}" placeholder="mediplug-github-bridge" />
+            <input type="text" class="mp-input" id="eng-src-name" style="flex:1" value="${esc(eng.unified_source_name || 'MediPlug GitHub Release 聚合源')}" placeholder="显示名称" />
           </div>
         </div>
         <div class="mp-field">
@@ -1126,14 +1160,14 @@ function renderSettingsTab(view) {
           <h3 class="mp-card-title">同步与操作历史记录 (${logs.length})</h3>
         </div>
         <div class="mp-actions">
-          <input type="text" class="mp-input" id="log-search" style="width:200px" value="${esc(state.logQuery)}" placeholder="过滤日志..." />
+          <input type="text" class="mp-input mp-search-input" id="log-search" value="${esc(state.logQuery)}" placeholder="过滤日志..." />
           <button type="button" class="mp-btn sm" id="btn-clear-logs">清空日志</button>
           <button type="button" class="mp-btn sm danger" id="btn-clear-cache">清空日志与校验缓存</button>
         </div>
       </div>
 
       <div class="mp-table-wrap">
-        <table class="mp-table">
+        <table class="mp-table mp-mobile-cards">
           <thead>
             <tr>
               <th>目标 / 仓库</th>
@@ -1146,17 +1180,21 @@ function renderSettingsTab(view) {
           </thead>
           <tbody>
             ${logs.length === 0 ? `
-              <tr><td colspan="6" style="text-align:center;padding:20px;color:var(--mp-muted)">暂无记录</td></tr>
+              <tr class="mp-empty-row"><td colspan="6" style="text-align:center;padding:20px;color:var(--mp-muted)">暂无记录</td></tr>
             ` : logs.map((l) => `
               <tr>
-                <td style="font-weight:600">${esc(l.title)}</td>
-                <td>${esc(l.source)}</td>
-                <td><code>${esc(l.version)}</code></td>
-                <td>
-                  <span class="mp-tag ${l.status === 'success' ? 'ok' : 'danger'}">${esc(l.status)}</span>
+                <td class="mp-td-primary" data-label="目标 / 仓库">
+                  <div class="mp-cell-val" style="font-weight:600">${esc(l.title)}</div>
                 </td>
-                <td style="max-width:360px;word-break:break-all">${esc(l.detail)}</td>
-                <td style="white-space:nowrap;color:var(--mp-muted)">${esc(l.updated_at)}</td>
+                <td data-label="分类"><div class="mp-cell-val">${esc(l.source)}</div></td>
+                <td data-label="版本 / 标识"><div class="mp-cell-val"><code>${esc(l.version)}</code></div></td>
+                <td data-label="状态">
+                  <div class="mp-cell-val">
+                    <span class="mp-tag ${l.status === 'success' ? 'ok' : 'danger'}">${esc(l.status)}</span>
+                  </div>
+                </td>
+                <td data-label="详情说明"><div class="mp-cell-val" style="word-break:break-all">${esc(l.detail)}</div></td>
+                <td data-label="时间" style="white-space:nowrap;color:var(--mp-muted)"><div class="mp-cell-val">${esc(l.updated_at)}</div></td>
               </tr>
             `).join('')}
           </tbody>
@@ -1212,15 +1250,25 @@ function renderSettingsTab(view) {
 
 // ==================== Init ====================
 function initNav() {
-  el('mp-nav').addEventListener('click', (e) => {
+  const nav = el('mp-nav');
+  nav.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-tab]');
     if (!btn) return;
     state.tab = btn.dataset.tab;
-    el('mp-nav').querySelectorAll('.mp-nav-btn').forEach((b) => {
+    nav.querySelectorAll('.mp-nav-btn').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === state.tab);
     });
+    // Only scroll the horizontal nav bar itself; never drag page content or outer viewport
+    if (nav.scrollWidth > nav.clientWidth) {
+      const targetLeft = Math.max(0, btn.offsetLeft - (nav.clientWidth - btn.clientWidth) / 2);
+      nav.scrollTo({ left: targetLeft, behavior: 'smooth' });
+    }
+    const mainEl = document.querySelector('.mp-main');
+    if (mainEl) mainEl.scrollTop = 0;
+    resetOuterViewportScroll();
     render();
   });
+  window.addEventListener('resize', resetOuterViewportScroll, { passive: true });
   el('mp-modal-close').onclick = closeModal;
   el('mp-modal-backdrop').addEventListener('click', (e) => {
     if (e.target === el('mp-modal-backdrop')) closeModal();

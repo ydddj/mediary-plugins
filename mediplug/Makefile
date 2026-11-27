@@ -1,5 +1,5 @@
 PLUGIN_ID := mediplug
-VERSION := 1.0.2
+VERSION := 1.0.3
 RUST_IMAGE := rust:1.86-bookworm
 CARGO_TARGET_DIR ?= /tmp/mediplug-target
 

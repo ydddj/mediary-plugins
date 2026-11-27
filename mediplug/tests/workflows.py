@@ -657,7 +657,7 @@ def main():
 
             # 1. Verify bootstrap BEFORE Admin API Token is configured + SQLite WAL mode + dashboard.json
             boot0 = run_action(binary, data_dir, "ui_bootstrap", {}, api_url, f"{gh_base}/api", f"{gh_base}/raw")
-            assert boot0["version"] == "1.0.2"
+            assert boot0["version"] == "1.0.3"
             assert boot0["host_status"]["plugin_enabled"] is True
             assert boot0["host_status"]["daemon_ready"] is True
             assert boot0["host_status"]["active_port"] == daemon_port
@@ -943,7 +943,7 @@ def main():
             daemon.wait(timeout=5)
             assert not os.path.exists(os.path.join(data_dir, "daemon_state.json")), "daemon_state.json must be cleaned up on SIGTERM"
 
-        print("ALL MEDIPLUG v1.0.2 WORKFLOW TESTS PASSED!")
+        print("ALL MEDIPLUG v1.0.3 WORKFLOW TESTS PASSED!")
     finally:
         gh_httpd.shutdown()
         host_httpd.shutdown()
