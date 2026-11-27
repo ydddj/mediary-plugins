@@ -90,10 +90,11 @@ static RE_TMDB_BRACKET_TAG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\s*[\[\(【（]?\s*tmdb(?:\s*id)?[-_:：\s=]*\d+\s*[\]\)】）]?").unwrap()
 });
 static RE_GROUP_BEFORE_EXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)-([A-Za-z0-9@]{2,20})\.(?:mkv|mp4|ts|m2ts|iso|avi|mov|wmv|flv|rmvb|m4v|webm)\b").unwrap()
+    Regex::new(r"(?i)-([A-Za-z0-9@_]{2,20})\.(?:mkv|mp4|ts|m2ts|iso|avi|mov|wmv|flv|rmvb|m4v|webm)\b").unwrap()
 });
-static RE_GROUP_SUFFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"-([A-Za-z0-9@._]{2,20})(?:\.[a-zA-Z0-9]{2,5})?$").unwrap());
+static RE_GROUP_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)-([A-Za-z0-9@_]{2,20})(?:\.(?:mkv|mp4|ts|m2ts|iso|avi|mov|wmv|flv|rmvb|m4v|webm))?$").unwrap()
+});
 static RE_CONTAINER_EXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\.(mkv|mp4|ts|m2ts|iso|avi|mov|wmv|flv|rmvb|m4v|webm|mpg|mpeg|vob|3gp|asf)(?:\s|$)").unwrap()
 });
@@ -2427,9 +2428,16 @@ mod tests {
         assert!(!yk_res.accepted);
         assert!(yk_res.reasons[0].contains("优酷"));
 
-        // Video encode extraction
+        // Video encode extraction & release group boundary check
         assert_eq!(parse_video_encode("Movie.2025.2160p.WEB-DL.H.265.mkv"), "H.265");
         assert_eq!(parse_video_encode("Movie.2025.1080p.BluRay.x264.mkv"), "H.264");
         assert_eq!(parse_video_encode("Movie.2025.2160p.AV1.mkv"), "AV1");
+        assert!(parse_movie_attributes("Freaky.Friday.2003.1080p.WEB-DL.H264.AAC.mkv")
+            .group
+            .is_empty());
+        assert_eq!(
+            parse_movie_attributes("Movie.2025.2160p.WEB-DL.H265.AAC-ADWeb.mkv").group,
+            "ADWeb"
+        );
     }
 }

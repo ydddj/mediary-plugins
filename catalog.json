@@ -27,8 +27,8 @@
       "artifacts": {
         "linux-amd64": {
           "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/medifind-3.2.2-linux-amd64.tar.gz",
-          "sha256": "a4033a2d6ead2819c4a6677d2dc87337cbd616b4145a7d263aaa4bd06629cb44",
-          "size": 6040985
+          "sha256": "59d6b22c0ad20cbe6fe88613c70074deb6c5cd3c34b756ff54cdb9acb3c06559",
+          "size": 6040983
         }
       }
     },

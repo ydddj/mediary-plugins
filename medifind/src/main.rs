@@ -1505,9 +1505,10 @@ mod tests {
         assert!(!labels1.contains(&"DV"));
         assert!(!labels1.contains(&"优酷"));
 
-        // Plain WEB-DL must NOT emit `web_source`
+        // Plain WEB-DL must NOT emit `web_source` or bogus `resource_team` (`DL.H264...`)
         let p2 = &res[1]["parsed"];
         assert!(p2.get("web_source").is_none());
+        assert!(p2.get("resource_team").is_none());
         assert_eq!(p2["resolution"], "1080P");
         assert_eq!(p2["resource_type"], "WEB-DL");
         assert_eq!(p2["video_encode"], "H.264");
