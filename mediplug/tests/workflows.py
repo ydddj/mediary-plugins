@@ -98,6 +98,7 @@ def run_action(
         "MEDIARY_PLUGIN_TOKEN": plugin_token,
         "MEDIPLUG_GITHUB_API_URL": gh_api_url,
         "MEDIPLUG_GITHUB_RAW_URL": gh_raw_url,
+        "MEDIPLUG_DISABLE_AUTO_DAEMON": "1",
         "MEDIARY_PLUGIN_SETTINGS_JSON": json.dumps(
             settings
             if settings is not None
@@ -604,7 +605,7 @@ def main():
 
             # 1. Verify bootstrap BEFORE Admin API Token is configured + SQLite WAL mode + dashboard.json
             boot0 = run_action(binary, data_dir, "ui_bootstrap", {}, api_url, f"{gh_base}/api", f"{gh_base}/raw")
-            assert boot0["version"] == "1.0.0"
+            assert boot0["version"] == "1.0.1"
             assert boot0["host_status"]["plugin_enabled"] is True
             assert boot0["host_status"]["daemon_ready"] is True
             assert boot0["host_status"]["active_port"] == daemon_port

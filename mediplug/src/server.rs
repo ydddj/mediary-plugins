@@ -66,6 +66,12 @@ pub fn run_daemon(data_dir: PathBuf) -> Result<()> {
                         return Ok(());
                     }
                     _ = reload_tick.tick() => {
+                        let (plugin_enabled, _, _, _) = crate::host::inspect_local_plugin_state(&shared_dir);
+                        if !plugin_enabled {
+                            eprintln!("[mediplug] 检测到插件已停用，正在退出本地 catalog.json 服务...");
+                            db::remove_daemon_state(&shared_dir);
+                            return Ok(());
+                        }
                         let next_bind = read_desired_bind(&shared_dir);
                         if next_bind.0 != bound_host || (next_bind.1 != bound_port && next_bind.1 >= 1024) {
                             // Only rebind if user explicitly changed desired host/port in DB

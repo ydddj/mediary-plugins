@@ -7,7 +7,7 @@
 | [`medifind`](./medifind) | **MediFind 网盘聚合引擎** | `3.2.0` | 聚合 HDHive / Telegram MTProto / AYClub / RSS 搜索、分季缺集比对与 115 分享/离线进货 |
 | [`mediwash`](./mediwash) | **MediWash 归档入库与权重洗版** | `3.1.5` | 115 监控目录单步归档入库（`files/organize`）、淘汰直移回收站、存量库多版本精洗与 Symedia/MediaTidy 双引擎打分 |
 | [`medinext`](./medinext) | **MediNext 302 播放负载与风控** | `2.1.1` | 原生 `playback_hook` 零额外端口接管 `:8118` 播放、115 多号负载均衡、用户秒传复用、配额回收站清理与防爬风控 |
-| [`mediplug`](./mediplug) | **MediPlug 插件源与 GitHub 桥接** | `1.0.0` | 可视化管理宿主 `/api/plugin-store/sources`、自动将无 `catalog.json` 的普通 GitHub Release 仓库桥接进原生「插件中心」 |
+| [`mediplug`](./mediplug) | **MediPlug 插件源与 GitHub 桥接** | `1.0.1` | 可视化管理宿主 `/api/plugin-store/sources`、自动将无 `catalog.json` 的普通 GitHub Release 仓库桥接进原生「插件中心」 |
 
 ---
 

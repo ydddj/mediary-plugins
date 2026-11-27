@@ -433,12 +433,28 @@ function renderGithubTab(view) {
 
     ${!hs.daemon_ready ? `
       <div class="mp-card" style="border-color:rgba(245,158,11,0.5)">
-        <div class="mp-card-title" style="color:var(--mp-warn)">⚠️ 本地 Catalog HTTP 常驻服务尚未运行</div>
-        <div class="mp-card-sub">
-          请前往 Mediary「已安装 → MediPlug → 配置」开启「<b>启用插件</b>」并保存，宿主将自动拉起本地 <code>${esc(hs.bridge_catalog_url)}</code> 服务供插件中心拉取。
+        <div class="mp-card-head" style="margin-bottom:0">
+          <div>
+            <div class="mp-card-title" style="color:var(--mp-warn)">⚠️ 本地 Catalog HTTP 服务当前未运行</div>
+            <div class="mp-card-sub">
+              ${hs.plugin_enabled === false
+                ? '插件当前处于停用状态，请在宿主「已安装 → MediPlug → 配置」开启启用开关后保存。'
+                : '点击右侧按钮即可立即拉起本地桥接服务（同时支持通过 GitHub Gist 自动发布公网 HTTPS 索引源）。'}
+            </div>
+          </div>
+          ${hs.plugin_enabled !== false ? '<button type="button" class="mp-btn primary sm" id="btn-wake-daemon">立即启动服务</button>' : ''}
         </div>
       </div>
-    ` : ''}
+    ` : `
+      <div class="mp-card" style="border-color:rgba(34,197,94,0.35);padding:11px 15px">
+        <div style="font-size:12.5px;color:var(--mp-success)">
+          ✅ <b>本地 Catalog 服务在线</b>（<code>${esc(hs.bridge_catalog_url)}</code>）
+          ${hs.github_token_configured
+            ? ' · <b>GitHub Gist 公网 HTTPS 自动桥接已就绪</b>（宿主强制公网 HTTPS 源时将自动同步至公开 Gist 注册）'
+            : ' · 如宿主限制仅允许公网 HTTPS 源，请在「全局设置」填写勾选了 <code>gist</code> 权限的 GitHub Token'}
+        </div>
+      </div>
+    `}
 
     <div class="mp-card">
       <div class="mp-card-head">
@@ -526,6 +542,10 @@ function renderGithubTab(view) {
     </div>
   `;
 
+  const wakeBtn = view.querySelector('#btn-wake-daemon');
+  if (wakeBtn) {
+    wakeBtn.onclick = () => runAction('ui_bootstrap', {}, '桥接服务状态已刷新');
+  }
   view.querySelector('#btn-quick-gh-add').onclick = async () => {
     const repo = view.querySelector('#quick-gh-repo').value.trim();
     const register_mode = view.querySelector('#quick-gh-mode').value;

@@ -22,6 +22,7 @@ pub struct HostStatus {
     pub settings_read_ready: bool,
     pub notifications_ready: bool,
     pub admin_token_configured: bool,
+    pub github_token_configured: bool,
     pub store_auth_ready: bool,
     pub store_auth_mode: String,
     pub store_auth_error: String,
@@ -97,6 +98,11 @@ pub fn inspect_local_plugin_state(data_dir: &Path) -> (bool, bool, Vec<String>, 
 }
 
 pub fn probe_daemon_health(data_dir: &Path, engine: &EngineSettings) -> (bool, u16) {
+    let (ok, port, _) = probe_daemon_health_with_version(data_dir, engine);
+    (ok, port)
+}
+
+fn probe_daemon_health_with_version(data_dir: &Path, engine: &EngineSettings) -> (bool, u16, String) {
     let mut ports = Vec::new();
     if let Some(st) = db::read_daemon_state(data_dir) {
         if st.port > 0 {
@@ -108,7 +114,7 @@ pub fn probe_daemon_health(data_dir: &Path, engine: &EngineSettings) -> (bool, u
     }
 
     let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_millis(650))
+        .timeout(Duration::from_millis(450))
         .redirects(0)
         .build();
 
@@ -120,14 +126,74 @@ pub fn probe_daemon_health(data_dir: &Path, engine: &EngineSettings) -> (bool, u
                     if v["ok"].as_bool() == Some(true)
                         && v["service"].as_str() == Some("mediplug")
                     {
-                        return (true, port);
+                        let ver = v["version"].as_str().unwrap_or_default().to_string();
+                        return (true, port, ver);
                     }
                 }
             }
         }
     }
 
-    (false, engine.listen_port)
+    (false, engine.listen_port, String::new())
+}
+
+/// Ensures the background local `catalog.json` HTTP daemon is running whenever the plugin is enabled.
+/// Mediary v3.4.6 only auto-spawns `runtime` processes for `playback_hook` plugins; self-healing here
+/// guarantees zero-configuration startup without blocking `action_runtime` pipes.
+pub fn ensure_daemon_running(data_dir: &Path, engine: &EngineSettings) -> (bool, u16) {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let (plugin_enabled, _, _, _) = inspect_local_plugin_state(data_dir);
+    let (ok, port, running_ver) = probe_daemon_health_with_version(data_dir, engine);
+
+    if !plugin_enabled {
+        return (ok, port);
+    }
+    if ok && (running_ver.is_empty() || running_ver == env!("CARGO_PKG_VERSION")) {
+        return (true, port);
+    }
+    if env::var_os("MEDIPLUG_DISABLE_AUTO_DAEMON").is_some() {
+        return (ok, port);
+    }
+
+    // If an older version daemon is running after a hot-upgrade, stop it gracefully first
+    if ok && running_ver != env!("CARGO_PKG_VERSION") {
+        if let Some(st) = db::read_daemon_state(data_dir) {
+            if st.pid > 1 {
+                let _ = Command::new("kill")
+                    .args(["-TERM", &st.pid.to_string()])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        }
+    }
+
+    let Ok(exe) = env::current_exe() else {
+        return (false, engine.listen_port);
+    };
+    let mut cmd = Command::new(exe);
+    cmd.arg("daemon")
+        .env("MEDIARY_PLUGIN_DATA_DIR", data_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+
+    if cmd.spawn().is_ok() {
+        for _ in 0..15 {
+            std::thread::sleep(Duration::from_millis(40));
+            let (now_ok, now_port, _) = probe_daemon_health_with_version(data_dir, engine);
+            if now_ok {
+                return (true, now_port);
+            }
+        }
+    }
+
+    probe_daemon_health(data_dir, engine)
 }
 
 pub struct HostClient {
@@ -333,7 +399,7 @@ impl HostClient {
 
     pub fn inspect_status(&self, data_dir: &Path, engine: &EngineSettings) -> (HostStatus, Vec<HostCatalogSource>) {
         let (plugin_enabled, pending_scope, scopes, _) = inspect_local_plugin_state(data_dir);
-        let (daemon_ready, active_port) = probe_daemon_health(data_dir, engine);
+        let (daemon_ready, active_port) = ensure_daemon_running(data_dir, engine);
         let base_bridge = engine.effective_bridge_base_url(active_port);
         let bridge_catalog_url = format!("{base_bridge}/catalog.json");
 
@@ -346,6 +412,7 @@ impl HostClient {
             settings_read_ready: has_scope("settings:read"),
             notifications_ready: has_scope("notifications:send"),
             admin_token_configured: self.has_admin_token(),
+            github_token_configured: !engine.github_token.trim().is_empty(),
             store_auth_ready: false,
             store_auth_mode: String::new(),
             store_auth_error: String::new(),
@@ -749,7 +816,7 @@ impl HostClient {
 
 pub fn fast_host_status(data_dir: &Path, engine: &EngineSettings) -> HostStatus {
     let (plugin_enabled, pending_scope, scopes, secret_admin) = inspect_local_plugin_state(data_dir);
-    let (daemon_ready, active_port) = probe_daemon_health(data_dir, engine);
+    let (daemon_ready, active_port) = ensure_daemon_running(data_dir, engine);
     let base_bridge = engine.effective_bridge_base_url(active_port);
     HostStatus {
         plugin_enabled,
@@ -759,6 +826,7 @@ pub fn fast_host_status(data_dir: &Path, engine: &EngineSettings) -> HostStatus 
         settings_read_ready: scopes.iter().any(|s| s == "settings:read"),
         notifications_ready: scopes.iter().any(|s| s == "notifications:send"),
         admin_token_configured: !engine.admin_api_token.is_empty() || !secret_admin.is_empty(),
+        github_token_configured: !engine.github_token.trim().is_empty(),
         store_auth_ready: false,
         store_auth_mode: String::new(),
         store_auth_error: String::new(),

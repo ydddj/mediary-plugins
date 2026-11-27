@@ -99,7 +99,7 @@
     {
       "id": "mediplug",
       "name": "MediPlug 插件源与 GitHub 桥接",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "面向 Mediary 3.4.6+ 的第三方插件源可视化管理与 GitHub Releases 自动桥接插件：免命令图形化增删启停 /api/plugin-store/sources 插件源，自动将无 catalog.json 的普通 GitHub Release 仓库转换为本地标准 HTTP catalog.json 源并注册进原生「插件中心」一键安装与热更新，内置 .tar.gz 包规范校验与 catalog.json 生成器。",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/mediplug",
@@ -114,9 +114,9 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/mediplug-1.0.0-linux-amd64.tar.gz",
-          "sha256": "ec25ac2a2cf58e63e58328e60d8e94f7235b219a5870bf9816195d8f5bc81d66",
-          "size": 3542307
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.27/mediplug-1.0.1-linux-amd64.tar.gz",
+          "sha256": "859886d782bb16df64ecbda8128f37e942abdf01d123ecb40858af17b9598c45",
+          "size": 3564030
         }
       }
     }
