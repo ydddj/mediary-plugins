@@ -357,7 +357,7 @@ def main():
 
         # 1. Bootstrap & dashboard.json (verify enabled detection when "$enabled" is stripped from settings!)
         boot = run_action(binary, data_dir, "ui_bootstrap", {}, api_url=api_url)
-        assert boot["version"] == "2.1.5", boot["version"]
+        assert boot["version"] == "2.1.6", boot["version"]
         assert boot["engine"]["notify_playback"] is False, boot["engine"]
         assert boot["engine"]["detail_prefetch_delay_ms"] == 0, boot["engine"]
         assert boot["host_status"]["plugin_enabled"] is True, boot["host_status"]

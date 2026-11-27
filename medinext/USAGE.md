@@ -1,8 +1,8 @@
-# MediNext 使用说明 (v2.1.5)
+# MediNext 使用说明 (v2.1.6)
 
 ## 1. 安装与权限审批（Mediary 3.4.6+ / 3.4.8+）
 
-1. 将打包产物 `dist/medinext-2.1.5-linux-amd64.tar.gz` 在 Mediary「**插件中心**」上传安装（或覆盖升级）。
+1. 将打包产物 `dist/medinext-2.1.6-linux-amd64.tar.gz` 在 Mediary「**插件中心**」上传安装（或覆盖升级）。
 2. 点击 **MediNext** 卡片上的「**配置**」：
    - 勾选授予所需权限（重点包含 `media-service:read` 与高权限 `media-service:write`）；
    - 开启「**启用插件**」与「**批准播放决策钩子 (`playback_hook_approved`)**」后点击保存（注：插件每次升级版本后，Mediary 会自动重置播放钩子批准开关以确保安全，需重新保存一次确认）。

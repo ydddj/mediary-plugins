@@ -95,7 +95,7 @@ async function runAction(name, payload = {}, okMsg = '') {
 function updateChrome() {
   const d = state.data;
   if (!d) return;
-  el('mn-version-label').textContent = `v${d.version || '2.1.5'} · 原生 302 钩子`;
+  el('mn-version-label').textContent = `v${d.version || '2.1.6'} · 原生 302 钩子`;
   el('badge-sessions').textContent = (d.active_sessions || []).length;
   el('badge-accounts').textContent = (d.source_accounts || []).length + (d.lb_accounts || []).length;
   el('badge-users').textContent = (d.users || []).length;
@@ -168,8 +168,24 @@ function renderOverview(view) {
   const hitRate = d1.redirects > 0 ? Math.round((d1.cache_hits / d1.redirects) * 100) : 0;
   const sessions = d.active_sessions || [];
   const needApproval = !hs.playback_hook_approved || hs.pending_scope_approval || !hs.media_service_read_ready;
+  const st = d.settings || {};
+  const lbs = d.lb_accounts || [];
+  const okLbs = lbs.filter((a) => a.enabled && a.valid && !a.in_cooldown).length;
+  const hookStatusText = (hs.plugin_enabled === false || st['$enabled'] === false)
+    ? '插件未启用'
+    : hs.playback_hook_approved
+      ? (hs.socket_ready ? '钩子已接管 (:8118)' : '等待钩子就绪')
+      : '待批准钩子';
+  const hookStatusCls = (hs.plugin_enabled !== false && st['$enabled'] !== false && hs.playback_hook_approved && hs.socket_ready) ? 'ok' : 'warn';
 
   view.innerHTML = `
+    <div class="mn-mobile-status-strip">
+      <span class="mn-status-pill">v${esc(d.version || '2.1.6')}</span>
+      <span class="mn-status-pill ${hookStatusCls}">${hookStatusText}</span>
+      <span class="mn-status-pill ${okLbs > 0 ? 'ok' : 'warn'}">负载号 ${okLbs}/${lbs.length}</span>
+      <span class="mn-status-pill ${hs.media_service_read_ready && hs.media_service_write_ready ? 'ok' : 'warn'}">${hs.media_service_read_ready && hs.media_service_write_ready ? '权限读写就绪' : '权限待完善'}</span>
+    </div>
+
     <div class="mn-header">
       <div>
         <h2>概览与实时在线会话</h2>

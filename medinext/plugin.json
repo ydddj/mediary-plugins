@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "medinext",
   "name": "MediNext 302 播放负载与风控",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "面向 Mediary 3.4.6+/3.4.8+ 的原生 302 播放负载与观影风控引擎：基于宿主 playback_hook 常驻 Unix Socket 零额外端口接管 8118 播放，支持 115 多号负载均衡池、用户独立 115 秒传复用、Mediary 3.4.8+ 详情页/多版本切换(PlaybackInfo)/片尾下一集 /prefetch 小号预热转发与临期续签、跨入口直链缓存复用、主程序通知中心实时风控告警、转存配额与回收站自动清理及 NextEmby 一键迁移。",
   "runtime": {
     "entrypoint": "./plugin",
@@ -21,7 +21,7 @@
     "dir": "./ui",
     "entry": "index.html",
     "title": "MediNext 302 播放负载与风控",
-    "eyebrow": "原生 playback_hook · 115 多号负载均衡 · 用户秒传复用 · 配额回收站清理 · 播放风控",
+    "eyebrow": "302 负载均衡 · 秒传 · 风控",
     "trigger": {
       "label": "工作台",
       "icon": "play"

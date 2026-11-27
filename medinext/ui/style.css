@@ -49,6 +49,7 @@ html, body {
 
 .hidden { display: none !important; }
 .mn-mobile-only { display: none; }
+.mn-mobile-status-strip { display: none; }
 
 code {
   overflow-wrap: anywhere;
@@ -467,60 +468,18 @@ code {
     flex: 0 0 auto;
     border-right: none;
     border-bottom: 1px solid var(--mn-border);
-    padding: max(6px, env(safe-area-inset-top, 0px)) 8px 6px;
-    gap: 5px;
+    padding: 4px 6px;
+    gap: 0;
     overflow: hidden;
   }
 
-  .mn-brand {
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    padding: 0 0 2px;
-    border-bottom: none;
-  }
-  .mn-brand > div:last-child {
-    min-width: 0;
-    overflow: hidden;
-  }
-  .mn-brand-badge { width: 28px; height: 28px; font-size: 11.5px; border-radius: 8px; }
-  .mn-brand-title { font-size: 14px; }
-  .mn-brand-sub {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Compact self-contained horizontal status strip (never widens page) */
+  /* Host modal header already shows plugin title -> hide duplicate inner brand & pinned status pills on mobile */
+  .mn-brand,
   .mn-sidebar-foot {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    align-items: center;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    flex: 0 0 auto;
-    gap: 6px;
-    padding-top: 0;
-    border-top: none;
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    touch-action: pan-x;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    display: none;
   }
-  .mn-sidebar-foot::-webkit-scrollbar { display: none; }
-  .mn-sidebar-foot .mn-status-pill {
-    flex: 0 0 auto;
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 99px;
-  }
-  .mn-sidebar-foot .mn-subnote { display: none; }
 
-  /* Self-contained horizontal pill navigation bar (isolated pan-x scroll) */
+  /* Self-contained horizontal pill navigation bar (single compact ~38px row!) */
   .mn-nav {
     display: flex;
     flex-direction: row;
@@ -529,26 +488,26 @@ code {
     max-width: 100%;
     min-width: 0;
     flex: 0 0 auto;
-    gap: 6px;
+    gap: 5px;
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
     touch-action: pan-x;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    padding-bottom: 2px;
+    padding: 0;
   }
   .mn-nav::-webkit-scrollbar { display: none; }
   .mn-nav-btn {
     white-space: nowrap;
     width: auto;
     flex: 0 0 auto;
-    min-height: 34px;
-    padding: 6px 11px;
+    min-height: 31px;
+    padding: 4px 10px;
     border-radius: 99px;
     background: var(--mn-surface-2);
     border-color: var(--mn-border);
-    font-size: 12.5px;
+    font-size: 12px;
   }
   .mn-nav-btn.active {
     background: var(--mn-primary);
@@ -558,6 +517,31 @@ code {
   .mn-nav-btn.active .mn-nav-badge {
     background: rgba(255, 255, 255, 0.22);
     color: #fff;
+  }
+
+  /* Scrollable single-row status strip inside Overview page (scrolls away with content!) */
+  .mn-mobile-status-strip {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    margin-bottom: 6px;
+  }
+  .mn-mobile-status-strip::-webkit-scrollbar { display: none; }
+  .mn-mobile-status-strip .mn-status-pill {
+    flex: 0 0 auto;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 99px;
   }
 
   .mn-main {
@@ -570,7 +554,7 @@ code {
     overflow-x: hidden;
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
-    padding: 6px 6px calc(20px + env(safe-area-inset-bottom, 0px));
+    padding: 4px 4px calc(16px + env(safe-area-inset-bottom, 0px));
   }
 
   #mn-view {
@@ -580,32 +564,52 @@ code {
   }
 
   .mn-toast {
-    padding: 8px 10px;
+    padding: 7px 10px;
     font-size: 12.5px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
 
   .mn-header {
     flex-direction: column;
     align-items: stretch;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: 5px;
+    margin-bottom: 6px;
   }
-  .mn-header h2 { font-size: 16px; }
-  .mn-header p { font-size: 11.5px; }
+  .mn-header h2 { font-size: 14.5px; }
+  .mn-header p { display: none; }
   .mn-header > .mn-actions {
     width: 100%;
-    gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 5px;
+  }
+  .mn-header > .mn-actions::-webkit-scrollbar { display: none; }
+  .mn-header > .mn-actions .mn-btn {
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .mn-header > .mn-actions .mn-search-input {
+    flex: 1 1 150px;
+    min-width: 140px;
+    min-height: 34px;
+    padding: 5px 9px;
   }
 
   .mn-card {
-    padding: 9px 10px;
-    margin-bottom: 8px;
-    border-radius: 9px;
+    padding: 8px 9px;
+    margin-bottom: 6px;
+    border-radius: 8px;
   }
   .mn-card-head {
     gap: 6px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
 
   /* Prevent iOS Safari auto-zoom when focusing inputs/selects */
