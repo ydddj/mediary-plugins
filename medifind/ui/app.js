@@ -118,6 +118,7 @@ const state = {
   histSelected: new Set(),
   histData: null,
   histLoading: false,
+  mobileFiltersOpen: false,
 };
 
 function esc(v) {
@@ -232,16 +233,26 @@ async function callAction(name, payload = {}, fallbackMsg = '', opts = {}) {
 function updateSidebarStatus() {
   const hs = state.boot?.host_status || {};
   const pill = document.getElementById('status-115');
+  const pillMob = document.getElementById('status-115-mobile');
   const note = document.getElementById('status-proxy');
   if (hs.open_api_connected || hs.web_cookie_ready) {
     const parts = [];
     if (hs.open_api_connected) parts.push('OpenAPI');
     if (hs.web_cookie_ready) parts.push('Cookie');
+    const txt = `115 已就绪 (${parts.join('+')})`;
     pill.className = 'mf-pill success';
-    pill.textContent = `115 已就绪 (${parts.join('+')})`;
+    pill.textContent = txt;
+    if (pillMob) {
+      pillMob.className = 'mf-pill success';
+      pillMob.textContent = txt;
+    }
   } else {
     pill.className = 'mf-pill warn';
     pill.textContent = '115 未连接或未授权';
+    if (pillMob) {
+      pillMob.className = 'mf-pill warn';
+      pillMob.textContent = '115 未连接';
+    }
   }
   const px = state.boot?.state?.custom_proxy || hs.proxy_url || '';
   note.textContent = px ? `代理: ${px}` : '代理: 直连 (未配系统代理)';
@@ -262,9 +273,15 @@ function renderNav() {
       ${badges[t.id] ? `<span class="mf-nav-badge">${esc(badges[t.id])}</span>` : ''}
     </button>
   `).join('');
+  const activeBtn = nav.querySelector('.mf-nav-btn.active');
+  if (activeBtn && window.innerWidth <= 720) {
+    try { activeBtn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch (_) {}
+  }
   nav.querySelectorAll('[data-tab]').forEach((btn) => {
     btn.onclick = () => {
       state.tab = btn.dataset.tab;
+      const mainEl = document.querySelector('.mf-main');
+      if (mainEl) mainEl.scrollTop = 0;
       if (state.tab === 'history') {
         loadHistory();
       } else {
@@ -357,7 +374,7 @@ function renderSearchTab(root) {
     saveDiscoverFilters(f);
   }
 
-  const filterRowsHtml = Object.entries(DISCOVER_FILTER_OPTIONS).map(([cat, options]) => {
+  const renderFilterRow = ([cat, options]) => {
     const firstOpt = options[0];
     const firstLabel = firstOpt === '全部'
       ? `全部${DISCOVER_FILTER_LABELS[cat]}`
@@ -373,7 +390,10 @@ function renderSearchTab(root) {
         </div>
       </div>
     `;
-  }).join('');
+  };
+  const allEntries = Object.entries(DISCOVER_FILTER_OPTIONS);
+  const primaryFilterRowsHtml = allEntries.slice(0, 2).map(renderFilterRow).join('');
+  const extraFilterRowsHtml = allEntries.slice(2).map(renderFilterRow).join('');
 
   const channelRowHtml = visibleChannels.length > 0 ? `
     <div class="nf-filter-row">
@@ -385,6 +405,9 @@ function renderSearchTab(root) {
       </div>
     </div>
   ` : '';
+
+  const extraActiveCount = ['region', 'year', 'genre', 'status', 'troubleshoot', 'channel']
+    .filter((k) => (f[k] || '全部') !== '全部').length;
 
   const activeSummaryParts = [];
   if (f.channel !== '全部') activeSummaryParts.push(`频道: ${f.channel}`);
@@ -399,8 +422,18 @@ function renderSearchTab(root) {
   root.innerHTML = `
     <div class="nf-discover-top">
       <div class="nf-discover-filters">
-        ${filterRowsHtml}
-        ${channelRowHtml}
+        ${primaryFilterRowsHtml}
+        <div class="nf-filter-mobile-bar">
+          <button type="button" class="mf-btn sm" id="btn-toggle-mobile-filters">
+            <span>${state.mobileFiltersOpen ? '▲ 收起更多筛选' : '▼ 展开地区 / 年份 / 风格 / 频道'}</span>
+            ${extraActiveCount > 0 ? `<span class="mf-pill info" style="padding:0 6px;font-size:11px">已选 ${extraActiveCount}</span>` : ''}
+          </button>
+          ${extraActiveCount > 0 ? `<button type="button" class="mf-btn sm" id="btn-reset-discover-inline">重置</button>` : ''}
+        </div>
+        <div class="nf-filter-extra ${state.mobileFiltersOpen ? 'open' : ''}">
+          ${extraFilterRowsHtml}
+          ${channelRowHtml}
+        </div>
       </div>
 
       <form id="search-form" class="nf-pill-search-wrap">
@@ -479,6 +512,25 @@ function renderSearchTab(root) {
             ` : ''}`}
     </div>
   `;
+
+  const toggleMobFilterBtn = root.querySelector('#btn-toggle-mobile-filters');
+  if (toggleMobFilterBtn) {
+    toggleMobFilterBtn.onclick = () => {
+      state.mobileFiltersOpen = !state.mobileFiltersOpen;
+      renderSearchTab(root);
+    };
+  }
+  const resetInlineBtn = root.querySelector('#btn-reset-discover-inline');
+  if (resetInlineBtn) {
+    resetInlineBtn.onclick = async () => {
+      state.discoverFilters = { ...DEFAULT_DISCOVER_FILTERS };
+      saveDiscoverFilters(state.discoverFilters);
+      state.discoverPage = 1;
+      state.selectedMedia = null;
+      state.aggResult = null;
+      await loadTMDB(false);
+    };
+  }
 
   root.querySelectorAll('[data-nf-filter]').forEach((btn) => {
     btn.onclick = () => {
@@ -1069,24 +1121,26 @@ function renderChaseTab(root) {
           </div>
           <button class="mf-btn sm warn" id="btn-retry-all">全部立即重试</button>
         </div>
-        <table class="mf-table">
-          <thead><tr><th>标题</th><th>来源</th><th>分享码</th><th>已重试</th><th>最近提示</th><th>操作</th></tr></thead>
-          <tbody>
-            ${rev.map((r) => `
-              <tr>
-                <td><strong>${esc(r.title)}</strong></td>
-                <td>${esc(r.source_type)}</td>
-                <td>${esc(r.share_code || r.slug)}</td>
-                <td>${r.retry_count || 0} 次</td>
-                <td>${esc(r.last_error || '等待重试')}</td>
-                <td>
-                  <button class="mf-btn sm" data-retry-slug="${esc(r.clean_slug)}">重试</button>
-                  <button class="mf-btn sm danger" data-rm-rev="${esc(r.clean_slug)}">移除</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
+        <div class="mf-table-wrap">
+          <table class="mf-table">
+            <thead><tr><th>标题</th><th>来源</th><th>分享码</th><th>已重试</th><th>最近提示</th><th>操作</th></tr></thead>
+            <tbody>
+              ${rev.map((r) => `
+                <tr>
+                  <td><strong>${esc(r.title)}</strong></td>
+                  <td>${esc(r.source_type)}</td>
+                  <td>${esc(r.share_code || r.slug)}</td>
+                  <td>${r.retry_count || 0} 次</td>
+                  <td>${esc(r.last_error || '等待重试')}</td>
+                  <td>
+                    <button class="mf-btn sm" data-retry-slug="${esc(r.clean_slug)}">重试</button>
+                    <button class="mf-btn sm danger" data-rm-rev="${esc(r.clean_slug)}">移除</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
     ` : ''}
 
@@ -1106,30 +1160,60 @@ function renderChaseTab(root) {
         ? `<div class="mf-empty" style="color:var(--mf-warn)">读取 Mediary 订阅列表失败：${esc(subErr)}（请在插件中心确认已授予 subscriptions:read 权限）</div>`
         : filteredSubs.length === 0
           ? `<div class="mf-empty">${subs.length === 0 ? '当前 Mediary 暂无订阅条目' : '该筛选分类下暂无订阅条目'}</div>`
-          : `<table class="mf-table">
-              <thead><tr><th>订阅影视</th><th>类型</th><th>TMDB ID</th><th>季 / 收集进度</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody>
-                ${filteredSubs.slice(0, 100).map((s, idx) => {
-                  const isTv = (s.media_type || s.type) === 'tv' || s.season > 0;
-                  const prog = isTv && s.expected_episodes > 0
-                    ? ` · ${s.collected_episodes || 0}/${s.expected_episodes}集`
-                    : (s.collected_episodes > 0 ? ` · 已收 ${s.collected_episodes}` : '');
-                  return `
-                    <tr>
-                      <td><strong>${esc(s.title || s.name)}</strong>${s.year ? ` <span style="color:var(--mf-muted)">(${esc(s.year)})</span>` : ''}</td>
-                      <td>${isTv ? '剧集' : '电影'}</td>
-                      <td>${esc(s.tmdb_id)}</td>
-                      <td>${isTv ? (s.season > 0 ? `S${s.season}${prog}` : `全季${prog}`) : (s.collected_episodes > 0 ? '已入库' : '待入库')}</td>
-                      <td>${fmtSubBadge(s)}</td>
-                      <td class="mf-actions">
+          : `<div class="mf-desktop-only mf-table-wrap">
+              <table class="mf-table">
+                <thead><tr><th>订阅影视</th><th>类型</th><th>TMDB ID</th><th>季 / 收集进度</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody>
+                  ${filteredSubs.slice(0, 100).map((s, idx) => {
+                    const isTv = (s.media_type || s.type) === 'tv' || s.season > 0;
+                    const prog = isTv && s.expected_episodes > 0
+                      ? ` · ${s.collected_episodes || 0}/${s.expected_episodes}集`
+                      : (s.collected_episodes > 0 ? ` · 已收 ${s.collected_episodes}` : '');
+                    return `
+                      <tr>
+                        <td><strong>${esc(s.title || s.name)}</strong>${s.year ? ` <span style="color:var(--mf-muted)">(${esc(s.year)})</span>` : ''}</td>
+                        <td>${isTv ? '剧集' : '电影'}</td>
+                        <td>${esc(s.tmdb_id)}</td>
+                        <td>${isTv ? (s.season > 0 ? `S${s.season}${prog}` : `全季${prog}`) : (s.collected_episodes > 0 ? '已入库' : '待入库')}</td>
+                        <td>${fmtSubBadge(s)}</td>
+                        <td class="mf-actions">
+                          <button class="mf-btn sm" data-jump-sub="${idx}">搜源预览</button>
+                          <button class="mf-btn sm primary" data-chase-sub="${idx}">立即追更</button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+            <div class="mf-mobile-only mf-mobile-card-list">
+              ${filteredSubs.slice(0, 100).map((s, idx) => {
+                const isTv = (s.media_type || s.type) === 'tv' || s.season > 0;
+                const prog = isTv && s.expected_episodes > 0
+                  ? `${s.collected_episodes || 0}/${s.expected_episodes}集`
+                  : (s.collected_episodes > 0 ? `已收 ${s.collected_episodes}` : '');
+                const seasonText = isTv ? (s.season > 0 ? `S${s.season}${prog ? ` · ${prog}` : ''}` : `全季${prog ? ` · ${prog}` : ''}`) : (s.collected_episodes > 0 ? '已入库' : '待入库');
+                return `
+                  <div class="mf-mcard">
+                    <div class="mf-mcard-head">
+                      <div class="mf-mcard-title">${esc(s.title || s.name)}${s.year ? ` <span style="color:var(--mf-muted);font-weight:400">(${esc(s.year)})</span>` : ''}</div>
+                      ${fmtSubBadge(s)}
+                    </div>
+                    <div class="mf-mcard-meta">
+                      <span class="mf-pill">${isTv ? '剧集' : '电影'}</span>
+                      <span>${esc(seasonText)}</span>
+                      ${s.tmdb_id ? `<span>TMDB ${esc(s.tmdb_id)}</span>` : ''}
+                    </div>
+                    <div class="mf-mcard-foot">
+                      <div class="mf-actions" style="width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px">
                         <button class="mf-btn sm" data-jump-sub="${idx}">搜源预览</button>
                         <button class="mf-btn sm primary" data-chase-sub="${idx}">立即追更</button>
-                      </td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>`}
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>`}
     </div>
 
     <div class="mf-card">
@@ -1139,7 +1223,7 @@ function renderChaseTab(root) {
           <div class="mf-card-sub">指定某部剧整季或单集视为已存在，追更时跳过补缺</div>
         </div>
       </div>
-      <form id="ignore-form" class="mf-row" style="margin-bottom:10px">
+      <form id="ignore-form" class="mf-row mf-form-grid" style="margin-bottom:10px">
         <input id="ig-tmdb" class="mf-input" style="width:130px" placeholder="TMDB ID" required />
         <input id="ig-title" class="mf-input" style="width:160px" placeholder="备注片名(选填)" />
         <input id="ig-season" type="number" min="1" class="mf-input" style="width:100px" placeholder="季号(如1)" required />
@@ -1168,20 +1252,37 @@ function renderChaseTab(root) {
       </div>
       ${recs.length === 0
         ? `<div class="mf-empty">暂无转存记录</div>`
-        : `<table class="mf-table">
-            <thead><tr><th>标题</th><th>来源</th><th>季集</th><th>动作</th><th>执行说明</th></tr></thead>
-            <tbody>
-              ${recs.slice(0, 8).map((r) => `
-                <tr>
-                  <td><strong>${esc(r.title)}</strong></td>
-                  <td style="white-space:nowrap">${fmtHistorySourceBadge(r)}</td>
-                  <td style="white-space:nowrap">${esc(r.episodes || '-')}</td>
-                  <td style="white-space:nowrap"><span class="mf-pill ${r.status === 'success' ? 'success' : r.status === 'reviewing' ? 'warn' : 'danger'}">${esc(r.action)}</span></td>
-                  <td style="white-space:nowrap">${fmtCompactDetailCell(r)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>`}
+        : `<div class="mf-desktop-only mf-table-wrap">
+            <table class="mf-table">
+              <thead><tr><th>标题</th><th>来源</th><th>季集</th><th>动作</th><th>执行说明</th></tr></thead>
+              <tbody>
+                ${recs.slice(0, 8).map((r) => `
+                  <tr>
+                    <td><strong>${esc(r.title)}</strong></td>
+                    <td style="white-space:nowrap">${fmtHistorySourceBadge(r)}</td>
+                    <td style="white-space:nowrap">${esc(r.episodes || '-')}</td>
+                    <td style="white-space:nowrap"><span class="mf-pill ${r.status === 'success' ? 'success' : r.status === 'reviewing' ? 'warn' : 'danger'}">${esc(r.action)}</span></td>
+                    <td style="white-space:nowrap">${fmtCompactDetailCell(r)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="mf-mobile-only mf-mobile-card-list">
+            ${recs.slice(0, 8).map((r) => `
+              <div class="mf-mcard">
+                <div class="mf-mcard-head">
+                  <div class="mf-mcard-title">${esc(cleanHistoryTitleText(r.title))}</div>
+                  ${fmtHistoryStatusPill(r)}
+                </div>
+                <div class="mf-mcard-meta">
+                  ${fmtHistorySourceBadge(r)}
+                  ${r.episodes ? `<span class="mf-pill">${esc(r.episodes)}</span>` : ''}
+                  ${fmtCompactDetailCell(r)}
+                </div>
+              </div>
+            `).join('')}
+          </div>`}
     </div>
   `;
 
@@ -1940,7 +2041,7 @@ function renderChannelsTab(root) {
         </div>
         <button class="mf-btn sm" id="btn-sync-rss">立即拉取全部 RSS</button>
       </div>
-      <form id="rss-form" class="mf-row" style="margin-bottom:12px">
+      <form id="rss-form" class="mf-row mf-form-grid" style="margin-bottom:12px">
         <input id="rss-name" class="mf-input" style="width:150px" placeholder="名称备注" />
         <input id="rss-url" class="mf-input grow" placeholder="https://.../rss.xml" required />
         <select id="rss-interval" class="mf-select" style="width:118px">
@@ -1957,28 +2058,30 @@ function renderChannelsTab(root) {
       </form>
       ${feeds.length === 0
         ? `<div class="mf-empty">暂未添加 RSS 订阅源</div>`
-        : `<table class="mf-table">
-            <thead><tr><th>名称</th><th>周期</th><th>状态 / 动作</th><th>最近结果</th><th>操作</th></tr></thead>
-            <tbody>
-              ${feeds.map((f) => `
-                <tr>
-                  <td><strong>${esc(f.name)}</strong><div class="mf-card-sub">${esc(f.url)}</div></td>
-                  <td>${esc(f.refresh_interval)}</td>
-                  <td>
-                    <span class="mf-pill ${f.enabled ? 'success' : 'warn'}">${f.enabled ? '已启用' : '已暂停'}</span>
-                    ${f.auto_subscribe ? '<span class="mf-pill info">建订</span>' : ''}
-                    ${f.auto_transfer ? '<span class="mf-pill">转存</span>' : ''}
-                  </td>
-                  <td>${esc(f.last_result || '未运行')}</td>
-                  <td class="mf-actions">
-                    <button type="button" class="mf-btn sm" data-edit-rss="${esc(f.id)}">修改</button>
-                    <button type="button" class="mf-btn sm" data-toggle-rss="${esc(f.id)}">${f.enabled ? '暂停' : '启用'}</button>
-                    <button type="button" class="mf-btn sm danger" data-del-rss="${esc(f.id)}">删除</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>`}
+        : `<div class="mf-table-wrap">
+            <table class="mf-table">
+              <thead><tr><th>名称</th><th>周期</th><th>状态 / 动作</th><th>最近结果</th><th>操作</th></tr></thead>
+              <tbody>
+                ${feeds.map((f) => `
+                  <tr>
+                    <td><strong>${esc(f.name)}</strong><div class="mf-card-sub">${esc(f.url)}</div></td>
+                    <td>${esc(f.refresh_interval)}</td>
+                    <td>
+                      <span class="mf-pill ${f.enabled ? 'success' : 'warn'}">${f.enabled ? '已启用' : '已暂停'}</span>
+                      ${f.auto_subscribe ? '<span class="mf-pill info">建订</span>' : ''}
+                      ${f.auto_transfer ? '<span class="mf-pill">转存</span>' : ''}
+                    </td>
+                    <td>${esc(f.last_result || '未运行')}</td>
+                    <td class="mf-actions">
+                      <button type="button" class="mf-btn sm" data-edit-rss="${esc(f.id)}">修改</button>
+                      <button type="button" class="mf-btn sm" data-toggle-rss="${esc(f.id)}">${f.enabled ? '暂停' : '启用'}</button>
+                      <button type="button" class="mf-btn sm danger" data-del-rss="${esc(f.id)}">删除</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>`}
     </div>
 
     <div class="mf-card">
@@ -3031,31 +3134,33 @@ function renderRulesTab(root) {
           <div class="mf-card-sub">支持大合集目录断点续扫，收录后在「聚合搜片」与原生搜索中离线 0 延迟命中，并按 0.1% 体积容差比对媒体库</div>
         </div>
       </div>
-      <form id="shield-add-form" class="mf-row" style="margin-bottom:12px">
-        <input id="sh-title" class="mf-input" style="width:160px" placeholder="合集备注名(选填)" />
+      <form id="shield-add-form" class="mf-row mf-form-grid" style="margin-bottom:12px">
+        <input id="sh-title" class="mf-input mf-span-2" style="width:160px" placeholder="合集备注名(选填)" />
         <input id="sh-url" class="mf-input grow" placeholder="粘贴 115 分享链接 https://115.com/s/xxx?password=yyyy" required />
         <button type="submit" class="mf-btn primary">+ 添加并开始索引</button>
       </form>
       ${shares.length === 0
         ? `<div class="mf-empty">暂未登记私有神盾分享链接</div>`
-        : `<table class="mf-table">
-            <thead><tr><th>分享名称</th><th>分享码</th><th>状态</th><th>已扫目录 / 待扫</th><th>收录视频/字幕</th><th>操作</th></tr></thead>
-            <tbody>
-              ${shares.map((s) => `
-                <tr>
-                  <td><strong>${esc(s.title)}</strong>${s.last_error ? `<div style="color:var(--mf-danger);font-size:11.5px">${esc(s.last_error)}</div>` : ''}</td>
-                  <td>${esc(s.share_code)}</td>
-                  <td><span class="mf-pill ${s.status === 'completed' ? 'success' : s.status === 'error' ? 'danger' : 'warn'}">${esc(s.status)}</span></td>
-                  <td>${(s.processed_cids || []).length} / ${(s.pending_cids || []).length}</td>
-                  <td><strong>${s.parsed_files || 0}</strong></td>
-                  <td class="mf-actions">
-                    ${(s.pending_cids || []).length > 0 ? `<button class="mf-btn sm primary" data-step-sh="${esc(s.id)}">继续解析一批</button>` : ''}
-                    <button class="mf-btn sm danger" data-del-sh="${esc(s.id)}">删除</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>`}
+        : `<div class="mf-table-wrap">
+            <table class="mf-table">
+              <thead><tr><th>分享名称</th><th>分享码</th><th>状态</th><th>已扫目录 / 待扫</th><th>收录视频/字幕</th><th>操作</th></tr></thead>
+              <tbody>
+                ${shares.map((s) => `
+                  <tr>
+                    <td><strong>${esc(s.title)}</strong>${s.last_error ? `<div style="color:var(--mf-danger);font-size:11.5px">${esc(s.last_error)}</div>` : ''}</td>
+                    <td>${esc(s.share_code)}</td>
+                    <td><span class="mf-pill ${s.status === 'completed' ? 'success' : s.status === 'error' ? 'danger' : 'warn'}">${esc(s.status)}</span></td>
+                    <td>${(s.processed_cids || []).length} / ${(s.pending_cids || []).length}</td>
+                    <td><strong>${s.parsed_files || 0}</strong></td>
+                    <td class="mf-actions">
+                      ${(s.pending_cids || []).length > 0 ? `<button class="mf-btn sm primary" data-step-sh="${esc(s.id)}">继续解析一批</button>` : ''}
+                      <button class="mf-btn sm danger" data-del-sh="${esc(s.id)}">删除</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>`}
     </div>
 
     <div class="mf-card">
@@ -3630,7 +3735,7 @@ function renderHistoryTab(root) {
         </div>
       </div>
 
-      <form id="hist-filter-form" class="mf-row" style="margin-bottom:12px">
+      <form id="hist-filter-form" class="mf-row mf-hist-filter-grid" style="margin-bottom:12px">
         <select id="sel-hist-src" class="mf-select" style="width:146px">
           <option value="all" ${state.histSource === 'all' ? 'selected' : ''}>全部来源渠道</option>
           <option value="telegram" ${state.histSource === 'telegram' ? 'selected' : ''}>Telegram 频道</option>
@@ -3670,7 +3775,7 @@ function renderHistoryTab(root) {
         ? `<div class="mf-empty">正在加载历史记录…</div>`
         : items.length === 0
           ? `<div class="mf-empty">${hasActiveFilter ? '当前筛选条件下暂无匹配的记录' : (isTransfer ? '暂无影视转存历史记录' : '暂无签到或后台任务记录')}</div>`
-          : `<div class="mf-hist-table-wrap">
+          : `<div class="mf-desktop-only mf-hist-table-wrap">
               <table class="mf-hist-table">
                 <colgroup>
                   <col style="width:32px" />
@@ -3732,6 +3837,52 @@ function renderHistoryTab(root) {
                   }).join('')}
                 </tbody>
               </table>
+            </div>
+            <div class="mf-mobile-only">
+              <div class="mf-mobile-selall">
+                <label class="mf-row" style="gap:6px">
+                  <input type="checkbox" id="chk-hist-all-mobile" ${items.length > 0 && items.every((it) => state.histSelected.has(it.seq)) ? 'checked' : ''} />
+                  <span>全选当前列表 (${items.length} 条)</span>
+                </label>
+                <span style="font-size:11.5px;color:var(--mf-muted)">点 <code>i</code> 查看详情</span>
+              </div>
+              <div class="mf-mobile-card-list">
+                ${items.map((it) => {
+                  const checked = state.histSelected.has(it.seq) ? 'checked' : '';
+                  const canRetry = isTransfer && !!(it.slug || it.tmdb_id);
+                  const subParts = [];
+                  if (it.tmdb_id) subParts.push(`TMDB:${it.tmdb_id}`);
+                  if (it.clean_slug) subParts.push(it.clean_slug);
+                  const subMeta = subParts.join(' · ');
+                  const cleanTitle = isTransfer ? cleanHistoryTitleText(it.title) : (it.title || '-');
+                  return `
+                    <div class="mf-mcard">
+                      <div class="mf-mcard-head">
+                        <div class="mf-mcard-title-wrap">
+                          <input type="checkbox" class="js-chk-hist" data-seq="${it.seq}" ${checked} style="margin-top:3px;flex-shrink:0" />
+                          <div style="min-width:0">
+                            <div class="mf-mcard-title">${esc(cleanTitle)}</div>
+                            ${subMeta ? `<div class="mf-mcard-sub">${esc(subMeta)}</div>` : ''}
+                          </div>
+                        </div>
+                        ${fmtHistoryStatusPill(it)}
+                      </div>
+                      <div class="mf-mcard-meta">
+                        ${fmtHistorySourceBadge(it)}
+                        ${isTransfer && it.episodes ? `<span class="mf-pill">${esc(it.episodes)}</span>` : ''}
+                        <span>${esc(fmtShortHistoryTime(it.updated_at))}</span>
+                      </div>
+                      <div class="mf-mcard-foot">
+                        <div style="min-width:0;flex:1;overflow:hidden">${fmtCompactDetailCell(it)}</div>
+                        <div class="mf-actions" style="flex-wrap:nowrap;gap:6px;flex-shrink:0">
+                          ${canRetry ? `<button type="button" class="mf-btn sm primary" data-hist-retry="${it.seq}">重转</button>` : ''}
+                          <button type="button" class="mf-btn sm danger" data-hist-del="${it.seq}">删除</button>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
             </div>`}
     </div>
   `;
@@ -3785,14 +3936,16 @@ function renderHistoryTab(root) {
     };
   }
 
-  const chkAll = root.querySelector('#chk-hist-all');
-  if (chkAll) {
-    chkAll.onchange = () => {
-      if (chkAll.checked) items.forEach((it) => state.histSelected.add(it.seq));
+  const bindToggleAll = (el) => {
+    if (!el) return;
+    el.onchange = () => {
+      if (el.checked) items.forEach((it) => state.histSelected.add(it.seq));
       else state.histSelected.clear();
       renderHistoryTab(root);
     };
-  }
+  };
+  bindToggleAll(root.querySelector('#chk-hist-all'));
+  bindToggleAll(root.querySelector('#chk-hist-all-mobile'));
   root.querySelectorAll('.js-chk-hist').forEach((chk) => {
     chk.onchange = () => {
       const seq = Number(chk.dataset.seq);
@@ -3895,6 +4048,14 @@ function bindGlobalFloatingTooltip() {
   const tipEl = document.getElementById('mf-floating-tip');
   if (!tipEl) return;
   let activeTarget = null;
+  let pinnedByTap = false;
+  const canHover = () => window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+
+  const hideTip = () => {
+    activeTarget = null;
+    pinnedByTap = false;
+    tipEl.classList.add('hidden');
+  };
 
   const placeTip = (x, y) => {
     const pad = 12;
@@ -3907,15 +4068,15 @@ function bindGlobalFloatingTooltip() {
     if (top + rect.height + pad > window.innerHeight) {
       top = Math.max(pad, y - rect.height - 12);
     }
-    tipEl.style.left = `${left}px`;
-    tipEl.style.top = `${top}px`;
+    tipEl.style.left = `${Math.max(pad, Math.min(left, window.innerWidth - rect.width - pad))}px`;
+    tipEl.style.top = `${Math.max(pad, Math.min(top, window.innerHeight - rect.height - pad))}px`;
   };
 
   document.addEventListener('mouseover', (e) => {
+    if (!canHover() || pinnedByTap) return;
     const el = e.target.closest?.('[data-tip]');
     if (!el || !el.dataset.tip) {
-      activeTarget = null;
-      tipEl.classList.add('hidden');
+      hideTip();
       return;
     }
     activeTarget = el;
@@ -3925,14 +4086,50 @@ function bindGlobalFloatingTooltip() {
   });
 
   document.addEventListener('mousemove', (e) => {
-    if (!activeTarget || tipEl.classList.contains('hidden')) return;
+    if (!canHover() || pinnedByTap || !activeTarget || tipEl.classList.contains('hidden')) return;
     placeTip(e.clientX, e.clientY);
   });
 
+  // Touch / mobile tap support for `[data-tip]` (e.g. `ⓘ` detail badges) and TG delete-arm cancel
+  document.addEventListener('click', (e) => {
+    const tipTrigger = e.target.closest?.('[data-tip]');
+    const isInteractiveBtn = tipTrigger && (tipTrigger.tagName === 'BUTTON' || tipTrigger.tagName === 'INPUT');
+    if (tipTrigger && tipTrigger.dataset.tip && !isInteractiveBtn) {
+      if (pinnedByTap && activeTarget === tipTrigger && !tipEl.classList.contains('hidden')) {
+        hideTip();
+      } else {
+        activeTarget = tipTrigger;
+        pinnedByTap = true;
+        tipEl.textContent = tipTrigger.dataset.tip;
+        tipEl.classList.remove('hidden');
+        const rect = tipTrigger.getBoundingClientRect();
+        placeTip(rect.left + rect.width / 2, rect.bottom);
+      }
+    } else if (pinnedByTap) {
+      hideTip();
+    }
+
+    // Cancel armed TG channel delete on touch screens when tapping outside `[data-tg-ops]`
+    if (state.tab === 'channels' && state.channelDraft?.telegram?.channels?.some((c) => c._deleting)) {
+      if (!e.target.closest?.('[data-tg-ops]')) {
+        state.channelDraft.telegram.channels.forEach((c) => { c._deleting = false; });
+        const root = document.getElementById('view');
+        if (root) renderChannelsTab(root);
+      }
+    }
+  });
+
   document.addEventListener('scroll', () => {
-    activeTarget = null;
-    tipEl.classList.add('hidden');
+    if (!tipEl.classList.contains('hidden')) hideTip();
   }, true);
+
+  // Tap backdrop outside modal card to close modal cleanly on mobile & desktop
+  const modalRoot = document.getElementById('modal-root');
+  if (modalRoot) {
+    modalRoot.addEventListener('click', (e) => {
+      if (e.target === modalRoot) modalRoot.classList.add('hidden');
+    });
+  }
 }
 
 async function init() {

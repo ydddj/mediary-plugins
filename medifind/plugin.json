@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "medifind",
   "name": "MediFind 网盘聚合引擎",
-  "version": "3.2.2",
+  "version": "3.2.3",
   "min_mediary_version": "3.4.6",
   "description": "面向 Mediary 3.4.6/3.4.8+ 的 Rust 上游找片与转存进货引擎：原生接入宿主参数化 TMDB 发现与同源海报代理、分季已入库集号比对、确定性库诊断、Mediary 3.4.8 流媒体平台 web_source 与结构化搜索规格徽章、115 分享与 ED2K/Magnet 指定目录离线进货，支持影巢中转/HDHive、Telegram MTProto 频道订阅、AYClub、RSS 与 NextFind 同款权重打分",
   "action_runtime": {
