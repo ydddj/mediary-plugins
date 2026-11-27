@@ -259,15 +259,20 @@ function applyBootstrap(b) {
 
 async function switchTab(tab) {
   state.tab = tab;
+  const navEl = document.getElementById('mw-nav');
   document.querySelectorAll('#mw-nav .mw-nav-btn').forEach((btn) => {
     const isAct = btn.dataset.tab === tab;
     btn.classList.toggle('active', isAct);
-    if (isAct && typeof btn.scrollIntoView === 'function') {
-      btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    if (isAct && navEl && navEl.scrollWidth > navEl.clientWidth) {
+      const targetLeft = btn.offsetLeft - (navEl.clientWidth - btn.offsetWidth) / 2;
+      navEl.scrollTo({ left: Math.max(0, targetLeft), behavior: 'smooth' });
     }
   });
   const mainEl = document.querySelector('.mw-main');
-  if (mainEl) mainEl.scrollTop = 0;
+  if (mainEl) {
+    mainEl.scrollTop = 0;
+    mainEl.scrollLeft = 0;
+  }
   await loadCurrentTabData();
   render();
 }
@@ -450,7 +455,7 @@ function renderStagingTab(root) {
       hsync.has_flowlink_transfer_template === false
         ? `<div class="mw-card" style="border-color:#d97706;background:color-mix(in srgb, #f59e0b 10%, var(--mw-surface));">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;font-size:12.5px;line-height:1.55;">
-              <div style="flex:1;min-width:260px;">
+              <div style="flex:1;min-width:0;">
                 <strong>⚠️ 检测到宿主「内置 STRM 工具 → 转存整理任务」列表为空（会导致归档目录缺少 <code>[tmdbid-...]</code>）</strong><br/>
                 <span class="mw-muted">主程序的 <code>open115/files/organize</code> 接口会从内置 STRM 工具的默认转存任务读取 115 电影/剧集重命名模板；当转存任务被清空时，会回退为不含 <code>[tmdbid-...]</code> 的简版模板。请在内置 STRM 工具中新建一条<strong>取消勾选「启用」（保持停用即可，不会抢跑转存）</strong>的默认任务并粘贴下方模板，随后在历史记录点「重整」即可修正（Mediary v3.4.8+ 115 归档与 PT 整理双链路原生支持 <code>{{webSource}}</code> / <code>{% if webSource %}</code> 流媒体平台变量）。</span>
               </div>
