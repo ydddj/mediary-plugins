@@ -95,7 +95,7 @@ async function runAction(name, payload = {}, okMsg = '') {
 function updateChrome() {
   const d = state.data;
   if (!d) return;
-  el('mn-version-label').textContent = `v${d.version || '2.1.2'} · 原生 302 钩子`;
+  el('mn-version-label').textContent = `v${d.version || '2.1.3'} · 原生 302 钩子`;
   el('badge-sessions').textContent = (d.active_sessions || []).length;
   el('badge-accounts').textContent = (d.source_accounts || []).length + (d.lb_accounts || []).length;
   el('badge-users').textContent = (d.users || []).length;
@@ -236,20 +236,22 @@ function renderOverview(view) {
       </div>
       ${sessions.length === 0 ? `<div class="mn-card-sub">当前暂无活跃播放流</div>` : `
         <div class="mn-table-wrap">
-          <table class="mn-table">
+          <table class="mn-table mn-mobile-cards">
             <thead>
               <tr><th>用户</th><th>播放内容</th><th>客户端 / 设备</th><th>出流账号</th><th>IP</th><th>最近心跳</th><th>操作</th></tr>
             </thead>
             <tbody>
               ${sessions.map((s) => `
                 <tr>
-                  <td><b>${esc(s.username)}</b></td>
-                  <td>${esc(s.item_name || s.item_id || '-')}</td>
-                  <td>${esc(s.client || s.ua)} <span class="mn-tag">${esc(s.device_name || s.device_id || '-')}</span></td>
-                  <td><span class="mn-tag primary">${esc(s.provider || '-')}</span></td>
-                  <td>${esc(s.ip || '-')}</td>
-                  <td>${fmtAgo(s.last_seen_at)}</td>
-                  <td><button class="mn-btn danger sm" data-kick="${esc(s.session_key)}">强踢下线</button></td>
+                  <td class="mn-td-primary" data-label="用户">
+                    <div class="mn-cell-val"><b>${esc(s.username)}</b><span class="mn-mobile-only"> · ${esc(s.item_name || s.item_id || '-')}</span></div>
+                  </td>
+                  <td class="mn-mobile-hide" data-label="播放内容"><div class="mn-cell-val">${esc(s.item_name || s.item_id || '-')}</div></td>
+                  <td data-label="客户端 / 设备"><div class="mn-cell-val">${esc(s.client || s.ua)} <span class="mn-tag">${esc(s.device_name || s.device_id || '-')}</span></div></td>
+                  <td data-label="出流账号"><div class="mn-cell-val"><span class="mn-tag primary">${esc(s.provider || '-')}</span></div></td>
+                  <td data-label="IP"><div class="mn-cell-val">${esc(s.ip || '-')}</div></td>
+                  <td data-label="最近心跳"><div class="mn-cell-val">${fmtAgo(s.last_seen_at)}</div></td>
+                  <td class="mn-td-actions" data-label="操作"><div class="mn-actions"><button class="mn-btn danger sm" data-kick="${esc(s.session_key)}">强踢下线</button></div></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -267,16 +269,16 @@ function renderOverview(view) {
       </div>
       ${(s.top_users_7d || []).length === 0 ? `<div class="mn-card-sub">暂无近 7 日播放数据</div>` : `
         <div class="mn-table-wrap">
-          <table class="mn-table">
+          <table class="mn-table mn-mobile-cards">
             <thead><tr><th>排名</th><th>用户</th><th>7日播放次数</th><th>累计媒体流量</th><th>活跃指数</th></tr></thead>
             <tbody>
               ${(s.top_users_7d || []).map((u, idx) => `
                 <tr>
-                  <td>#${idx + 1}</td>
-                  <td><b>${esc(u.username)}</b></td>
-                  <td>${u.plays_7d}</td>
-                  <td>${fmtBytes(u.traffic_bytes_7d)}</td>
-                  <td><span class="mn-tag ok">${u.activity_score}</span></td>
+                  <td class="mn-mobile-hide" data-label="排名"><div class="mn-cell-val">#${idx + 1}</div></td>
+                  <td class="mn-td-primary" data-label="用户"><div class="mn-cell-val"><span class="mn-mobile-only" style="color:var(--mn-muted);margin-right:6px">#${idx + 1}</span><b>${esc(u.username)}</b></div></td>
+                  <td data-label="7日播放次数"><div class="mn-cell-val">${u.plays_7d}</div></td>
+                  <td data-label="累计媒体流量"><div class="mn-cell-val">${fmtBytes(u.traffic_bytes_7d)}</div></td>
+                  <td data-label="活跃指数"><div class="mn-cell-val"><span class="mn-tag ok">${u.activity_score}</span></div></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -318,7 +320,7 @@ function openSandboxModal() {
       </div>
       <label class="mn-check"><input type="checkbox" id="sb-bypass" checked /> 跳过 1800s 缓存强制实测选号/秒传</label>
       <label class="mn-check"><input type="checkbox" id="sb-prefetch" /> 模拟详情页小号负载预热 (prefetch 模式：仅预秒传+预签缓存，不占并发不发通知)</label>
-      <div class="mn-actions" style="justify-content:flex-end;margin-top:6px">
+      <div class="mn-modal-foot">
         <button class="mn-btn primary" id="sb-submit">开始实测解析</button>
       </div>
     </div>
@@ -427,7 +429,7 @@ function renderAccountTable(list, role) {
   });
   return `
     <div class="mn-table-wrap">
-      <table class="mn-table">
+      <table class="mn-table mn-mobile-cards">
         <thead>
           <tr>
             <th>名称 / UID</th>
@@ -443,28 +445,34 @@ function renderAccountTable(list, role) {
             const sharedUid = a.uid && uidCounts[a.uid] > 1;
             return `
               <tr>
-                <td>
-                  <b>${esc(a.name)}</b> ${sharedUid ? `<span class="mn-tag primary" title="与池内其它终端条目共享同一物理 115 账号秒传池与配额">多端同号</span>` : ''}
-                  <div class="mn-card-sub">UID: ${esc(a.uid || '待探活')}${role === 'lb' && a.drive_info ? ` · ${esc(a.drive_info)}` : ''}</div>
+                <td class="mn-td-primary" data-label="名称 / UID">
+                  <div class="mn-cell-val">
+                    <b>${esc(a.name)}</b> ${sharedUid ? `<span class="mn-tag primary" title="与池内其它终端条目共享同一物理 115 账号秒传池与配额">多端同号</span>` : ''}
+                    <div class="mn-card-sub">UID: ${esc(a.uid || '待探活')}${role === 'lb' && a.drive_info ? ` · ${esc(a.drive_info)}` : ''}</div>
+                  </div>
                 </td>
-                <td>
-                  ${!a.enabled ? `<span class="mn-tag">已停用</span>`
-                    : a.in_cooldown ? `<span class="mn-tag warn">405冷却 (${Math.ceil(a.cooldown_remaining_secs / 60)}m)</span>`
-                    : a.valid ? `<span class="mn-tag ok">正常</span>`
-                    : `<span class="mn-tag danger">凭证失效</span>`}
+                <td data-label="状态">
+                  <div class="mn-cell-val">
+                    ${!a.enabled ? `<span class="mn-tag">已停用</span>`
+                      : a.in_cooldown ? `<span class="mn-tag warn">405冷却 (${Math.ceil(a.cooldown_remaining_secs / 60)}m)</span>`
+                      : a.valid ? `<span class="mn-tag ok">正常</span>`
+                      : `<span class="mn-tag danger">凭证失效</span>`}
+                  </div>
                 </td>
                 ${role === 'lb' ? `
-                  <td><code>${esc(a.cache_path || '/Next')}</code></td>
-                  <td>
-                    <div>${fmtBytes(a.quota_usage_bytes)} / ${a.quota_enabled && a.quota_gb ? `${(a.quota_gb / 1024).toFixed(1)} TB` : '不限'}</div>
-                    ${a.quota_enabled && a.quota_gb ? `<div class="mn-progress"><div class="mn-progress-bar" style="width:${pct}%"></div></div>` : ''}
+                  <td data-label="缓存目录"><div class="mn-cell-val"><code>${esc(a.cache_path || '/Next')}</code></div></td>
+                  <td data-label="转存配额占用">
+                    <div class="mn-cell-val">
+                      <div>${fmtBytes(a.quota_usage_bytes)} / ${a.quota_enabled && a.quota_gb ? `${(a.quota_gb / 1024).toFixed(1)} TB` : '不限'}</div>
+                      ${a.quota_enabled && a.quota_gb ? `<div class="mn-progress"><div class="mn-progress-bar" style="width:${pct}%"></div></div>` : ''}
+                    </div>
                   </td>
-                  <td>活跃 <b>${a.active_sessions || 0}</b> · 累计 ${a.call_count || 0}</td>
+                  <td data-label="并发 / 累计调度"><div class="mn-cell-val">活跃 <b>${a.active_sessions || 0}</b> · 累计 ${a.call_count || 0}</div></td>
                 ` : `
-                  <td><span class="mn-tag">${esc(a.app || 'tv')}</span> ${esc(a.cookie_masked || 'OpenAPI')}</td>
-                  <td>${esc(a.drive_info || '-')}</td>
+                  <td data-label="终端 / 凭证"><div class="mn-cell-val"><span class="mn-tag">${esc(a.app || 'tv')}</span> ${esc(a.cookie_masked || 'OpenAPI')}</div></td>
+                  <td data-label="网盘容量 / 备注"><div class="mn-cell-val">${esc(a.drive_info || '-')}</div></td>
                 `}
-                <td>
+                <td class="mn-td-actions" data-label="操作">
                   <div class="mn-actions">
                     <button class="mn-btn sm" data-probe="${esc(a.name)}" data-role="${role}">探活</button>
                     <button class="mn-btn sm" data-qr-acc="${esc(a.name)}" data-role="${role}">扫码重绑</button>
@@ -525,7 +533,7 @@ function openAccountModal(acc, isNew) {
         <label class="mn-check"><input type="checkbox" id="ac-enabled" ${acc.enabled !== false ? 'checked' : ''} /> 启用该账号</label>
         <label class="mn-check"><input type="checkbox" id="ac-qenabled" ${acc.quota_enabled !== false ? 'checked' : ''} /> 启用超配额自动清理</label>
       </div>
-      <div class="mn-actions" style="justify-content:flex-end;margin-top:6px">
+      <div class="mn-modal-foot">
         <button class="mn-btn primary" id="ac-save">保存账号</button>
       </div>
     </div>
@@ -640,12 +648,59 @@ function openQrModal(defaultKind = 'lb', defaultName = '') {
 }
 
 // ==================== 3. Users & Policy Templates ====================
+function buildUsersListHtml(users) {
+  if (users.length === 0) return `<div class="mn-card-sub">暂无匹配用户</div>`;
+  return `
+    <div class="mn-table-wrap">
+      <table class="mn-table mn-mobile-cards">
+        <thead>
+          <tr><th>用户名</th><th>状态</th><th>路由模式</th><th>模板</th><th>并发 / 设备</th><th>到期日</th><th>专属 115</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          ${users.map((u) => `
+            <tr>
+              <td class="mn-td-primary" data-label="用户名">
+                <div class="mn-cell-val">
+                  <b>${esc(u.username)}</b> ${u.is_admin ? `<span class="mn-tag primary">管理员</span>` : ''}
+                  ${u.remark ? `<div class="mn-card-sub">${esc(u.remark)}</div>` : ''}
+                </div>
+              </td>
+              <td data-label="状态">
+                <div class="mn-cell-val">
+                  ${u.is_banned ? `<span class="mn-tag danger">已封禁</span>`
+                    : u.is_expired ? `<span class="mn-tag warn">已到期</span>`
+                    : `<span class="mn-tag ok">正常</span>`}
+                </div>
+              </td>
+              <td data-label="路由模式"><div class="mn-cell-val">${u.route_mode === 'direct' ? '源盘直连' : u.route_mode === 'own_cookie' ? '独立115秒传' : u.route_mode === 'load_balance' ? '多号负载均衡' : '跟随模板'}</div></td>
+              <td data-label="策略模板"><div class="mn-cell-val"><span class="mn-tag">${esc(u.template || '-')}</span></div></td>
+              <td data-label="并发 / 设备"><div class="mn-cell-val">流 ${u.active_streams} · 设备 ${u.device_count}</div></td>
+              <td data-label="到期日"><div class="mn-cell-val">${esc(u.expiry_date || '永久')}</div></td>
+              <td data-label="专属 115"><div class="mn-cell-val">${u.has_own_cookie ? `<span class="mn-tag ok">UID:${esc(u.p115_uid || '已绑')}</span>` : `<span class="mn-card-sub">未绑</span>`}</div></td>
+              <td class="mn-td-actions" data-label="操作">
+                <div class="mn-actions">
+                  <button class="mn-btn sm" data-qr-user="${esc(u.username)}">扫码绑115</button>
+                  <button class="mn-btn sm" data-edit-user="${esc(u.username)}">编辑</button>
+                  <button class="mn-btn danger sm" data-del-user="${esc(u.username)}">删除</button>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderUsers(view) {
   const tpls = state.data.templates || [];
-  const q = state.userQuery.trim().toLowerCase();
-  const users = (state.data.users || []).filter(
-    (u) => !q || u.username.toLowerCase().includes(q) || (u.remark || '').toLowerCase().includes(q)
-  );
+  const filterUsers = () => {
+    const q = state.userQuery.trim().toLowerCase();
+    return (state.data.users || []).filter(
+      (u) => !q || u.username.toLowerCase().includes(q) || (u.remark || '').toLowerCase().includes(q)
+    );
+  };
+  const users = filterUsers();
 
   view.innerHTML = `
     <div class="mn-header">
@@ -670,7 +725,7 @@ function renderUsers(view) {
       <div class="mn-grid-3">
         ${tpls.map((t) => `
           <div class="mn-kpi" style="display:flex;flex-direction:column;gap:6px">
-            <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
               <b>${esc(t.name)}</b>
               <span class="mn-tag primary">${t.default_route === 'direct' ? '源盘直连' : t.default_route === 'own_cookie' ? '独立秒传' : '负载均衡'}</span>
             </div>
@@ -687,53 +742,45 @@ function renderUsers(view) {
     <div class="mn-card">
       <div class="mn-card-head">
         <div>
-          <h3 class="mn-card-title">观影用户列表 (${users.length})</h3>
+          <h3 class="mn-card-title" id="users-count-title">观影用户列表 (${users.length})</h3>
         </div>
-        <input class="mn-input" style="max-width:220px" id="user-search" placeholder="搜索用户名 / 备注..." value="${esc(state.userQuery)}" />
+        <input class="mn-input mn-search-input" id="user-search" type="search" placeholder="搜索用户名 / 备注..." value="${esc(state.userQuery)}" />
       </div>
-      ${users.length === 0 ? `<div class="mn-card-sub">暂无匹配用户</div>` : `
-        <div class="mn-table-wrap">
-          <table class="mn-table">
-            <thead>
-              <tr><th>用户名</th><th>状态</th><th>路由模式</th><th>模板</th><th>并发 / 设备</th><th>到期日</th><th>专属 115</th><th>操作</th></tr>
-            </thead>
-            <tbody>
-              ${users.map((u) => `
-                <tr>
-                  <td>
-                    <b>${esc(u.username)}</b> ${u.is_admin ? `<span class="mn-tag primary">管理员</span>` : ''}
-                    ${u.remark ? `<div class="mn-card-sub">${esc(u.remark)}</div>` : ''}
-                  </td>
-                  <td>
-                    ${u.is_banned ? `<span class="mn-tag danger">已封禁</span>`
-                      : u.is_expired ? `<span class="mn-tag warn">已到期</span>`
-                      : `<span class="mn-tag ok">正常</span>`}
-                  </td>
-                  <td>${u.route_mode === 'direct' ? '源盘直连' : u.route_mode === 'own_cookie' ? '独立115秒传' : u.route_mode === 'load_balance' ? '多号负载均衡' : '跟随模板'}</td>
-                  <td><span class="mn-tag">${esc(u.template || '-')}</span></td>
-                  <td>流 ${u.active_streams} · 设备 ${u.device_count}</td>
-                  <td>${esc(u.expiry_date || '永久')}</td>
-                  <td>${u.has_own_cookie ? `<span class="mn-tag ok">UID:${esc(u.p115_uid || '已绑')}</span>` : `<span class="mn-card-sub">未绑</span>`}</td>
-                  <td>
-                    <div class="mn-actions">
-                      <button class="mn-btn sm" data-qr-user="${esc(u.username)}">扫码绑115</button>
-                      <button class="mn-btn sm" data-edit-user="${esc(u.username)}">编辑</button>
-                      <button class="mn-btn danger sm" data-del-user="${esc(u.username)}">删除</button>
-                    </div>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
+      <div id="users-list-wrap">${buildUsersListHtml(users)}</div>
     </div>
   `;
+
+  const bindUserActions = (root) => {
+    root.querySelectorAll('[data-qr-user]').forEach((b) => {
+      b.onclick = () => openQrModal('user', b.dataset.qrUser);
+    });
+    root.querySelectorAll('[data-edit-user]').forEach((b) => {
+      const u = (state.data.users || []).find((x) => x.username === b.dataset.editUser);
+      if (u) b.onclick = () => openUserModal(u);
+    });
+    root.querySelectorAll('[data-del-user]').forEach((b) => {
+      b.onclick = () => {
+        if (confirm(`确定移除用户 [${b.dataset.delUser}] 的策略记录吗？`)) {
+          runAction('ui_delete_user', { username: b.dataset.delUser }, '已移除');
+        }
+      };
+    });
+  };
 
   el('btn-sync-users').onclick = () => runAction('ui_sync_users', {});
   el('btn-add-tpl').onclick = () => openTemplateModal({ name: '', max_streams: 3, max_devices: 5, default_route: 'load_balance' });
   el('btn-add-user').onclick = () => openUserModal({ template: tpls[0]?.name || 'vvvvvip', route_mode: 'template', cache_path: '/EmbyCache' });
-  el('user-search').oninput = (e) => { state.userQuery = e.target.value; render(); };
+  el('user-search').oninput = (e) => {
+    state.userQuery = e.target.value;
+    const filtered = filterUsers();
+    const titleEl = el('users-count-title');
+    if (titleEl) titleEl.textContent = `观影用户列表 (${filtered.length})`;
+    const wrap = el('users-list-wrap');
+    if (wrap) {
+      wrap.innerHTML = buildUsersListHtml(filtered);
+      bindUserActions(wrap);
+    }
+  };
 
   view.querySelectorAll('[data-edit-tpl]').forEach((b) => {
     const t = tpls.find((x) => x.name === b.dataset.editTpl);
@@ -742,20 +789,7 @@ function renderUsers(view) {
   view.querySelectorAll('[data-del-tpl]').forEach((b) => {
     b.onclick = () => runAction('ui_delete_template', { name: b.dataset.delTpl }, '模板已删除');
   });
-  view.querySelectorAll('[data-qr-user]').forEach((b) => {
-    b.onclick = () => openQrModal('user', b.dataset.qrUser);
-  });
-  view.querySelectorAll('[data-edit-user]').forEach((b) => {
-    const u = (state.data.users || []).find((x) => x.username === b.dataset.editUser);
-    if (u) b.onclick = () => openUserModal(u);
-  });
-  view.querySelectorAll('[data-del-user]').forEach((b) => {
-    b.onclick = () => {
-      if (confirm(`确定移除用户 [${b.dataset.delUser}] 的策略记录吗？`)) {
-        runAction('ui_delete_user', { username: b.dataset.delUser }, '已移除');
-      }
-    };
-  });
+  bindUserActions(el('users-list-wrap'));
 }
 
 function openTemplateModal(tpl) {
@@ -783,7 +817,7 @@ function openTemplateModal(tpl) {
           </select>
         </div>
       </div>
-      <div class="mn-actions" style="justify-content:flex-end;margin-top:6px">
+      <div class="mn-modal-foot">
         <button class="mn-btn primary" id="tp-save">保存模板</button>
       </div>
     </div>
@@ -857,7 +891,7 @@ function openUserModal(u) {
         <label class="mn-check"><input type="checkbox" id="us-ban" ${u.is_banned ? 'checked' : ''} /> 封禁禁止播放</label>
         ${u.has_own_cookie ? `<label class="mn-check"><input type="checkbox" id="us-clear-ck" /> 清除已绑定的独立 Cookie</label>` : ''}
       </div>
-      <div class="mn-actions" style="justify-content:flex-end;margin-top:6px">
+      <div class="mn-modal-foot">
         <button class="mn-btn primary" id="us-save">保存用户策略</button>
       </div>
     </div>
@@ -946,19 +980,21 @@ function renderRisk(view) {
         </div>
         ${uas.length === 0 ? `<div class="mn-card-sub">暂无 UA 请求统计</div>` : `
           <div class="mn-table-wrap">
-            <table class="mn-table">
+            <table class="mn-table mn-mobile-cards">
               <thead><tr><th>UA 标识</th><th>次数</th><th>最近用户</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
                 ${uas.map((u) => `
                   <tr>
-                    <td><code>${esc(u.ua_name)}</code></td>
-                    <td>${u.hit_count}</td>
-                    <td>${esc(u.last_username || '-')}</td>
-                    <td>${u.is_banned ? `<span class="mn-tag danger">已拉黑</span>` : `<span class="mn-tag ok">放行</span>`}</td>
-                    <td>
-                      <button class="mn-btn ${u.is_banned ? 'success' : 'danger'} sm" data-ua="${esc(u.ua_name)}" data-ban="${!u.is_banned}">
-                        ${u.is_banned ? '解封' : '拉黑'}
-                      </button>
+                    <td class="mn-td-primary" data-label="UA 标识"><div class="mn-cell-val"><code>${esc(u.ua_name)}</code></div></td>
+                    <td data-label="请求次数"><div class="mn-cell-val">${u.hit_count}</div></td>
+                    <td data-label="最近用户"><div class="mn-cell-val">${esc(u.last_username || '-')}</div></td>
+                    <td data-label="状态"><div class="mn-cell-val">${u.is_banned ? `<span class="mn-tag danger">已拉黑</span>` : `<span class="mn-tag ok">放行</span>`}</div></td>
+                    <td class="mn-td-actions" data-label="操作">
+                      <div class="mn-actions">
+                        <button class="mn-btn ${u.is_banned ? 'success' : 'danger'} sm" data-ua="${esc(u.ua_name)}" data-ban="${!u.is_banned}">
+                          ${u.is_banned ? '解封' : '拉黑'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 `).join('')}
@@ -977,15 +1013,17 @@ function renderRisk(view) {
         </div>
         ${devs.length === 0 ? `<div class="mn-card-sub">暂无设备记录</div>` : `
           <div class="mn-table-wrap">
-            <table class="mn-table">
+            <table class="mn-table mn-mobile-cards">
               <thead><tr><th>用户</th><th>设备 / 客户端</th><th>最近活跃</th><th>操作</th></tr></thead>
               <tbody>
                 ${devs.slice(0, 40).map((dv) => `
                   <tr>
-                    <td><b>${esc(dv.username)}</b></td>
-                    <td>${esc(dv.device_name || dv.device_id)} <span class="mn-card-sub">(${esc(dv.client)})</span></td>
-                    <td>${fmtAgo(dv.last_seen_at)}</td>
-                    <td>
+                    <td class="mn-td-primary" data-label="用户">
+                      <div class="mn-cell-val"><b>${esc(dv.username)}</b>${dv.is_banned ? ` <span class="mn-tag danger">已封禁</span>` : ''}</div>
+                    </td>
+                    <td data-label="设备 / 客户端"><div class="mn-cell-val">${esc(dv.device_name || dv.device_id)} <span class="mn-card-sub">(${esc(dv.client)})</span></div></td>
+                    <td data-label="最近活跃"><div class="mn-cell-val">${fmtAgo(dv.last_seen_at)}</div></td>
+                    <td class="mn-td-actions" data-label="操作">
                       <div class="mn-actions">
                         <button class="mn-btn ${dv.is_banned ? 'success' : 'danger'} sm" data-dev-ban="${esc(dv.device_id)}" data-user="${esc(dv.username)}" data-val="${!dv.is_banned}">
                           ${dv.is_banned ? '解封' : '封禁'}
@@ -1226,16 +1264,61 @@ function renderSettings(view) {
 }
 
 // ==================== 6. Playback Dispatch History ====================
+function buildHistoryListHtml(list) {
+  if (list.length === 0) return `<div class="mn-card-sub">暂无播放调度记录</div>`;
+  return `
+    <div class="mn-table-wrap">
+      <table class="mn-table mn-mobile-cards">
+        <thead>
+          <tr><th>时间</th><th>用户</th><th>媒体文件</th><th>通道</th><th>出流账号</th><th>客户端 / IP</th><th>结果</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          ${list.map((h) => `
+            <tr>
+              <td data-label="时间" style="white-space:nowrap"><div class="mn-cell-val">${esc(h.updated_at)}</div></td>
+              <td data-label="用户"><div class="mn-cell-val"><b>${esc(h.username)}</b></div></td>
+              <td class="mn-td-primary" data-label="媒体文件">
+                <div class="mn-cell-val">
+                  <b>${esc(h.item_name || h.item_id || '-')}</b>
+                  <span class="mn-mobile-only" style="margin-left:6px">
+                    <span class="mn-tag ${h.status === 'redirect' ? 'ok' : h.status === 'deny' ? 'danger' : h.status === 'prewarm' ? 'primary' : 'warn'}">
+                      ${h.cache_hit ? '302 (缓存)' : h.status === 'prewarm' ? '已预热' : esc(h.status)}
+                    </span>
+                  </span>
+                </div>
+              </td>
+              <td data-label="通道"><div class="mn-cell-val"><span class="mn-tag">${esc(h.mode_label)}</span></div></td>
+              <td data-label="出流账号"><div class="mn-cell-val">${esc(h.provider || '-')}</div></td>
+              <td data-label="客户端 / IP"><div class="mn-cell-val">${esc(h.ua)} <span class="mn-card-sub">${esc(h.ip)}</span></div></td>
+              <td class="mn-mobile-hide" data-label="结果">
+                <div class="mn-cell-val">
+                  <span class="mn-tag ${h.status === 'redirect' ? 'ok' : h.status === 'deny' ? 'danger' : h.status === 'prewarm' ? 'primary' : 'warn'}">
+                    ${h.cache_hit ? '302 (缓存)' : h.status === 'prewarm' ? '已预热' : esc(h.status)}
+                  </span>
+                </div>
+              </td>
+              <td data-label="说明"><div class="mn-cell-val">${esc(h.detail)}</div></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderHistory(view) {
-  const q = state.historyQuery.trim().toLowerCase();
-  const list = (state.data.history || []).filter(
-    (h) =>
-      !q ||
-      (h.username || '').toLowerCase().includes(q) ||
-      (h.item_name || '').toLowerCase().includes(q) ||
-      (h.provider || '').toLowerCase().includes(q) ||
-      (h.detail || '').toLowerCase().includes(q)
-  );
+  const filterHistory = () => {
+    const q = state.historyQuery.trim().toLowerCase();
+    return (state.data.history || []).filter(
+      (h) =>
+        !q ||
+        (h.username || '').toLowerCase().includes(q) ||
+        (h.item_name || '').toLowerCase().includes(q) ||
+        (h.provider || '').toLowerCase().includes(q) ||
+        (h.detail || '').toLowerCase().includes(q)
+    );
+  };
+  const list = filterHistory();
 
   view.innerHTML = `
     <div class="mn-header">
@@ -1244,43 +1327,19 @@ function renderHistory(view) {
         <p>展示每一次 302 直链签发、缓存续期、跨号秒传、回源兜底与风控拦截明细</p>
       </div>
       <div class="mn-actions">
-        <input class="mn-input" style="width:220px" id="hist-q" placeholder="筛选用户 / 片名 / 账号..." value="${esc(state.historyQuery)}" />
+        <input class="mn-input mn-search-input" id="hist-q" type="search" placeholder="筛选用户 / 片名 / 账号..." value="${esc(state.historyQuery)}" />
         <button class="mn-btn danger" id="btn-clr-hist">清空记录</button>
       </div>
     </div>
 
-    <div class="mn-card">
-      ${list.length === 0 ? `<div class="mn-card-sub">暂无播放调度记录</div>` : `
-        <div class="mn-table-wrap">
-          <table class="mn-table">
-            <thead>
-              <tr><th>时间</th><th>用户</th><th>媒体文件</th><th>通道</th><th>出流账号</th><th>客户端 / IP</th><th>结果</th><th>说明</th></tr>
-            </thead>
-            <tbody>
-              ${list.map((h) => `
-                <tr>
-                  <td style="white-space:nowrap">${esc(h.updated_at)}</td>
-                  <td><b>${esc(h.username)}</b></td>
-                  <td>${esc(h.item_name || h.item_id || '-')}</td>
-                  <td><span class="mn-tag">${esc(h.mode_label)}</span></td>
-                  <td>${esc(h.provider || '-')}</td>
-                  <td>${esc(h.ua)} <span class="mn-card-sub">${esc(h.ip)}</span></td>
-                  <td>
-                    <span class="mn-tag ${h.status === 'redirect' ? 'ok' : h.status === 'deny' ? 'danger' : h.status === 'prewarm' ? 'primary' : 'warn'}">
-                      ${h.cache_hit ? '302 (缓存)' : h.status === 'prewarm' ? '已预热' : esc(h.status)}
-                    </span>
-                  </td>
-                  <td>${esc(h.detail)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
-    </div>
+    <div class="mn-card" id="history-list-wrap">${buildHistoryListHtml(list)}</div>
   `;
 
-  el('hist-q').oninput = (e) => { state.historyQuery = e.target.value; render(); };
+  el('hist-q').oninput = (e) => {
+    state.historyQuery = e.target.value;
+    const wrap = el('history-list-wrap');
+    if (wrap) wrap.innerHTML = buildHistoryListHtml(filterHistory());
+  };
   el('btn-clr-hist').onclick = () => {
     if (confirm('确定清空全部历史记录吗？')) runAction('ui_clear_history', {}, '历史记录已清空');
   };
@@ -1291,8 +1350,11 @@ document.querySelectorAll('#mn-nav .mn-nav-btn').forEach((btn) => {
   btn.onclick = () => {
     document.querySelectorAll('#mn-nav .mn-nav-btn').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
+    btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
     state.tab = btn.dataset.tab;
     render();
+    const mainEl = document.querySelector('.mn-main');
+    if (mainEl) mainEl.scrollTop = 0;
   };
 });
 

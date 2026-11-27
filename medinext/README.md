@@ -1,4 +1,4 @@
-# MediNext 302 播放负载与风控引擎 (v2.1.2)
+# MediNext 302 播放负载与风控引擎 (v2.1.3)
 
 面向 **Mediary 3.4.6+ / 3.4.8+** 的纯原生 Rust 302 播放调度与观影风控插件（基于宿主 `playback_hook` 常驻 Unix Socket + `rusqlite` WAL 高并发存储，**零额外反代端口**）。
 

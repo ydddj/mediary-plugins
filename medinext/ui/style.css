@@ -30,19 +30,30 @@ html[data-theme="light"] {
   --mn-primary: #2563eb;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow-x: hidden;
   background: var(--mn-bg);
   color: var(--mn-text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 13.5px;
   line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
 }
 
 .hidden { display: none !important; }
+.mn-mobile-only { display: none; }
+
+code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
 .mn-shell {
   display: grid;
@@ -67,6 +78,7 @@ html, body {
   gap: 10px;
   padding: 4px 6px 12px;
   border-bottom: 1px solid var(--mn-border);
+  min-width: 0;
 }
 .mn-brand-badge {
   width: 34px;
@@ -80,14 +92,15 @@ html, body {
   font-size: 13px;
   flex-shrink: 0;
 }
-.mn-brand-title { font-weight: 700; font-size: 15px; }
-.mn-brand-sub { font-size: 11px; color: var(--mn-muted); }
+.mn-brand-title { font-weight: 700; font-size: 15px; line-height: 1.25; }
+.mn-brand-sub { font-size: 11px; color: var(--mn-muted); line-height: 1.3; }
 
 .mn-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
 .mn-nav-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   width: 100%;
   padding: 9px 11px;
   border: 1px solid transparent;
@@ -97,6 +110,8 @@ html, body {
   cursor: pointer;
   font-size: 13px;
   text-align: left;
+  touch-action: manipulation;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .mn-nav-btn:hover { background: var(--mn-surface-2); }
 .mn-nav-btn.active {
@@ -111,6 +126,11 @@ html, body {
   border-radius: 99px;
   background: var(--mn-surface-2);
   color: var(--mn-muted);
+  flex-shrink: 0;
+}
+.mn-nav-btn.active .mn-nav-badge {
+  background: color-mix(in srgb, var(--mn-primary) 22%, transparent);
+  color: var(--mn-primary);
 }
 
 .mn-sidebar-foot {
@@ -127,6 +147,9 @@ html, body {
   background: var(--mn-surface-2);
   border: 1px solid var(--mn-border);
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mn-status-pill.ok {
   color: var(--mn-success);
@@ -143,6 +166,8 @@ html, body {
 .mn-main {
   position: relative;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   padding: 18px 22px 48px;
 }
 
@@ -155,7 +180,9 @@ html, body {
   border-radius: 10px;
   background: color-mix(in srgb, var(--mn-primary) 16%, var(--mn-surface));
   border: 1px solid color-mix(in srgb, var(--mn-primary) 45%, transparent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
   font-weight: 500;
+  word-break: break-word;
 }
 .mn-toast.error {
   background: color-mix(in srgb, var(--mn-danger) 18%, var(--mn-surface));
@@ -174,7 +201,7 @@ html, body {
   gap: 12px;
   margin-bottom: 16px;
 }
-.mn-header h2 { margin: 0; font-size: 18px; }
+.mn-header h2 { margin: 0; font-size: 18px; line-height: 1.3; }
 .mn-header p { margin: 3px 0 0; font-size: 12.5px; color: var(--mn-muted); }
 .mn-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
@@ -189,10 +216,11 @@ html, body {
   border-radius: var(--mn-radius);
   background: var(--mn-surface);
   border: 1px solid var(--mn-border);
+  min-width: 0;
 }
 .mn-kpi-label { font-size: 12px; color: var(--mn-muted); }
-.mn-kpi-val { font-size: 21px; font-weight: 700; margin-top: 4px; }
-.mn-kpi-sub { font-size: 11.5px; color: var(--mn-muted); margin-top: 2px; }
+.mn-kpi-val { font-size: 21px; font-weight: 700; margin-top: 4px; line-height: 1.2; word-break: break-word; }
+.mn-kpi-sub { font-size: 11.5px; color: var(--mn-muted); margin-top: 3px; line-height: 1.35; }
 
 .mn-card {
   background: var(--mn-surface);
@@ -200,6 +228,7 @@ html, body {
   border-radius: var(--mn-radius);
   padding: 15px 16px;
   margin-bottom: 14px;
+  min-width: 0;
 }
 .mn-card-head {
   display: flex;
@@ -210,7 +239,7 @@ html, body {
   margin-bottom: 12px;
 }
 .mn-card-title { margin: 0; font-size: 14.5px; font-weight: 600; }
-.mn-card-sub { font-size: 12px; color: var(--mn-muted); margin-top: 2px; }
+.mn-card-sub { font-size: 12px; color: var(--mn-muted); margin-top: 2px; overflow-wrap: anywhere; }
 
 .mn-btn {
   display: inline-flex;
@@ -225,8 +254,12 @@ html, body {
   cursor: pointer;
   font-size: 12.5px;
   font-weight: 500;
+  line-height: 1.25;
+  touch-action: manipulation;
+  white-space: nowrap;
 }
 .mn-btn:hover { background: var(--mn-hover); }
+.mn-btn:active { transform: scale(0.98); }
 .mn-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .mn-btn.primary { background: var(--mn-primary); border-color: var(--mn-primary); color: #fff; }
 .mn-btn.success {
@@ -245,7 +278,7 @@ html, body {
 .mn-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .mn-grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr)); gap: 10px; }
 
-.mn-field { display: flex; flex-direction: column; gap: 4px; }
+.mn-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .mn-field label { font-size: 12px; color: var(--mn-muted); font-weight: 500; }
 .mn-input, .mn-select, .mn-textarea {
   width: 100%;
@@ -257,6 +290,10 @@ html, body {
   font-size: 13px;
   font-family: inherit;
 }
+.mn-search-input {
+  width: 220px;
+  max-width: 100%;
+}
 .mn-textarea {
   min-height: 96px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -265,13 +302,22 @@ html, body {
 }
 .mn-check {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 13px;
+  line-height: 1.45;
   cursor: pointer;
 }
+.mn-check input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--mn-primary);
+}
 
-.mn-table-wrap { overflow-x: auto; }
+.mn-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
 .mn-table {
   width: 100%;
   border-collapse: collapse;
@@ -284,14 +330,17 @@ html, body {
   vertical-align: middle;
 }
 .mn-table th { color: var(--mn-muted); font-weight: 600; white-space: nowrap; }
+.mn-cell-val { min-width: 0; overflow-wrap: anywhere; }
 
 .mn-tag {
   display: inline-block;
   padding: 2px 7px;
   border-radius: 6px;
   font-size: 11.5px;
+  line-height: 1.35;
   background: var(--mn-surface-2);
   border: 1px solid var(--mn-border);
+  vertical-align: middle;
 }
 .mn-tag.ok { color: var(--mn-success); border-color: color-mix(in srgb, var(--mn-success) 45%, transparent); }
 .mn-tag.warn { color: var(--mn-warn); border-color: color-mix(in srgb, var(--mn-warn) 45%, transparent); }
@@ -300,6 +349,7 @@ html, body {
 
 .mn-progress {
   width: 120px;
+  max-width: 100%;
   height: 7px;
   background: var(--mn-surface-2);
   border-radius: 99px;
@@ -326,6 +376,7 @@ html, body {
   max-width: 560px;
   max-height: 88dvh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--mn-surface);
   border: 1px solid var(--mn-border);
   border-radius: 14px;
@@ -335,9 +386,17 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-bottom: 12px;
 }
-.mn-modal-head h3 { margin: 0; font-size: 15.5px; }
+.mn-modal-head h3 { margin: 0; font-size: 15.5px; line-height: 1.3; }
+.mn-modal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
 
 .mn-qr-box {
   display: flex;
@@ -348,10 +407,12 @@ html, body {
   border-radius: 12px;
   background: var(--mn-surface-2);
   border: 1px solid var(--mn-border);
+  text-align: center;
 }
 .mn-qr-box img {
   width: 200px;
   height: 200px;
+  max-width: 100%;
   border-radius: 10px;
   background: #fff;
   padding: 8px;
@@ -366,10 +427,294 @@ html, body {
   word-break: break-all;
 }
 
+/* ==================== Tablet & Mobile Responsive (<= 760px) ==================== */
 @media (max-width: 760px) {
-  .mn-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
-  .mn-sidebar { border-right: none; border-bottom: 1px solid var(--mn-border); padding: 10px 12px; }
-  .mn-nav { flex-direction: row; overflow-x: auto; }
-  .mn-nav-btn { white-space: nowrap; width: auto; }
-  .mn-sidebar-foot { display: none; }
+  .mn-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100dvh;
+  }
+
+  .mn-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--mn-border);
+    padding: 10px 12px 8px;
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .mn-brand {
+    padding: 0 0 6px;
+    border-bottom: none;
+  }
+  .mn-brand-badge { width: 30px; height: 30px; font-size: 12px; border-radius: 8px; }
+  .mn-brand-title { font-size: 14.5px; }
+
+  /* Show compact horizontal status strip on mobile instead of hiding vital status! */
+  .mn-sidebar-foot {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding-top: 0;
+    border-top: none;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .mn-sidebar-foot::-webkit-scrollbar { display: none; }
+  .mn-sidebar-foot .mn-status-pill {
+    flex-shrink: 0;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 99px;
+  }
+  .mn-sidebar-foot .mn-subnote { display: none; }
+
+  /* Horizontal pill navigation bar with snap scrolling */
+  .mn-nav {
+    flex-direction: row;
+    flex: 0 0 auto;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    padding-bottom: 2px;
+  }
+  .mn-nav::-webkit-scrollbar { display: none; }
+  .mn-nav-btn {
+    white-space: nowrap;
+    width: auto;
+    flex-shrink: 0;
+    min-height: 36px;
+    padding: 7px 11px;
+    border-radius: 99px;
+    background: var(--mn-surface-2);
+    border-color: var(--mn-border);
+    font-size: 12.5px;
+    scroll-snap-align: center;
+  }
+
+  .mn-main {
+    padding: 12px 12px calc(28px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .mn-toast {
+    padding: 9px 12px;
+    font-size: 13px;
+    margin-bottom: 10px;
+  }
+
+  .mn-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .mn-header h2 { font-size: 16.5px; }
+  .mn-header p { font-size: 12px; }
+  .mn-header > .mn-actions {
+    width: 100%;
+  }
+
+  .mn-card {
+    padding: 12px 12px;
+    margin-bottom: 12px;
+    border-radius: 11px;
+  }
+  .mn-card-head {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  /* Prevent iOS Safari auto-zoom when focusing inputs/selects */
+  .mn-input, .mn-select, .mn-textarea {
+    font-size: 16px;
+    padding: 9px 11px;
+    min-height: 40px;
+  }
+  .mn-textarea { min-height: 88px; }
+  .mn-search-input {
+    width: 100%;
+    flex: 1 1 160px;
+  }
+
+  /* Comfortable mobile touch targets */
+  .mn-btn {
+    min-height: 38px;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .mn-btn.sm {
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+  }
+  .mn-check { font-size: 13px; gap: 9px; }
+  .mn-check input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+  }
+
+  .mn-grid-2, .mn-grid-3 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+/* ==================== Phone Portrait Enhancements (<= 680px) ==================== */
+@media (max-width: 680px) {
+  .mn-mobile-only { display: inline; }
+  .mn-mobile-hide { display: none !important; }
+
+  /* Crisp 2x2 KPI dashboard grid on phones */
+  .mn-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .mn-kpi {
+    padding: 10px 11px;
+  }
+  .mn-kpi-label { font-size: 11.5px; }
+  .mn-kpi-val { font-size: 18.5px; margin-top: 3px; }
+  .mn-kpi-sub { font-size: 11px; }
+
+  /* Responsive Card-Table Transformation: zero horizontal scrolling on phones! */
+  .mn-table-wrap { overflow-x: visible; }
+  .mn-table.mn-mobile-cards {
+    display: block;
+    width: 100%;
+  }
+  .mn-table.mn-mobile-cards thead {
+    display: none;
+  }
+  .mn-table.mn-mobile-cards tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .mn-table.mn-mobile-cards tr {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 11px 12px;
+    border-radius: 10px;
+    background: var(--mn-surface-2);
+    border: 1px solid var(--mn-border);
+  }
+  .mn-table.mn-mobile-cards td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 0;
+    border-bottom: none;
+    text-align: right;
+    font-size: 12.5px;
+    line-height: 1.45;
+    min-width: 0;
+  }
+  .mn-table.mn-mobile-cards td::before {
+    content: attr(data-label);
+    color: var(--mn-muted);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+  .mn-table.mn-mobile-cards td > .mn-cell-val {
+    text-align: right;
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* Primary header cell of each mobile card */
+  .mn-table.mn-mobile-cards td.mn-td-primary {
+    order: -1;
+    display: block;
+    text-align: left;
+    padding: 0 0 7px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid var(--mn-border);
+    font-size: 13.5px;
+  }
+  .mn-table.mn-mobile-cards td.mn-td-primary::before {
+    display: none;
+  }
+  .mn-table.mn-mobile-cards td.mn-td-primary > .mn-cell-val {
+    text-align: left;
+  }
+
+  /* Full-width action toolbar at bottom of each mobile card */
+  .mn-table.mn-mobile-cards td.mn-td-actions {
+    display: block;
+    text-align: left;
+    padding: 8px 0 0;
+    margin-top: 2px;
+    border-top: 1px solid var(--mn-border);
+  }
+  .mn-table.mn-mobile-cards td.mn-td-actions::before {
+    display: none;
+  }
+  .mn-table.mn-mobile-cards td.mn-td-actions .mn-actions {
+    width: 100%;
+    gap: 6px;
+  }
+  .mn-table.mn-mobile-cards td.mn-td-actions .mn-btn.sm {
+    flex: 1 1 auto;
+    min-width: 68px;
+  }
+
+  .mn-table.mn-mobile-cards .mn-progress {
+    width: 100%;
+    max-width: 180px;
+    margin-left: auto;
+  }
+
+  /* Native-feeling Bottom Sheet Modal on Phones */
+  .mn-modal-backdrop {
+    place-items: end center;
+    padding: 0;
+  }
+  .mn-modal {
+    max-width: 100%;
+    max-height: 90dvh;
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding: 0 14px calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+  .mn-modal-head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--mn-surface);
+    padding: 14px 0 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--mn-border);
+  }
+  .mn-modal-head #mn-modal-close {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    font-size: 16px;
+  }
+  .mn-modal-foot {
+    margin-top: 10px;
+  }
+  .mn-modal-foot .mn-btn.primary {
+    width: 100%;
+    min-height: 42px;
+    font-size: 14px;
+  }
+
+  .mn-qr-box { padding: 12px; }
+  .mn-qr-box img { width: 184px; height: 184px; }
 }
