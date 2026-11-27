@@ -181,17 +181,27 @@ function syncSidebarBadges() {
   if (badgeHist) badgeHist.textContent = Number(c.media_history || 0);
 
   const modePill = document.getElementById('mw-mode-pill');
+  const modePillM = document.getElementById('mw-mode-pill-m');
   if (b.settings?.dry_run) {
     modePill.className = 'mw-status-pill warn';
     modePill.textContent = '当前：仅预览模式（干跑安全）';
+    if (modePillM) {
+      modePillM.className = 'mw-status-pill warn';
+      modePillM.textContent = '干跑预览';
+    }
   } else {
     modePill.className = 'mw-status-pill ok';
     modePill.textContent = b.settings?.auto_delete_old
       ? '当前：实盘执行 + 自动删旧'
       : '当前：实盘执行（手动删旧）';
+    if (modePillM) {
+      modePillM.className = 'mw-status-pill ok';
+      modePillM.textContent = b.settings?.auto_delete_old ? '实盘+删旧' : '实盘执行';
+    }
   }
 
   const p115 = document.getElementById('mw-115-pill');
+  const p115M = document.getElementById('mw-115-pill-m');
   const hs = b.host_status || {};
   if (hs.open_api_connected || hs.web_cookie_ready) {
     const parts = [];
@@ -199,9 +209,17 @@ function syncSidebarBadges() {
     if (hs.web_cookie_ready) parts.push('Cookie');
     p115.className = 'mw-status-pill ok';
     p115.textContent = `宿主 115 已连 (${parts.join('+')})`;
+    if (p115M) {
+      p115M.className = 'mw-status-pill ok';
+      p115M.textContent = '115已连';
+    }
   } else {
     p115.className = 'mw-status-pill warn';
     p115.textContent = '宿主 115 待检测/未连';
+    if (p115M) {
+      p115M.className = 'mw-status-pill warn';
+      p115M.textContent = '115未连';
+    }
   }
 
   const syncNote = document.getElementById('mw-host-sync-note');
@@ -242,8 +260,14 @@ function applyBootstrap(b) {
 async function switchTab(tab) {
   state.tab = tab;
   document.querySelectorAll('#mw-nav .mw-nav-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
+    const isAct = btn.dataset.tab === tab;
+    btn.classList.toggle('active', isAct);
+    if (isAct && typeof btn.scrollIntoView === 'function') {
+      btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
   });
+  const mainEl = document.querySelector('.mw-main');
+  if (mainEl) mainEl.scrollTop = 0;
   await loadCurrentTabData();
   render();
 }
@@ -841,12 +865,20 @@ function renderStagingCandidatesTable() {
   if (!items.length) {
     return `<div class="mw-empty">当前筛选条件下暂无中转记录。</div>`;
   }
+  const allChecked = items.length > 0 && items.every((it) => state.stagingSelected.has(it.id));
   return `
+    <div class="mw-mobile-select-bar">
+      <label class="mw-check">
+        <input type="checkbox" id="chk-staging-all-m" ${allChecked ? 'checked' : ''} />
+        <span>全选当前 ${items.length} 条</span>
+      </label>
+      <span class="mw-muted">已勾选 ${state.stagingSelected.size} 项</span>
+    </div>
     <div class="mw-table-wrap">
-      <table class="mw-table">
+      <table class="mw-table mw-card-table">
         <thead>
           <tr>
-            <th><input type="checkbox" id="chk-staging-all" /></th>
+            <th><input type="checkbox" id="chk-staging-all" ${allChecked ? 'checked' : ''} /></th>
             <th>文件名 / 相对目录</th>
             <th>识别媒体</th>
             <th>槽位与得分对比</th>
@@ -866,8 +898,8 @@ function renderStagingCandidatesTable() {
               const breakdown = it.detail?.breakdown || [];
               return `
                 <tr>
-                  <td><input type="checkbox" class="js-chk-staging" data-id="${it.id}" ${checked} /></td>
-                  <td>
+                  <td class="mw-col-chk" data-label="选择此项"><input type="checkbox" class="js-chk-staging" data-id="${it.id}" ${checked} /></td>
+                  <td data-label="文件名 / 相对目录">
                     <div style="font-weight:600;word-break:break-all;">${esc(it.name)}</div>
                     <div class="mw-muted" style="font-size:11.5px;">
                       ${it.rel_path ? `📁 ${esc(it.rel_path)} · ` : ''}${fmtBytes(it.size)}
@@ -875,7 +907,7 @@ function renderStagingCandidatesTable() {
                       ${it.sidecar_count > 0 ? ` · 含 ${it.sidecar_count} 个外挂字幕` : ''}
                     </div>
                   </td>
-                  <td>
+                  <td data-label="识别媒体">
                     ${
                       it.tmdb_id
                         ? `<div>
@@ -886,16 +918,18 @@ function renderStagingCandidatesTable() {
                         : `<span class="mw-muted">未绑定 TMDB</span>`
                     }
                   </td>
-                  <td>
-                    ${it.slot ? `<span class="mw-tag primary">${esc(it.slot)}</span> ` : ''}
-                    <strong>${Number(it.cand_score || 0).toFixed(2)}</strong>
-                    ${it.lib_score != null ? `<span class="mw-muted"> vs 库内 ${Number(it.lib_score).toFixed(2)}</span>` : ''}
+                  <td data-label="槽位与得分对比">
+                    <div>
+                      ${it.slot ? `<span class="mw-tag primary">${esc(it.slot)}</span> ` : ''}
+                      <strong>${Number(it.cand_score || 0).toFixed(2)}</strong>
+                      ${it.lib_score != null ? `<span class="mw-muted"> vs 库内 ${Number(it.lib_score).toFixed(2)}</span>` : ''}
+                    </div>
                   </td>
-                  <td>
+                  <td data-label="分流结论与原因">
                     <div>${verdictBadge(it.verdict)}</div>
                     <div class="mw-muted" style="font-size:11.5px;margin-top:3px;">${esc(it.reason)}</div>
                   </td>
-                  <td>
+                  <td class="mw-col-ops">
                     <div class="mw-actions">
                       <button type="button" class="mw-btn sm js-bind-tmdb" data-id="${it.id}">指定 TMDB</button>
                       ${
@@ -914,7 +948,7 @@ function renderStagingCandidatesTable() {
                 </tr>
                 ${
                   expanded
-                    ? `<tr>
+                    ? `<tr class="mw-expand-row">
                         <td colspan="6" style="background:var(--mw-surface-2);padding:10px 14px;">
                           <div style="font-size:12px;">
                             <strong>识别来源：</strong>${esc(it.detail?.matched_by || '-')} ·
@@ -960,17 +994,18 @@ function bindStagingCandidatesEvents(root) {
     render();
   };
 
+  const toggleAllStaging = (checked) => {
+    if (checked) {
+      (state.stagingItems || []).forEach((it) => state.stagingSelected.add(it.id));
+    } else {
+      state.stagingSelected.clear();
+    }
+    render();
+  };
   const chkAll = document.getElementById('chk-staging-all');
-  if (chkAll) {
-    chkAll.onchange = () => {
-      if (chkAll.checked) {
-        (state.stagingItems || []).forEach((it) => state.stagingSelected.add(it.id));
-      } else {
-        state.stagingSelected.clear();
-      }
-      render();
-    };
-  }
+  if (chkAll) chkAll.onchange = () => toggleAllStaging(chkAll.checked);
+  const chkAllM = document.getElementById('chk-staging-all-m');
+  if (chkAllM) chkAllM.onchange = () => toggleAllStaging(chkAllM.checked);
   root.querySelectorAll('.js-chk-staging').forEach((chk) => {
     chk.onchange = () => {
       const id = Number(chk.dataset.id);
@@ -1048,7 +1083,7 @@ function renderLedgerTable() {
   }
   return `
     <div class="mw-table-wrap">
-      <table class="mw-table">
+      <table class="mw-table mw-card-table">
         <thead>
           <tr>
             <th>来源通道</th>
@@ -1069,16 +1104,16 @@ function renderLedgerTable() {
                   : '';
               return `
                 <tr>
-                  <td>${it.source_kind === 'pt' ? '<span class="mw-tag primary">PT 下载</span>' : '<span class="mw-tag ok">115 中转</span>'}</td>
-                  <td><strong>${esc(it.title)}${esc(se)}</strong> <span class="mw-muted">(TMDB:${esc(it.tmdb_id)})</span></td>
-                  <td>${esc(it.category || '宿主决定')} · <span class="mw-tag">${esc(it.slot || '默认')}</span></td>
-                  <td>${Number(it.old_score || 0).toFixed(2)} → <strong>${Number(it.cand_score || 0).toFixed(2)}</strong></td>
-                  <td>
+                  <td data-label="来源通道"><div>${it.source_kind === 'pt' ? '<span class="mw-tag primary">PT 下载</span>' : '<span class="mw-tag ok">115 中转</span>'}</div></td>
+                  <td data-label="媒体作品"><div><strong>${esc(it.title)}${esc(se)}</strong> <span class="mw-muted">(TMDB:${esc(it.tmdb_id)})</span></div></td>
+                  <td data-label="分类与槽位"><div>${esc(it.category || '宿主决定')} · <span class="mw-tag">${esc(it.slot || '默认')}</span></div></td>
+                  <td data-label="得分升级"><div>${Number(it.old_score || 0).toFixed(2)} → <strong>${Number(it.cand_score || 0).toFixed(2)}</strong></div></td>
+                  <td data-label="状态与宿主回执">
                     <div>${ledgerBadge(it.state)}</div>
                     <div class="mw-muted" style="font-size:11.5px;margin-top:2px;">${esc(it.message)}</div>
                   </td>
-                  <td class="mw-muted">${esc(it.updated_at)}</td>
-                  <td>
+                  <td class="mw-muted" data-label="更新时间">${esc(it.updated_at)}</td>
+                  <td class="mw-col-ops">
                     <div class="mw-actions">
                       ${
                         it.state === 'downloaded'
@@ -1257,7 +1292,7 @@ function renderLibraryTab(root) {
               ${
                 !(st.overrides || []).length
                   ? `<div class="mw-muted" style="font-size:12px;">暂无特殊覆盖，所有分类默认使用上方统一策略。</div>`
-                  : `<table class="mw-table">
+                  : `<div class="mw-table-wrap"><table class="mw-table">
                       <thead><tr><th>类型</th><th>Mediary 分类前缀</th><th>指定评分方案</th><th>独立分差</th><th>跳过存量洗版</th><th>跳过 PT 洗版</th><th></th></tr></thead>
                       <tbody>
                         ${(st.overrides || [])
@@ -1275,7 +1310,7 @@ function renderLibraryTab(root) {
                           )
                           .join('')}
                       </tbody>
-                    </table>`
+                    </table></div>`
               }
             </div>`
           : ''
@@ -1326,11 +1361,18 @@ function renderLibraryTab(root) {
       ${
         !(page.items || []).length
           ? `<div class="mw-empty">当前筛选无记录。点击上方「重新全扫」或「推进一批」即可扫描媒体库多版本条目。</div>`
-          : `<div class="mw-table-wrap">
-              <table class="mw-table">
+          : `<div class="mw-mobile-select-bar">
+              <label class="mw-check">
+                <input type="checkbox" id="chk-lib-all-m" ${(page.items || []).length > 0 && (page.items || []).every((it) => state.libSelected.has(it.id)) ? 'checked' : ''} />
+                <span>全选当前 ${(page.items || []).length} 组</span>
+              </label>
+              <span class="mw-muted">已勾选 ${state.libSelected.size} 组</span>
+            </div>
+            <div class="mw-table-wrap">
+              <table class="mw-table mw-card-table">
                 <thead>
                   <tr>
-                    <th><input type="checkbox" id="chk-lib-all" /></th>
+                    <th><input type="checkbox" id="chk-lib-all" ${(page.items || []).length > 0 && (page.items || []).every((it) => state.libSelected.has(it.id)) ? 'checked' : ''} /></th>
                     <th>媒体名称</th>
                     <th>二级分类 / 槽位</th>
                     <th>保留胜出版本</th>
@@ -1346,21 +1388,23 @@ function renderLibraryTab(root) {
                       const cands = it.candidates || [];
                       return `
                         <tr>
-                          <td><input type="checkbox" class="js-chk-lib" data-id="${it.id}" ${checked} /></td>
-                          <td>
+                          <td class="mw-col-chk" data-label="选择此组"><input type="checkbox" class="js-chk-lib" data-id="${it.id}" ${checked} /></td>
+                          <td data-label="媒体名称">
                             <strong>${esc(it.title)}</strong>
                             <div class="mw-muted" style="font-size:11.5px;">ID: ${esc(it.item_id)}</div>
                           </td>
-                          <td>
+                          <td data-label="二级分类 / 槽位">
                             <div>${esc(it.category)}</div>
-                            <span class="mw-tag primary">${esc(it.slot)}</span>
+                            <div><span class="mw-tag primary">${esc(it.slot)}</span></div>
                           </td>
-                          <td>
-                            <span class="mw-tag ok">${Number(ret.score || it.winner_score || 0).toFixed(2)} 分</span>
-                            ${ret.profile?.web_source ? `<span class="mw-tag">${esc(ret.profile.web_source)}</span>` : ''}
+                          <td data-label="保留胜出版本">
+                            <div>
+                              <span class="mw-tag ok">${Number(ret.score || it.winner_score || 0).toFixed(2)} 分</span>
+                              ${ret.profile?.web_source ? `<span class="mw-tag">${esc(ret.profile.web_source)}</span>` : ''}
+                            </div>
                             <div style="font-size:12px;word-break:break-all;margin-top:3px;">${esc(ret.name || ret.path || '-')}</div>
                           </td>
-                          <td>
+                          <td data-label="拟清理低分版本">
                             ${
                               cands.length
                                 ? cands
@@ -1376,7 +1420,7 @@ function renderLibraryTab(root) {
                                 : `<span class="mw-muted">${esc(it.reason)}</span>`
                             }
                           </td>
-                          <td>
+                          <td class="mw-col-ops">
                             <div class="mw-actions">
                               ${
                                 it.status === 'suggestion' && it.state === 'pending'
@@ -1501,14 +1545,15 @@ function renderLibraryTab(root) {
     render();
   };
 
+  const toggleAllLib = (checked) => {
+    if (checked) (page.items || []).forEach((it) => state.libSelected.add(it.id));
+    else state.libSelected.clear();
+    render();
+  };
   const chkAll = document.getElementById('chk-lib-all');
-  if (chkAll) {
-    chkAll.onchange = () => {
-      if (chkAll.checked) (page.items || []).forEach((it) => state.libSelected.add(it.id));
-      else state.libSelected.clear();
-      render();
-    };
-  }
+  if (chkAll) chkAll.onchange = () => toggleAllLib(chkAll.checked);
+  const chkAllM = document.getElementById('chk-lib-all-m');
+  if (chkAllM) chkAllM.onchange = () => toggleAllLib(chkAllM.checked);
   root.querySelectorAll('.js-chk-lib').forEach((chk) => {
     chk.onchange = () => {
       const id = Number(chk.dataset.id);
@@ -1673,7 +1718,7 @@ function renderPtTab(root) {
           <div class="mw-card-sub">输入片名/TMDB ID，或直接按 Mediary 3.4.6+ 原生索引筛出库内「单层杜比视界 DV P5（无 HDR10 回退易偏色） / 蓝光 ISO 原盘」一键搜 PT 替换种</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <div class="mw-pt-lookup-bar" style="display:flex;gap:8px;flex-wrap:wrap;">
         <select class="mw-select" id="pt-lookup-type" style="width:116px;">
           <option value="all" ${state.ptLookupType === 'all' ? 'selected' : ''}>全部类型</option>
           <option value="movie" ${state.ptLookupType === 'movie' ? 'selected' : ''}>电影</option>
@@ -1701,26 +1746,32 @@ function renderPtTab(root) {
       ${
         state.ptLookupResults.length
           ? `<div class="mw-table-wrap" style="margin-top:10px;">
-              <table class="mw-table">
+              <table class="mw-table mw-card-table">
                 <thead><tr><th>媒体库条目</th><th>二级分类 / 槽位</th><th>当前最高分 / 毕业线</th><th>操作</th></tr></thead>
                 <tbody>
                   ${state.ptLookupResults
                     .map(
                       (it) => `
                     <tr>
-                      <td>
-                        <strong>${esc(it.name)}</strong>
-                        ${it.episode > 0 ? `<span class="mw-tag">S${String(it.season || 1).padStart(2, '0')}E${String(it.episode).padStart(2, '0')}</span>` : ''}
-                        ${it.dv_p5 ? `<span class="mw-tag warn">DV P5 单层</span>` : ''}
-                        <span class="mw-muted"> (TMDB:${esc(it.tmdb_id)} · ${it.source_count} 源)</span>
+                      <td data-label="媒体库条目">
+                        <div>
+                          <strong>${esc(it.name)}</strong>
+                          ${it.episode > 0 ? `<span class="mw-tag">S${String(it.season || 1).padStart(2, '0')}E${String(it.episode).padStart(2, '0')}</span>` : ''}
+                          ${it.dv_p5 ? `<span class="mw-tag warn">DV P5 单层</span>` : ''}
+                          <span class="mw-muted"> (TMDB:${esc(it.tmdb_id)} · ${it.source_count} 源)</span>
+                        </div>
                       </td>
-                      <td>${esc(it.category || '-')} · <span class="mw-tag">${esc(it.slot)}</span></td>
-                      <td>
-                        <strong>${Number(it.current_score || 0).toFixed(2)}</strong> / ${it.graduate_score}
-                        ${it.graduated ? '<span class="mw-tag ok">已毕业</span>' : '<span class="mw-tag warn">可升级</span>'}
+                      <td data-label="二级分类 / 槽位"><div>${esc(it.category || '-')} · <span class="mw-tag">${esc(it.slot)}</span></div></td>
+                      <td data-label="当前最高分 / 毕业线">
+                        <div>
+                          <strong>${Number(it.current_score || 0).toFixed(2)}</strong> / ${it.graduate_score}
+                          ${it.graduated ? '<span class="mw-tag ok">已毕业</span>' : '<span class="mw-tag warn">可升级</span>'}
+                        </div>
                       </td>
-                      <td>
-                        <button type="button" class="mw-btn sm primary js-pt-search-item" data-id="${esc(it.id)}" data-name="${esc(it.name)}">搜 PT 升级种</button>
+                      <td class="mw-col-ops">
+                        <div class="mw-actions">
+                          <button type="button" class="mw-btn sm primary js-pt-search-item" data-id="${esc(it.id)}" data-name="${esc(it.name)}">搜 PT 升级种</button>
+                        </div>
                       </td>
                     </tr>`
                     )
@@ -1745,18 +1796,18 @@ function renderPtTab(root) {
         !(state.ptCandidates || []).length
           ? `<div class="mw-empty">当前暂无待处理的 PT 升级候选种。</div>`
           : `<div class="mw-table-wrap">
-              <table class="mw-table">
+              <table class="mw-table mw-card-table">
                 <thead><tr><th>目标媒体</th><th>PT 候选种子</th><th>站点 / 做种 / 体积</th><th>同槽分值提升</th><th>操作</th></tr></thead>
                 <tbody>
                   ${state.ptCandidates
                     .map(
                       (cd) => `
                     <tr>
-                      <td><strong>${esc(cd.title)}</strong><div class="mw-muted" style="font-size:11.5px;">${esc(cd.category)} · ${esc(cd.slot)}</div></td>
-                      <td style="word-break:break-all;">${esc(cd.torrent_title)}</td>
-                      <td>${esc(cd.site_name)} · ⬆️${cd.seeders} · ${fmtBytes(cd.size)}</td>
-                      <td>${Number(cd.current_score || 0).toFixed(2)} → <strong style="color:var(--mw-success);">${Number(cd.cand_score || 0).toFixed(2)}</strong></td>
-                      <td>
+                      <td data-label="目标媒体"><strong>${esc(cd.title)}</strong><div class="mw-muted" style="font-size:11.5px;">${esc(cd.category)} · ${esc(cd.slot)}</div></td>
+                      <td data-label="PT 候选种子" style="word-break:break-all;">${esc(cd.torrent_title)}</td>
+                      <td data-label="站点 / 做种 / 体积">${esc(cd.site_name)} · ⬆️${cd.seeders} · ${fmtBytes(cd.size)}</td>
+                      <td data-label="同槽分值提升"><div>${Number(cd.current_score || 0).toFixed(2)} → <strong style="color:var(--mw-success);">${Number(cd.cand_score || 0).toFixed(2)}</strong></div></td>
+                      <td class="mw-col-ops">
                         <div class="mw-actions">
                           ${
                             cd.state === 'pending'
@@ -3679,7 +3730,14 @@ function renderHistoryTab(root) {
       ${
         !items.length
           ? `<div class="mw-empty">${isMedia ? '暂无匹配的媒体处理历史记录。' : '暂无匹配的任务执行记录。'}</div>`
-          : `<div class="mw-hist-table-wrap">
+          : `<div class="mw-mobile-select-bar">
+              <label class="mw-check">
+                <input type="checkbox" id="chk-hist-all-m" ${items.length > 0 && items.every((it) => state.histSelected.has(it.id)) ? 'checked' : ''} />
+                <span>全选当前 ${items.length} 条</span>
+              </label>
+              <span class="mw-muted">已选 ${state.histSelected.size} · 点说明看详情</span>
+            </div>
+            <div class="mw-hist-table-wrap">
               <table class="mw-table mw-hist-table">
                 <colgroup>
                   <col style="width: 26px" />
@@ -3692,7 +3750,7 @@ function renderHistoryTab(root) {
                 </colgroup>
                 <thead>
                   <tr>
-                    <th><input type="checkbox" id="chk-hist-all" /></th>
+                    <th><input type="checkbox" id="chk-hist-all" ${items.length > 0 && items.every((it) => state.histSelected.has(it.id)) ? 'checked' : ''} /></th>
                     <th>${isMedia ? '媒体名称 · 源 / 终路径（点击路径复制）' : '任务名称'}</th>
                     <th>${isMedia ? '二级分类 / 槽位' : '关联标识'}</th>
                     <th>动作 / 来源</th>
@@ -3762,7 +3820,7 @@ function renderHistoryTab(root) {
                             </div>
                           </td>
                           <td>
-                            <div class="mw-detail-multi" data-tip="${esc(fullTip)}">
+                            <div class="mw-detail-multi js-hist-detail" data-id="${it.id}" data-tip="${esc(fullTip)}">
                               <div class="mw-detail-head ${detailObj.warn ? 'warn' : ''}">${esc(detailObj.head)}</div>
                               ${detailObj.sub ? `<div class="mw-detail-sub">${esc(detailObj.sub)}</div>` : ''}
                             </div>
@@ -3847,14 +3905,51 @@ function renderHistoryTab(root) {
     };
   }
 
+  const toggleAllHist = (checked) => {
+    if (checked) items.forEach((it) => state.histSelected.add(it.id));
+    else state.histSelected.clear();
+    render();
+  };
   const chkAll = document.getElementById('chk-hist-all');
-  if (chkAll) {
-    chkAll.onchange = () => {
-      if (chkAll.checked) items.forEach((it) => state.histSelected.add(it.id));
-      else state.histSelected.clear();
-      render();
+  if (chkAll) chkAll.onchange = () => toggleAllHist(chkAll.checked);
+  const chkAllM = document.getElementById('chk-hist-all-m');
+  if (chkAllM) chkAllM.onchange = () => toggleAllHist(chkAllM.checked);
+
+  root.querySelectorAll('.js-hist-detail').forEach((el) => {
+    el.onclick = () => {
+      const it = items.find((x) => x.id === Number(el.dataset.id));
+      if (!it) return;
+      const tipText = buildHistoryTooltip(it, isMedia);
+      openModal(
+        `记录详情 · ${it.title || '-'}`,
+        `
+          <pre style="margin:0 0 12px;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12.5px;line-height:1.65;background:var(--mw-surface-2);padding:10px 12px;border-radius:9px;border:1px solid var(--mw-border);">${esc(tipText)}</pre>
+          <div class="mw-actions" style="justify-content:flex-end;">
+            ${it.source_path ? `<button type="button" class="mw-btn sm" id="hd-copy-src">复制源路径</button>` : ''}
+            ${it.target_path ? `<button type="button" class="mw-btn sm" id="hd-copy-dst">复制终路径</button>` : ''}
+            <button type="button" class="mw-btn sm primary" id="hd-close">关闭</button>
+          </div>
+        `,
+        (body) => {
+          const bSrc = body.querySelector('#hd-copy-src');
+          if (bSrc) {
+            bSrc.onclick = async () => {
+              await copyToClipboard(it.source_path);
+              showToast('已复制源路径', 'success');
+            };
+          }
+          const bDst = body.querySelector('#hd-copy-dst');
+          if (bDst) {
+            bDst.onclick = async () => {
+              await copyToClipboard(it.target_path);
+              showToast('已复制终路径', 'success');
+            };
+          }
+          body.querySelector('#hd-close').onclick = closeModal;
+        }
+      );
     };
-  }
+  });
   root.querySelectorAll('.js-chk-hist').forEach((chk) => {
     chk.onchange = () => {
       const id = Number(chk.dataset.id);
@@ -4010,7 +4105,11 @@ function bindGlobalFloatingTooltip() {
     tipEl.style.top = `${top}px`;
   };
 
+  const isTouchOnly = () =>
+    Boolean(window.matchMedia && window.matchMedia('(hover: none)').matches);
+
   document.addEventListener('mouseover', (e) => {
+    if (isTouchOnly()) return;
     const el = e.target.closest?.('[data-tip]');
     if (!el || !el.dataset.tip) {
       activeTarget = null;
@@ -4024,7 +4123,7 @@ function bindGlobalFloatingTooltip() {
   });
 
   document.addEventListener('mousemove', (e) => {
-    if (!activeTarget || tipEl.classList.contains('hidden')) return;
+    if (isTouchOnly() || !activeTarget || tipEl.classList.contains('hidden')) return;
     placeTip(e.clientX, e.clientY);
   });
 

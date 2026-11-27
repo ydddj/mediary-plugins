@@ -35,7 +35,7 @@
     {
       "id": "mediwash",
       "name": "MediWash 归档入库与权重洗版",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "description": "面向 Mediary 3.4.8+ 的 115 单目录全自动权重洗版与原生归档入库插件：胜出文件调用宿主原生 files/organize 一步完成二级分类、模板重命名（支持 {{webSource}} 国际与国内 20 个流媒体平台变量）、字幕跟随与 STRM 入库，淘汰/重复文件调用 files/delete 直移 115 官方回收站；支持新源入库自动删旧、存量库精洗与 PT 升级。",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/mediwash",
@@ -63,9 +63,9 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/mediwash-3.2.0-linux-amd64.tar.gz",
-          "sha256": "5fda884633fe7f3556096279946827d4bd0493f683ffb9b2a5b8d092aeb1a1bf",
-          "size": 4324577
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/mediwash-3.2.1-linux-amd64.tar.gz",
+          "sha256": "3e558f2d815516f7f6a6695cf2056f5e16c4886124429b3ee5de8c55353ce49a",
+          "size": 4326213
         }
       }
     },

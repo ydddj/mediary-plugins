@@ -1,4 +1,4 @@
-# MediWash 归档入库与权重洗版引擎 (v3.2.0)
+# MediWash 归档入库与权重洗版引擎 (v3.2.1)
 
 面向 **Mediary 3.4.8+**（向下兼容 3.4.6+）的 Rust 115 监控目录自动归档入库与双引擎权重洗版插件（`rusqlite` WAL 瘦身存储 + 纯 `action_runtime` 零常驻进程）。
 

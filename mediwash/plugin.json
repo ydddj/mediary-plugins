@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "mediwash",
   "name": "MediWash 归档入库与权重洗版",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "min_mediary_version": "3.4.6",
   "description": "面向 Mediary 3.4.8+ 的 115 单目录全自动权重洗版与原生归档入库插件：胜出文件调用宿主原生 files/organize 一步完成二级分类、模板重命名（支持 {{webSource}} 国际与国内 20 个流媒体平台变量）、字幕跟随与 STRM 入库，淘汰/重复文件调用 files/delete 直移 115 官方回收站；支持新源入库自动删旧、存量库精洗与 PT 升级。",
   "action_runtime": {
