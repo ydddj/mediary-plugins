@@ -234,7 +234,9 @@ pub struct CachedLinkRow {
     pub provider: String,
     pub mode_label: String,
     pub file_name: String,
+    pub uid: String,
     pub headers: HashMap<String, String>,
+    pub remaining_secs: i64,
 }
 
 fn cdn_url_expiry_ts(url_str: &str) -> Option<i64> {
@@ -251,35 +253,88 @@ fn cdn_url_expiry_ts(url_str: &str) -> Option<i64> {
     None
 }
 
-pub fn get_and_refresh_cached_link(
-    conn: &Connection,
-    cache_key: &str,
-    ttl_secs: u64,
-) -> Option<CachedLinkRow> {
+/// Read-only inspection of a single cache entry without extending its TTL.
+/// Returns `remaining_secs` accounting for both `expires_at` and any 115 CDN `t=` deadline.
+pub fn peek_cached_link(conn: &Connection, cache_key: &str) -> Option<CachedLinkRow> {
     let now = now_ts();
-    let row: Option<(String, String, String, String, String, i64)> = conn
+    let row: Option<(String, String, String, String, String, String, i64)> = conn
         .query_row(
-            "SELECT url, provider, mode_label, file_name, headers_json, expires_at
+            "SELECT url, provider, mode_label, file_name, headers_json, uid, expires_at
              FROM link_cache WHERE cache_key = ?1",
             params![cache_key],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
         )
         .optional()
         .ok()
         .flatten();
-    let (url, provider, mode_label, file_name, headers_json, expires_at) = row?;
+    let (url, provider, mode_label, file_name, headers_json, uid, expires_at) = row?;
     if expires_at <= now {
         let _ = conn.execute("DELETE FROM link_cache WHERE cache_key = ?1", params![cache_key]);
         return None;
     }
+    let mut effective_exp = expires_at;
     if let Some(cdn_exp) = cdn_url_expiry_ts(&url) {
         if cdn_exp <= now + 60 {
             let _ = conn.execute("DELETE FROM link_cache WHERE cache_key = ?1", params![cache_key]);
             return None;
         }
+        effective_exp = effective_exp.min(cdn_exp - 45);
     }
+    let remaining_secs = (effective_exp - now).max(0);
+    if remaining_secs == 0 {
+        return None;
+    }
+    let headers: HashMap<String, String> = serde_json::from_str(&headers_json).unwrap_or_default();
+    Some(CachedLinkRow {
+        url,
+        provider,
+        mode_label,
+        file_name,
+        uid,
+        headers,
+        remaining_secs,
+    })
+}
+
+pub fn peek_cached_link_with_fallback(
+    conn: &Connection,
+    exact_key: &str,
+    fallback_key: &str,
+) -> Option<CachedLinkRow> {
+    if let Some(hit) = peek_cached_link(conn, exact_key) {
+        if hit.url != "__MEDINEXT_NEGATIVE__" {
+            return Some(hit);
+        }
+    }
+    if !fallback_key.is_empty() && fallback_key != exact_key {
+        if let Some(hit) = peek_cached_link(conn, fallback_key) {
+            if hit.url != "__MEDINEXT_NEGATIVE__" {
+                return Some(hit);
+            }
+        }
+    }
+    None
+}
+
+pub fn get_and_refresh_cached_link(
+    conn: &Connection,
+    cache_key: &str,
+    ttl_secs: u64,
+) -> Option<CachedLinkRow> {
+    let hit = peek_cached_link(conn, cache_key)?;
+    let now = now_ts();
     let mut new_exp = now + (ttl_secs.max(60) as i64);
-    if let Some(cdn_exp) = cdn_url_expiry_ts(&url) {
+    if let Some(cdn_exp) = cdn_url_expiry_ts(&hit.url) {
         new_exp = new_exp.min(cdn_exp - 45);
     }
     if new_exp > now {
@@ -288,39 +343,44 @@ pub fn get_and_refresh_cached_link(
             params![cache_key, new_exp],
         );
     }
-    let headers: HashMap<String, String> = serde_json::from_str(&headers_json).unwrap_or_default();
-    Some(CachedLinkRow {
-        url,
-        provider,
-        mode_label,
-        file_name,
-        headers,
-    })
+    Some(hit)
 }
 
-pub fn has_valid_cached_link(conn: &Connection, cache_key: &str) -> bool {
-    let now = now_ts();
-    let row: Option<(String, i64)> = conn
-        .query_row(
-            "SELECT url, expires_at FROM link_cache WHERE cache_key = ?1",
-            params![cache_key],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .ok()
-        .flatten();
-    let Some((url, expires_at)) = row else {
-        return false;
-    };
-    if expires_at <= now || url == "__MEDINEXT_NEGATIVE__" {
-        return false;
+/// Looks up `exact_key` first; on miss, falls back to the device-less shared key
+/// (`{username}:{pickcode}:{ua_md5}:N`) because 115 direct links are bound only to
+/// `(115 account + pickcode + User-Agent)`, bridging `/prefetch` <-> `/resolve` `device_id` differences.
+pub fn get_and_refresh_cached_link_with_fallback(
+    conn: &Connection,
+    exact_key: &str,
+    fallback_key: &str,
+    ttl_secs: u64,
+) -> Option<CachedLinkRow> {
+    if let Some(hit) = get_and_refresh_cached_link(conn, exact_key, ttl_secs) {
+        return Some(hit);
     }
-    if let Some(cdn_exp) = cdn_url_expiry_ts(&url) {
-        if cdn_exp <= now + 60 {
-            return false;
+    if !fallback_key.is_empty() && fallback_key != exact_key {
+        if let Some(hit) = get_and_refresh_cached_link(conn, fallback_key, ttl_secs) {
+            if hit.url != "__MEDINEXT_NEGATIVE__" {
+                return Some(hit);
+            }
         }
     }
-    true
+    None
+}
+
+pub fn has_valid_cached_link_with_fallback(
+    conn: &Connection,
+    exact_key: &str,
+    fallback_key: &str,
+    min_remaining_secs: i64,
+) -> bool {
+    peek_cached_link_with_fallback(conn, exact_key, fallback_key)
+        .is_some_and(|row| row.remaining_secs >= min_remaining_secs.max(1))
+}
+
+#[allow(dead_code)]
+pub fn has_valid_cached_link(conn: &Connection, cache_key: &str) -> bool {
+    has_valid_cached_link_with_fallback(conn, cache_key, "", 1)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -718,15 +778,35 @@ pub fn get_active_session_info(conn: &Connection, session_key: &str) -> Option<(
 }
 
 pub fn invalidate_user_device_links(conn: &Connection, username: &str, device_id: &str) {
-    if username.trim().is_empty() {
+    let uname = username.trim();
+    if uname.is_empty() {
         return;
     }
-    if !device_id.trim().is_empty() {
-        let pat = format!("{}:%:{}:%", username.trim(), device_id.trim());
-        let _ = conn.execute("DELETE FROM link_cache WHERE cache_key LIKE ?1", params![pat]);
+    let prefix = format!("{uname}:");
+    let prefix_len = prefix.chars().count() as i64;
+    let dev = device_id.trim();
+    if !dev.is_empty() {
+        let dev_mid = format!(":{dev}:");
+        let _ = conn.execute(
+            "DELETE FROM link_cache
+             WHERE substr(cache_key, 1, ?1) = ?2
+               AND instr(cache_key, ?3) > ?1",
+            params![prefix_len, prefix, dev_mid],
+        );
+        // Also clear device-less shared fallback keys (`{username}:{pickcode}:{ua_md5}:N`)
+        // for this user so a kicked device cannot reuse prewarmed links by omitting `device_id`.
+        let shared_colons = (uname.matches(':').count() + 3) as i64;
+        let _ = conn.execute(
+            "DELETE FROM link_cache
+             WHERE substr(cache_key, 1, ?1) = ?2
+               AND (LENGTH(cache_key) - LENGTH(REPLACE(cache_key, ':', ''))) = ?3",
+            params![prefix_len, prefix, shared_colons],
+        );
     } else {
-        let pat = format!("{}:%", username.trim());
-        let _ = conn.execute("DELETE FROM link_cache WHERE cache_key LIKE ?1", params![pat]);
+        let _ = conn.execute(
+            "DELETE FROM link_cache WHERE substr(cache_key, 1, ?1) = ?2",
+            params![prefix_len, prefix],
+        );
     }
 }
 
@@ -1347,5 +1427,121 @@ pub fn write_dashboard_file(
                 let _ = fs::rename(&tmp, &dst);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_link_cache_fallback_near_expiry_and_kick_invalidation() {
+        let dir = std::env::temp_dir().join(format!("mn_db_cache_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let conn = open_db(&dir).unwrap();
+        let headers = HashMap::new();
+
+        // 1. Prewarm writes device-less shared key; playback with device_id falls back and hits!
+        put_cached_link(
+            &conn,
+            "alice:pc001:deadbeef:N",
+            "pc001",
+            "lb1",
+            "[详情预热]",
+            "342589555",
+            "https://cdn.example.com/v1.mkv",
+            &headers,
+            "Demo.mkv",
+            "item1",
+            1800,
+        );
+        let hit = get_and_refresh_cached_link_with_fallback(
+            &conn,
+            "alice:pc001:tv-1:deadbeef:N",
+            "alice:pc001:deadbeef:N",
+            1800,
+        )
+        .expect("should hit shared device-less key");
+        assert_eq!(hit.url, "https://cdn.example.com/v1.mkv");
+        assert!(hit.remaining_secs > 1700);
+
+        // 2. Near-expiry link (< 300s) is detected by peek_cached_link_with_fallback & has_valid_cached_link_with_fallback
+        put_cached_link(
+            &conn,
+            "alice:pc002:deadbeef:N",
+            "pc002",
+            "lb1",
+            "[下集预热]",
+            "342589555",
+            "https://cdn.example.com/v2.mkv",
+            &headers,
+            "E02.mkv",
+            "item2",
+            120,
+        );
+        let peek = peek_cached_link_with_fallback(
+            &conn,
+            "alice:pc002:tv-1:deadbeef:N",
+            "alice:pc002:deadbeef:N",
+        )
+        .expect("should still be present");
+        assert!(peek.remaining_secs > 0 && peek.remaining_secs < 300);
+        assert!(!has_valid_cached_link_with_fallback(
+            &conn,
+            "alice:pc002:tv-1:deadbeef:N",
+            "alice:pc002:deadbeef:N",
+            300
+        ));
+
+        // 3. Kick device `tv-1` for `alice`: removes tv-1 key AND alice's device-less keys,
+        //    while keeping `alice`'s `tv-2` key and other users' (`alice_2`) keys intact!
+        put_cached_link(
+            &conn,
+            "alice:pc001:tv-1:deadbeef:N",
+            "pc001",
+            "lb1",
+            "[负载均衡]",
+            "342589555",
+            "https://cdn.example.com/tv1.mkv",
+            &headers,
+            "Demo.mkv",
+            "item1",
+            1800,
+        );
+        put_cached_link(
+            &conn,
+            "alice:pc001:tv-2:deadbeef:N",
+            "pc001",
+            "lb1",
+            "[负载均衡]",
+            "342589555",
+            "https://cdn.example.com/tv2.mkv",
+            &headers,
+            "Demo.mkv",
+            "item1",
+            1800,
+        );
+        put_cached_link(
+            &conn,
+            "alice_2:pc001:deadbeef:N",
+            "pc001",
+            "lb1",
+            "[详情预热]",
+            "342589555",
+            "https://cdn.example.com/other_user.mkv",
+            &headers,
+            "Demo.mkv",
+            "item1",
+            1800,
+        );
+
+        invalidate_user_device_links(&conn, "alice", "tv-1");
+        assert!(peek_cached_link(&conn, "alice:pc001:tv-1:deadbeef:N").is_none());
+        assert!(peek_cached_link(&conn, "alice:pc001:deadbeef:N").is_none());
+        assert!(peek_cached_link(&conn, "alice:pc002:deadbeef:N").is_none());
+        assert!(peek_cached_link(&conn, "alice:pc001:tv-2:deadbeef:N").is_some());
+        assert!(peek_cached_link(&conn, "alice_2:pc001:deadbeef:N").is_some());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

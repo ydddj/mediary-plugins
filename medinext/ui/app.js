@@ -95,7 +95,7 @@ async function runAction(name, payload = {}, okMsg = '') {
 function updateChrome() {
   const d = state.data;
   if (!d) return;
-  el('mn-version-label').textContent = `v${d.version || '2.1.1'} · 原生 302 钩子`;
+  el('mn-version-label').textContent = `v${d.version || '2.1.2'} · 原生 302 钩子`;
   el('badge-sessions').textContent = (d.active_sessions || []).length;
   el('badge-accounts').textContent = (d.source_accounts || []).length + (d.lb_accounts || []).length;
   el('badge-users').textContent = (d.users || []).length;
@@ -139,7 +139,7 @@ function updateChrome() {
 
   el('mn-sync-note').textContent = d.last_migrated_from
     ? `最近导入: ${d.last_migrated_from}`
-    : (d.last_tick_result || 'Mediary 3.4.6+ 原生桥接');
+    : (d.last_tick_result || 'Mediary 3.4.8+ 原生桥接');
 }
 
 function render() {
@@ -1124,15 +1124,14 @@ function renderSettings(view) {
 
     <div class="mn-grid-2">
       <div class="mn-card">
-        <h3 class="mn-card-title" style="margin-bottom:6px">⚡ 小号负载智能预热（提速首播与连播）</h3>
-        <div class="mn-card-sub" style="margin-bottom:10px">不消耗宿主主号直链额度，直接预秒传至观影用户亲和的 115 负载小号并按当前 UA 预签发 1800s 直链缓存</div>
+        <h3 class="mn-card-title" style="margin-bottom:6px">⚡ 小号负载智能预热（Mediary 3.4.8+ 原生对接）</h3>
+        <div class="mn-card-sub" style="margin-bottom:10px">
+          <b>双开关说明</b>：在 Mediary <code>v3.4.8+</code> 中，需<b>同时开启</b>主程序「<b>STRM 工具 → 详情页直链预热</b>」（总闸）与下方插件开关才会触发详情页、多版本切换与片尾 <code>/prefetch</code> 转发；当 MediNext 播放钩子已启用并批准时，开启宿主总闸会<b>自动跳过宿主主号内置预热</b>，全程仅使用小号负载池且不消耗主号配额。
+        </div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <label class="mn-check"><input type="checkbox" id="eg-pre-next" ${e.enable_next_ep_prewarm !== false ? 'checked' : ''} /> <b>剧集播放时自动预秒传下一集</b>（后台定向秒传至当前同一负载号并预签同 UA 直链，切集零等待）</label>
-          <label class="mn-check"><input type="checkbox" id="eg-pre-detail" ${e.enable_detail_prefetch !== false ? 'checked' : ''} /> <b>详情页停留小号负载直链预热</b>（接收 <code>/prefetch</code> 钩子事件，自动定位电影/剧集首集预秒传，不占并发）</label>
-          <div class="mn-field" style="margin-top:4px;max-width:260px">
-            <label>详情页停留预热延迟 (毫秒, 默认 150)</label>
-            <input type="number" class="mn-input" id="eg-pre-delay" value="${e.detail_prefetch_delay_ms ?? 150}" />
-          </div>
+          <label class="mn-check"><input type="checkbox" id="eg-pre-next" ${e.enable_next_ep_prewarm !== false ? 'checked' : ''} /> <b>剧集播放时后台自动预秒传下一集</b>（首帧定向秒传至当前同一负载号并预签同 UA 直链，切集零等待）</label>
+          <label class="mn-check"><input type="checkbox" id="eg-pre-detail" ${e.enable_detail_prefetch !== false ? 'checked' : ''} /> <b>详情页 / 多版本切换 / 片尾下一集小号预热</b>（接收 <code>/prefetch</code> 转发：支持详情页停留、<code>PlaybackInfo</code> 多版本切换即时预热、片尾 <code>Progress</code> 临期直链 &lt;300s 自动续签及跨入口缓存复用）</label>
+          <div class="mn-card-sub" style="margin-top:2px">停留等待时长与 30 秒冷却合并已由 Mediary 3.4.8+ 宿主统一控制，插件侧零额外阻塞延迟（独立 4s 超时且不计入 /resolve 熔断）。</div>
         </div>
       </div>
 
@@ -1183,7 +1182,7 @@ function renderSettings(view) {
         fallback_for_guest: el('eg-fbg').checked,
         enable_next_ep_prewarm: el('eg-pre-next').checked,
         enable_detail_prefetch: el('eg-pre-detail').checked,
-        detail_prefetch_delay_ms: Number(el('eg-pre-delay').value || 0),
+        detail_prefetch_delay_ms: 0,
         notify_playback: el('eg-nt-play').checked,
         notify_risk_intercept: el('eg-nt-risk').checked,
       },

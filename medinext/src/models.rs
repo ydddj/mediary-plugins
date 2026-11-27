@@ -151,7 +151,7 @@ impl Default for EngineSettings {
             fallback_for_guest: true,
             enable_next_ep_prewarm: true,
             enable_detail_prefetch: true,
-            detail_prefetch_delay_ms: 150,
+            detail_prefetch_delay_ms: 0,
             notify_playback: false,
             notify_risk_intercept: true,
             guest_route: "load_balance".to_string(),

@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const NEGATIVE_SENTINEL: &str = "__MEDINEXT_NEGATIVE__";
+const PREFETCH_RENEW_THRESHOLD_SECS: i64 = 300;
 
 static DEVICE_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 
@@ -41,6 +42,52 @@ fn md5_short8(s: &str) -> String {
         "{:02x}{:02x}{:02x}{:02x}",
         digest[0], digest[1], digest[2], digest[3]
     )
+}
+
+/// Builds `(exact_key, shared_key)` where:
+/// - `exact_key` is `{username}:{pickcode}:{device_id}:{ua_md5}:N` (or `shared_key` when `device_id` is empty)
+/// - `shared_key` is `{username}:{pickcode}:{ua_md5}:N` (device-less key bridging `/prefetch` <-> `/resolve` `device_id` differences)
+fn build_link_cache_keys(
+    username: &str,
+    pickcode: &str,
+    device_id: &str,
+    ua: &str,
+) -> (String, String) {
+    let ua_hash = md5_short8(ua);
+    let shared = format!("{username}:{pickcode}:{ua_hash}:N");
+    let dev = device_id.trim();
+    if dev.is_empty() {
+        (shared.clone(), shared)
+    } else {
+        (format!("{username}:{pickcode}:{dev}:{ua_hash}:N"), shared)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn put_cached_link_with_shared(
+    conn: &Connection,
+    exact_key: &str,
+    shared_key: &str,
+    pickcode: &str,
+    provider: &str,
+    mode_label: &str,
+    uid: &str,
+    url: &str,
+    headers: &HashMap<String, String>,
+    file_name: &str,
+    item_id: &str,
+    ttl_secs: u64,
+) {
+    db::put_cached_link(
+        conn, exact_key, pickcode, provider, mode_label, uid, url, headers, file_name, item_id,
+        ttl_secs,
+    );
+    if !shared_key.is_empty() && shared_key != exact_key {
+        db::put_cached_link(
+            conn, shared_key, pickcode, provider, mode_label, uid, url, headers, file_name,
+            item_id, ttl_secs,
+        );
+    }
 }
 
 fn is_valid_http_url(s: &str) -> bool {
@@ -931,30 +978,36 @@ pub fn resolve_playback(
             || cfg.engine.notify_playback)
     {
         if let Some(h) = host.as_ref() {
-            if let Some(resolved) = h.resolve_item_media(&req.item_id, &req.media_source_id) {
+            if let Some(resolved) =
+                h.resolve_item_media(&req.item_id, &req.media_source_id, &req.pick_code)
+            {
+                let pc_matches = req.pick_code.trim().is_empty()
+                    || resolved.pick_code.eq_ignore_ascii_case(req.pick_code.trim());
                 if req.pick_code.trim().is_empty() && !resolved.pick_code.is_empty() {
                     req.pick_code = resolved.pick_code.clone();
                 }
-                if known_file_id.is_empty() && !resolved.file_id.is_empty() {
-                    known_file_id = resolved.file_id.clone();
+                if pc_matches {
+                    if known_file_id.is_empty() && !resolved.file_id.is_empty() {
+                        known_file_id = resolved.file_id.clone();
+                    }
+                    if req.sha1.len() != 40 && resolved.sha1.len() == 40 {
+                        req.sha1 = resolved.sha1.clone();
+                    }
+                    if req.file_size == 0 && resolved.file_size > 0 {
+                        req.file_size = resolved.file_size;
+                    }
+                    if req.file_name.is_empty() && !resolved.item_name.is_empty() {
+                        req.file_name = resolved.item_name.clone();
+                    }
+                    db::put_pickcode_meta(
+                        &conn,
+                        &req.pick_code,
+                        &known_file_id,
+                        &req.sha1,
+                        req.file_size,
+                        &req.file_name,
+                    );
                 }
-                if req.sha1.len() != 40 && resolved.sha1.len() == 40 {
-                    req.sha1 = resolved.sha1.clone();
-                }
-                if req.file_size == 0 && resolved.file_size > 0 {
-                    req.file_size = resolved.file_size;
-                }
-                if req.file_name.is_empty() && !resolved.item_name.is_empty() {
-                    req.file_name = resolved.item_name.clone();
-                }
-                db::put_pickcode_meta(
-                    &conn,
-                    &req.pick_code,
-                    &known_file_id,
-                    &req.sha1,
-                    req.file_size,
-                    &req.file_name,
-                );
                 resolved_item_meta = Some(resolved);
             }
         }
@@ -969,24 +1022,17 @@ pub fn resolve_playback(
         return Ok(pass_decision("非 115 pickcode 媒体源，交由宿主原生处理", started));
     }
 
-    // 5. Check 1800s Playback Link Cache (`user:pickcode:device:md5(ua)[:8]:N`)
-    let dev_part = if req.device_id.trim().is_empty() {
-        String::new()
-    } else {
-        format!("{}:", req.device_id.trim())
-    };
-    let cache_key = format!(
-        "{}:{}:{}{}:N",
-        uctx.username,
-        pickcode,
-        dev_part,
-        md5_short8(&ua)
-    );
+    // 5. Check 1800s Playback Link Cache (exact device key with automatic fallback to device-less shared key)
+    let (cache_key, shared_cache_key) =
+        build_link_cache_keys(&uctx.username, &pickcode, &req.device_id, &ua);
 
     if !req.bypass_cache {
-        if let Some(hit) =
-            db::get_and_refresh_cached_link(&conn, &cache_key, cfg.engine.cache_ttl_secs)
-        {
+        if let Some(hit) = db::get_and_refresh_cached_link_with_fallback(
+            &conn,
+            &cache_key,
+            &shared_cache_key,
+            cfg.engine.cache_ttl_secs,
+        ) {
             if hit.url == NEGATIVE_SENTINEL {
                 return Ok(pass_decision("处于失败冷却期，交由宿主原生 /api/302 直出", started));
             }
@@ -2004,58 +2050,121 @@ fn resolve_detail_prefetch(
         if !check_and_mark_kv_cooldown(conn, &dedup_key, 30) {
             return Ok(pass_decision("30s 内已完成同版本详情预热", started));
         }
-        if cfg.engine.detail_prefetch_delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(
-                cfg.engine.detail_prefetch_delay_ms.min(400),
-            ));
-        }
     }
 
     let mut known_file_id = String::new();
-    if !req.pick_code.trim().is_empty() {
-        if let Some((fid, sha, sz, nm)) = db::get_pickcode_meta(conn, &req.pick_code) {
-            known_file_id = fid;
-            if req.sha1.len() != 40 && sha.len() == 40 {
-                req.sha1 = sha;
-            }
-            if req.file_size == 0 && sz > 0 {
-                req.file_size = sz;
-            }
-            if req.file_name.is_empty() && !nm.is_empty() {
-                req.file_name = nm;
-            }
-        }
-    }
-    if (req.pick_code.trim().is_empty() || req.sha1.len() != 40 || req.file_size == 0)
-        && !req.item_id.trim().is_empty()
-    {
+    let has_explicit_source = !req.media_source_id.trim().is_empty() && !req.item_id.trim().is_empty();
+
+    if has_explicit_source {
+        // Multi-version switch via PlaybackInfo: always align exact version via `resolve_playable_for_detail`.
         if let Some(h) = host {
-            if let Some(resolved) = h.resolve_playable_for_detail(&req.item_id, &req.media_source_id)
+            if let Some(resolved) =
+                h.resolve_playable_for_detail(&req.item_id, &req.media_source_id, &req.pick_code)
             {
+                let switched_pc = !resolved.pick_code.is_empty()
+                    && !resolved.pick_code.eq_ignore_ascii_case(req.pick_code.trim());
                 req.item_id = resolved.item_id;
-                if req.pick_code.trim().is_empty() {
+                if !resolved.pick_code.is_empty() {
                     req.pick_code = resolved.pick_code;
                 }
-                if known_file_id.is_empty() {
+                if switched_pc {
                     known_file_id = resolved.file_id;
-                }
-                if req.sha1.len() != 40 && resolved.sha1.len() == 40 {
                     req.sha1 = resolved.sha1;
-                }
-                if req.file_size == 0 && resolved.file_size > 0 {
                     req.file_size = resolved.file_size;
+                    if !resolved.item_name.is_empty() {
+                        req.file_name = resolved.item_name;
+                    }
+                } else {
+                    if known_file_id.is_empty() {
+                        known_file_id = resolved.file_id;
+                    }
+                    if req.sha1.len() != 40 && resolved.sha1.len() == 40 {
+                        req.sha1 = resolved.sha1;
+                    }
+                    if req.file_size == 0 && resolved.file_size > 0 {
+                        req.file_size = resolved.file_size;
+                    }
+                    if req.file_name.is_empty() && !resolved.item_name.is_empty() {
+                        req.file_name = resolved.item_name;
+                    }
                 }
-                if req.file_name.is_empty() && !resolved.item_name.is_empty() {
-                    req.file_name = resolved.item_name;
+            }
+        }
+        if !req.pick_code.trim().is_empty() {
+            if let Some((fid, sha, sz, nm)) = db::get_pickcode_meta(conn, &req.pick_code) {
+                if known_file_id.is_empty() {
+                    known_file_id = fid;
                 }
-                db::put_pickcode_meta(
-                    conn,
-                    &req.pick_code,
-                    &known_file_id,
-                    &req.sha1,
-                    req.file_size,
-                    &req.file_name,
-                );
+                if req.sha1.len() != 40 && sha.len() == 40 {
+                    req.sha1 = sha;
+                }
+                if req.file_size == 0 && sz > 0 {
+                    req.file_size = sz;
+                }
+                if req.file_name.is_empty() && !nm.is_empty() {
+                    req.file_name = nm;
+                }
+            }
+            db::put_pickcode_meta(
+                conn,
+                &req.pick_code,
+                &known_file_id,
+                &req.sha1,
+                req.file_size,
+                &req.file_name,
+            );
+        }
+    } else {
+        if !req.pick_code.trim().is_empty() {
+            if let Some((fid, sha, sz, nm)) = db::get_pickcode_meta(conn, &req.pick_code) {
+                known_file_id = fid;
+                if req.sha1.len() != 40 && sha.len() == 40 {
+                    req.sha1 = sha;
+                }
+                if req.file_size == 0 && sz > 0 {
+                    req.file_size = sz;
+                }
+                if req.file_name.is_empty() && !nm.is_empty() {
+                    req.file_name = nm;
+                }
+            }
+        }
+        if (req.pick_code.trim().is_empty() || req.sha1.len() != 40 || req.file_size == 0)
+            && !req.item_id.trim().is_empty()
+        {
+            if let Some(h) = host {
+                if let Some(resolved) =
+                    h.resolve_playable_for_detail(&req.item_id, "", &req.pick_code)
+                {
+                    let pc_matches = req.pick_code.trim().is_empty()
+                        || resolved.pick_code.eq_ignore_ascii_case(req.pick_code.trim());
+                    req.item_id = resolved.item_id;
+                    if req.pick_code.trim().is_empty() {
+                        req.pick_code = resolved.pick_code;
+                    }
+                    if pc_matches {
+                        if known_file_id.is_empty() {
+                            known_file_id = resolved.file_id;
+                        }
+                        if req.sha1.len() != 40 && resolved.sha1.len() == 40 {
+                            req.sha1 = resolved.sha1;
+                        }
+                        if req.file_size == 0 && resolved.file_size > 0 {
+                            req.file_size = resolved.file_size;
+                        }
+                        if req.file_name.is_empty() && !resolved.item_name.is_empty() {
+                            req.file_name = resolved.item_name;
+                        }
+                        db::put_pickcode_meta(
+                            conn,
+                            &req.pick_code,
+                            &known_file_id,
+                            &req.sha1,
+                            req.file_size,
+                            &req.file_name,
+                        );
+                    }
+                }
             }
         }
     }
@@ -2070,23 +2179,30 @@ fn resolve_detail_prefetch(
         return Ok(pass_decision("小文件走直出通道，跳过小号预热", started));
     }
 
-    let dev_part = if req.device_id.trim().is_empty() {
-        String::new()
-    } else {
-        format!("{}:", req.device_id.trim())
-    };
-    let cache_key = format!(
-        "{}:{}:{}{}:N",
-        uctx.username,
-        pickcode,
-        dev_part,
-        md5_short8(ua)
-    );
+    let (cache_key, shared_cache_key) =
+        build_link_cache_keys(&uctx.username, &pickcode, &req.device_id, ua);
 
+    let mut renewed_near_expiry = false;
     if !req.bypass_cache {
-        if let Some(hit) = db::get_and_refresh_cached_link(conn, &cache_key, cfg.engine.cache_ttl_secs)
-        {
-            if hit.url != NEGATIVE_SENTINEL {
+        if let Some(hit) = db::peek_cached_link_with_fallback(conn, &cache_key, &shared_cache_key) {
+            if hit.remaining_secs >= PREFETCH_RENEW_THRESHOLD_SECS {
+                if cache_key != shared_cache_key
+                    && db::peek_cached_link(conn, &shared_cache_key).is_none()
+                {
+                    db::put_cached_link(
+                        conn,
+                        &shared_cache_key,
+                        &pickcode,
+                        &hit.provider,
+                        &hit.mode_label,
+                        &hit.uid,
+                        &hit.url,
+                        &hit.headers,
+                        &hit.file_name,
+                        &req.item_id,
+                        hit.remaining_secs.max(60) as u64,
+                    );
+                }
                 return Ok(ResolveDecision {
                     handled: true,
                     status: "redirect".to_string(),
@@ -2099,9 +2215,15 @@ fn resolve_detail_prefetch(
                     mode_label: "[详情预热·缓存]".to_string(),
                     cache_hit: true,
                     elapsed_ms: started.elapsed().as_millis() as u64,
-                    reason: "详情页预热命中现有 1800s 直链缓存".to_string(),
+                    reason: format!(
+                        "详情页预热命中现有 1800s 直链缓存（剩余 {}s）",
+                        hit.remaining_secs
+                    ),
                 });
             }
+            // Existing link has < 300s remaining (e.g. end-of-episode Progress prefetch):
+            // proactively re-sign a fresh 1800s link and overwrite cache.
+            renewed_near_expiry = true;
         }
     }
 
@@ -2110,7 +2232,9 @@ fn resolve_detail_prefetch(
     } else {
         host::host_env_proxy_url()
     };
-    let cooldown_ms = cfg.engine.p115_cooldown_ms.min(250);
+    // Keep per-step cooldown tight inside `/prefetch` so cold rapid-transfer + downurl finishes
+    // comfortably within Mediary 3.4.8's independent 4s prefetch timeout.
+    let cooldown_ms = cfg.engine.p115_cooldown_ms.min(120);
     let source_acc = cfg
         .source_accounts
         .iter()
@@ -2164,7 +2288,10 @@ fn resolve_detail_prefetch(
         }
     }
 
-    for (target_acc, is_lb) in targets {
+    for (idx, (target_acc, is_lb)) in targets.into_iter().enumerate() {
+        if idx > 0 && started.elapsed() > Duration::from_millis(3400) {
+            break;
+        }
         if let Ok((dl, detail)) = prewarm_media_into_account(
             conn,
             host,
@@ -2196,12 +2323,23 @@ fn resolve_detail_prefetch(
             if is_lb {
                 db::record_lb_selected(conn, &target_acc.name, &uctx.username, &req.device_id);
             }
-            db::put_cached_link(
+            let mode_tag = if renewed_near_expiry {
+                "[临期续签预热]"
+            } else {
+                "[详情预热]"
+            };
+            let final_detail = if renewed_near_expiry {
+                format!("临期直链(<300s)已刷新续签: {detail}")
+            } else {
+                detail
+            };
+            put_cached_link_with_shared(
                 conn,
                 &cache_key,
+                &shared_cache_key,
                 &pickcode,
                 &target_acc.name,
-                "[详情预热]",
+                mode_tag,
                 &target_uid,
                 &dl.url,
                 &dl.headers,
@@ -2215,13 +2353,13 @@ fn resolve_detail_prefetch(
                 &req.item_id,
                 &fname,
                 &target_acc.name,
-                "[详情预热]",
+                mode_tag,
                 ua,
                 &req.client_ip,
                 req.file_size,
                 false,
                 "prewarm",
-                &detail,
+                &final_detail,
             );
             return Ok(ResolveDecision {
                 handled: true,
@@ -2232,10 +2370,10 @@ fn resolve_detail_prefetch(
                 status_code: 302,
                 headers: dl.headers,
                 provider: target_acc.name,
-                mode_label: "[详情预热]".to_string(),
+                mode_label: mode_tag.to_string(),
                 cache_hit: false,
                 elapsed_ms: started.elapsed().as_millis() as u64,
-                reason: detail,
+                reason: final_detail,
             });
         }
     }
@@ -2477,7 +2615,9 @@ fn trigger_next_episode_prewarm(
         let Some(h) = HostClient::from_env() else {
             return;
         };
-        let Some(cur_ep) = cur_resolved.or_else(|| h.resolve_item_media(&cur_item_id, &cur_ms_id)) else {
+        let Some(cur_ep) =
+            cur_resolved.or_else(|| h.resolve_item_media(&cur_item_id, &cur_ms_id, ""))
+        else {
             return;
         };
         if !cur_ep.item_type.eq_ignore_ascii_case("episode") && cur_ep.episode <= 0 {
@@ -2493,19 +2633,14 @@ fn trigger_next_episode_prewarm(
         let Ok(mut bg_conn) = db::open_db(&dir_owned) else {
             return;
         };
-        let dev_part = if dev_id.is_empty() {
-            String::new()
-        } else {
-            format!("{dev_id}:")
-        };
-        let next_cache_key = format!(
-            "{}:{}:{}{}:N",
-            uname,
-            next_ep.pick_code.trim(),
-            dev_part,
-            md5_short8(&ua_owned)
-        );
-        if db::has_valid_cached_link(&bg_conn, &next_cache_key) {
+        let (next_cache_key, next_shared_key) =
+            build_link_cache_keys(&uname, next_ep.pick_code.trim(), &dev_id, &ua_owned);
+        if db::has_valid_cached_link_with_fallback(
+            &bg_conn,
+            &next_cache_key,
+            &next_shared_key,
+            PREFETCH_RENEW_THRESHOLD_SECS,
+        ) {
             return;
         }
 
@@ -2608,9 +2743,10 @@ fn trigger_next_episode_prewarm(
             } else {
                 dl.file_name.clone()
             };
-            db::put_cached_link(
+            put_cached_link_with_shared(
                 &bg_conn,
                 &next_cache_key,
+                &next_shared_key,
                 &next_ep.pick_code,
                 &target_acc.name,
                 "[下集预热]",

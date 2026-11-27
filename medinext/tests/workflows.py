@@ -184,6 +184,33 @@ def main():
                 return self._send_json(200, {"playbacks": active_playbacks})
             if self.path.startswith("/api/plugin/library/items/"):
                 item_part = self.path.split("/api/plugin/library/items/", 1)[1].split("?")[0]
+                if item_part == "movie_multi_ver":
+                    return self._send_json(
+                        200,
+                        {
+                            "item": {
+                                "id": "movie_multi_ver",
+                                "name": "MultiVersion.Movie",
+                                "item_type": "movie",
+                                "sources": [
+                                    {
+                                        "id": "ms_v1",
+                                        "name": "MultiVersion.4K.Remux.mkv",
+                                        "pick_code": "pcmultiver000001",
+                                        "sha1": "3333333333333333333333333333333333333333",
+                                        "size": 50 * 1024 * 1024 * 1024,
+                                    },
+                                    {
+                                        "id": "ms_v2",
+                                        "name": "MultiVersion.1080p.Sub.mkv",
+                                        "pick_code": "pcmultiver000002",
+                                        "sha1": "4444444444444444444444444444444444444444",
+                                        "size": 100 * 1024 * 1024,
+                                    },
+                                ],
+                            }
+                        },
+                    )
                 if item_part == "series_demo_tv":
                     return self._send_json(
                         200,
@@ -330,8 +357,9 @@ def main():
 
         # 1. Bootstrap & dashboard.json (verify enabled detection when "$enabled" is stripped from settings!)
         boot = run_action(binary, data_dir, "ui_bootstrap", {}, api_url=api_url)
-        assert boot["version"] == "2.1.1", boot["version"]
+        assert boot["version"] == "2.1.2", boot["version"]
         assert boot["engine"]["notify_playback"] is False, boot["engine"]
+        assert boot["engine"]["detail_prefetch_delay_ms"] == 0, boot["engine"]
         assert boot["host_status"]["plugin_enabled"] is True, boot["host_status"]
         assert boot["settings"]["$enabled"] is True, boot["settings"]
         assert boot["host_status"]["playback_hook_approved"] is True
@@ -500,7 +528,143 @@ def main():
             )
             assert code == 200 and dev_deny["status"] == "deny" and dev_deny["status_code"] == 403, dev_deny
 
-            # 4d. True Session Kick via `DELETE /api/media-service/sessions/:key`
+            # 4d. True Session Kick via `DELETE /api/media-service/sessions/:key` + verify device & shared cache invalidation
+            db_path = os.path.join(data_dir, "medinext.db")
+            import hashlib
+            ua_hash = hashlib.md5(b"Infuse-Direct/8.0").hexdigest()[:8]
+            now_sec = int(time.time())
+            db_conn = sqlite3.connect(db_path)
+            # Seed:
+            # 1) device-less shared key written by prefetch without device_id -> /resolve WITH device_id="tv-2" MUST HIT!
+            # 2) exact key for tv-1 (must survive when tv-2 is kicked)
+            # 3) near-expiry shared key (<300s) for end-of-episode Progress /prefetch renewal check
+            # 4) fresh shared key (>300s) for /prefetch cache-hit check
+            db_conn.execute(
+                "INSERT OR REPLACE INTO link_cache (cache_key, pickcode, provider, mode_label, uid, url, headers_json, file_name, item_id, created_at, expires_at, hit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                (
+                    f"alice:pcsharedcross001:{ua_hash}:N",
+                    "pcsharedcross001",
+                    "115-lb1",
+                    "[详情预热]",
+                    "80000002",
+                    "https://cdn.example.com/shared_cross_dev.mkv",
+                    "{}",
+                    "CrossDevice.mkv",
+                    "item_cross_1",
+                    now_sec,
+                    now_sec + 1500,
+                ),
+            )
+            db_conn.execute(
+                "INSERT OR REPLACE INTO link_cache (cache_key, pickcode, provider, mode_label, uid, url, headers_json, file_name, item_id, created_at, expires_at, hit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                (
+                    f"alice:pcsharedcross001:tv-1:{ua_hash}:N",
+                    "pcsharedcross001",
+                    "115-lb1",
+                    "[负载均衡]",
+                    "80000002",
+                    "https://cdn.example.com/tv1_kept.mkv",
+                    "{}",
+                    "CrossDevice.mkv",
+                    "item_cross_1",
+                    now_sec,
+                    now_sec + 1500,
+                ),
+            )
+            db_conn.execute(
+                "INSERT OR REPLACE INTO link_cache (cache_key, pickcode, provider, mode_label, uid, url, headers_json, file_name, item_id, created_at, expires_at, hit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                (
+                    f"alice:pcepisode0000002:{ua_hash}:N",
+                    "pcepisode0000002",
+                    "115-lb1",
+                    "[下集预热]",
+                    "80000002",
+                    "https://cdn.example.com/old_expiring_ep2.mkv",
+                    "{}",
+                    "Demo.TV.S01E02.mkv",
+                    "ep_demo_s01e02",
+                    now_sec - 1680,
+                    now_sec + 120,  # < 300s remaining -> must NOT return [详情预热·缓存]!
+                ),
+            )
+            db_conn.commit()
+            db_conn.close()
+
+            # Cross-entry device_id fallback: cached under device-less key, resolved WITH device_id="tv-2" -> instant 302 cache hit!
+            code, cross_hit = unix_http_request(
+                sock_path,
+                "POST",
+                "/resolve",
+                {
+                    "user_id": 10,
+                    "pick_code": "pcsharedcross001",
+                    "user_agent": "Infuse-Direct/8.0",
+                    "device_id": "tv-2",
+                },
+            )
+            assert code == 200 and cross_hit["status"] == "redirect" and cross_hit["cache_hit"] is True, cross_hit
+            assert cross_hit["url"] == "https://cdn.example.com/shared_cross_dev.mkv", cross_hit
+
+            # Multi-version PlaybackInfo prefetch: media_source_id=ms_v2 selects 100MB v2 (small-file pass), NOT 50GB v1!
+            code, mv_pre = unix_http_request(
+                sock_path,
+                "POST",
+                "/prefetch",
+                {
+                    "user_id": 10,
+                    "item_id": "movie_multi_ver",
+                    "media_source_id": "ms_v2",
+                    "pick_code": "pcmultiver000001",  # stale v1 pick_code must be overridden by explicit media_source_id=ms_v2!
+                    "user_agent": "Infuse-Direct/8.0",
+                    "device_id": "tv-2",
+                },
+            )
+            assert code == 200 and mv_pre["status"] == "pass" and "小文件" in mv_pre["reason"], mv_pre
+
+            # Multi-version /resolve with empty media_source_id + v2 pick_code_hint -> matches v2 (100MB small-file pass), NOT v1!
+            code, mv_res = unix_http_request(
+                sock_path,
+                "POST",
+                "/resolve",
+                {
+                    "user_id": 10,
+                    "item_id": "movie_multi_ver",
+                    "pick_code": "pcmultiver000002",
+                    "user_agent": "Infuse-Direct/8.0",
+                    "device_id": "tv-2",
+                },
+            )
+            assert code == 200 and mv_res["status"] == "pass" and "小文件" in mv_res["reason"], mv_res
+
+            # Near-expiry (<300s) Progress /prefetch for ep_demo_s01e02 MUST NOT return stale cache hit!
+            code, renew_pre = unix_http_request(
+                sock_path,
+                "POST",
+                "/prefetch",
+                {
+                    "user_id": 10,
+                    "item_id": "ep_demo_s01e02",
+                    "user_agent": "Infuse-Direct/8.0",
+                    "device_id": "tv-2",
+                },
+            )
+            assert code == 200 and renew_pre["cache_hit"] is False, renew_pre
+
+            # Fresh (>300s) /prefetch for pcsharedcross001 hits cache immediately!
+            code, fresh_pre = unix_http_request(
+                sock_path,
+                "POST",
+                "/prefetch",
+                {
+                    "user_id": 10,
+                    "pick_code": "pcsharedcross001",
+                    "file_size": 2 * 1024 * 1024 * 1024,
+                    "user_agent": "Infuse-Direct/8.0",
+                    "device_id": "tv-2",
+                },
+            )
+            assert code == 200 and fresh_pre["status"] == "redirect" and fresh_pre["cache_hit"] is True, fresh_pre
+
             kick_res = run_action(
                 binary,
                 data_dir,
@@ -510,6 +674,12 @@ def main():
             )
             assert "sess_alice_tv2" in kicked_keys, kicked_keys
             assert "12h" in kick_res["notice"], kick_res["notice"]
+            # Verify kick invalidated alice's device-less shared key while preserving tv-1's exact key!
+            db_conn = sqlite3.connect(db_path)
+            rem_keys = [r[0] for r in db_conn.execute("SELECT cache_key FROM link_cache").fetchall()]
+            db_conn.close()
+            assert f"alice:pcsharedcross001:{ua_hash}:N" not in rem_keys, rem_keys
+            assert f"alice:pcsharedcross001:tv-1:{ua_hash}:N" in rem_keys, rem_keys
 
             # 4e. Detail-Page Prefetch over Unix Socket `/prefetch` (Series item_id -> resolves S01E01 without adding active streams!)
             pre_notif_count = len(sent_notifications)

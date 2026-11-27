@@ -455,32 +455,13 @@ impl HostClient {
         Ok(())
     }
 
-    /// Resolves an `item_id` (+ optional `media_source_id`) into `(pick_code, sha1, file_size, item_name, episode info)`
+    /// Resolves an `item_id` (+ optional `media_source_id` / `pick_code_hint`) into `(pick_code, sha1, file_size, item_name, episode info)`
     /// via Mediary's local `/api/plugin/library/items/:id?provider=internal`.
-    pub fn resolve_item_media(&self, item_id: &str, media_source_id: &str) -> Option<ResolvedItemMedia> {
-        let id = item_id.trim();
-        if id.is_empty() {
-            return None;
-        }
-        let v = self
-            .call_json(
-                "GET",
-                &format!("/plugin/library/items/{id}"),
-                &[("provider", "internal")],
-                None,
-                4,
-            )
-            .ok()?;
-        let item = v.get("item").filter(|x| x.is_object()).unwrap_or(&v);
-        parse_item_to_media(id, item, media_source_id)
-    }
-
-    /// Resolves a detail-page `item_id` (Movie, Episode, Video, Series, or Season) into a playable media target.
-    /// When the user opens a Series or Season detail page, automatically locates the first episode (`S01E01`).
-    pub fn resolve_playable_for_detail(
+    pub fn resolve_item_media(
         &self,
         item_id: &str,
         media_source_id: &str,
+        pick_code_hint: &str,
     ) -> Option<ResolvedItemMedia> {
         let id = item_id.trim();
         if id.is_empty() {
@@ -496,7 +477,32 @@ impl HostClient {
             )
             .ok()?;
         let item = v.get("item").filter(|x| x.is_object()).unwrap_or(&v);
-        if let Some(direct) = parse_item_to_media(id, item, media_source_id) {
+        parse_item_to_media(id, item, media_source_id, pick_code_hint)
+    }
+
+    /// Resolves a detail-page `item_id` (Movie, Episode, Video, Series, or Season) into a playable media target.
+    /// When the user opens a Series or Season detail page, automatically locates the first episode (`S01E01`).
+    pub fn resolve_playable_for_detail(
+        &self,
+        item_id: &str,
+        media_source_id: &str,
+        pick_code_hint: &str,
+    ) -> Option<ResolvedItemMedia> {
+        let id = item_id.trim();
+        if id.is_empty() {
+            return None;
+        }
+        let v = self
+            .call_json(
+                "GET",
+                &format!("/plugin/library/items/{id}"),
+                &[("provider", "internal")],
+                None,
+                4,
+            )
+            .ok()?;
+        let item = v.get("item").filter(|x| x.is_object()).unwrap_or(&v);
+        if let Some(direct) = parse_item_to_media(id, item, media_source_id, pick_code_hint) {
             return Some(direct);
         }
 
@@ -547,7 +553,7 @@ impl HostClient {
         cands.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
         for (_, _, eid) in cands.into_iter().take(6) {
-            if let Some(ep_media) = self.resolve_item_media(&eid, "") {
+            if let Some(ep_media) = self.resolve_item_media(&eid, "", "") {
                 if item_type == "season" {
                     if ep_media.season_id == id || ep_media.season_id.is_empty() {
                         return Some(ep_media);
@@ -616,7 +622,7 @@ impl HostClient {
                     cands.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
                     for (_, _, eid) in cands.into_iter().take(4) {
-                        if let Some(ep_media) = self.resolve_item_media(&eid, "") {
+                        if let Some(ep_media) = self.resolve_item_media(&eid, "", "") {
                             if cur.series_id.is_empty()
                                 || ep_media.series_id.is_empty()
                                 || ep_media.series_id == cur.series_id
@@ -655,6 +661,7 @@ fn parse_item_to_media(
     id: &str,
     item: &Value,
     media_source_id: &str,
+    pick_code_hint: &str,
 ) -> Option<ResolvedItemMedia> {
     let item_name = item["name"].as_str().unwrap_or_default().to_string();
     let item_type = item["item_type"]
@@ -684,13 +691,50 @@ fn parse_item_to_media(
     let sources = item["sources"]
         .as_array()
         .or_else(|| item["versions"].as_array())?;
+    let ms_id = media_source_id.trim();
+    let pc_hint = pick_code_hint.trim();
+
+    let source_matches_ms = |s: &Value| -> bool {
+        if ms_id.is_empty() {
+            return false;
+        }
+        s["id"].as_str().map(str::trim) == Some(ms_id)
+            || s["source_id"].as_str().map(str::trim) == Some(ms_id)
+            || s["media_source_id"].as_str().map(str::trim) == Some(ms_id)
+            || s["id"].as_i64().map(|n| n.to_string()).as_deref() == Some(ms_id)
+            || s["source_id"].as_i64().map(|n| n.to_string()).as_deref() == Some(ms_id)
+    };
+    let source_matches_pc = |s: &Value| -> bool {
+        if pc_hint.is_empty() {
+            return false;
+        }
+        if let Some(p) = s["pick_code"]
+            .as_str()
+            .or_else(|| s["pickcode"].as_str())
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+        {
+            if p.eq_ignore_ascii_case(pc_hint) {
+                return true;
+            }
+        }
+        let sp = s["strm_path"]
+            .as_str()
+            .or_else(|| s["file_path"].as_str())
+            .unwrap_or_default();
+        if !sp.is_empty() {
+            let (pc_strm, _) = read_strm_if_local(sp);
+            if !pc_strm.is_empty() && pc_strm.eq_ignore_ascii_case(pc_hint) {
+                return true;
+            }
+        }
+        false
+    };
+
     let chosen = sources
         .iter()
-        .find(|s| {
-            !media_source_id.is_empty()
-                && (s["id"].as_str() == Some(media_source_id)
-                    || s["source_id"].as_str() == Some(media_source_id))
-        })
+        .find(|s| source_matches_ms(s))
+        .or_else(|| sources.iter().find(|s| source_matches_pc(s)))
         .or_else(|| sources.first())?;
 
     let strm_p = chosen["strm_path"]
@@ -928,5 +972,46 @@ mod tests {
         assert_eq!((n2.season, n2.episode), (2, 1));
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_parse_item_to_media_multi_version_matching() {
+        let item = json!({
+            "id": "movie_mv_1",
+            "name": "Demo Movie",
+            "item_type": "movie",
+            "sources": [
+                {
+                    "id": "ms_v1",
+                    "name": "Demo.4K.Remux.mkv",
+                    "pick_code": "pc_version_one",
+                    "sha1": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "size": 50_000_000_000u64
+                },
+                {
+                    "id": "ms_v2",
+                    "name": "Demo.1080p.Sub.mkv",
+                    "pick_code": "pc_version_two",
+                    "sha1": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                    "size": 8_000_000_000u64
+                }
+            ]
+        });
+
+        // 1. Explicit media_source_id selects v2
+        let m_by_ms = parse_item_to_media("movie_mv_1", &item, "ms_v2", "").unwrap();
+        assert_eq!(m_by_ms.pick_code, "pc_version_two");
+        assert_eq!(m_by_ms.sha1, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        assert_eq!(m_by_ms.file_size, 8_000_000_000u64);
+
+        // 2. Empty media_source_id with v2 pick_code_hint selects v2 (not sources.first()!)
+        let m_by_pc = parse_item_to_media("movie_mv_1", &item, "", "pc_version_two").unwrap();
+        assert_eq!(m_by_pc.pick_code, "pc_version_two");
+        assert_eq!(m_by_pc.sha1, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        assert_eq!(m_by_pc.item_name, "Demo.1080p.Sub.mkv");
+
+        // 3. Both empty falls back to sources.first()
+        let m_default = parse_item_to_media("movie_mv_1", &item, "", "").unwrap();
+        assert_eq!(m_default.pick_code, "pc_version_one");
     }
 }
