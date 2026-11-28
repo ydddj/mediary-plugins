@@ -4484,7 +4484,7 @@ pub fn retry_history_items(
         }
         let row = db
             .query_row(
-                "SELECT record_type, kind, title, sub_title, target_path, slot, action, status, detail
+                "SELECT record_type, kind, title, sub_title, source_path, target_path, slot, action, status, detail
                  FROM activity_logs WHERE id = ?",
                 [aid],
                 |r| {
@@ -4498,6 +4498,7 @@ pub fn retry_history_items(
                         r.get::<_, String>(6)?,
                         r.get::<_, String>(7)?,
                         r.get::<_, String>(8)?,
+                        r.get::<_, String>(9)?,
                     ))
                 },
             )
@@ -4507,6 +4508,7 @@ pub fn retry_history_items(
             kind,
             title,
             sub_title,
+            cur_source_path,
             cur_target_path,
             slot,
             action,
@@ -4530,7 +4532,7 @@ pub fn retry_history_items(
                             "DELETE FROM cursors WHERE key = ?",
                             [format!("staging_walk:{}", p.id)],
                         );
-                        let sr = scan_pipeline_ui(db, host, cfg, settings, p.id, 12)?;
+                        let sr = scan_pipeline_ui(db, host, cfg, settings, p.id, 60)?;
                         retried += 1;
                         if let Some(n) = sr["notice"].as_str() {
                             notices.push(n.to_string());
@@ -4954,6 +4956,59 @@ pub fn retry_history_items(
             } else if action == "organized" || s_state == "organized" {
                 let (archive_target_cid, archive_task_name, prefer_task_dir) =
                     resolve_archive_context(db, host, cfg, pid);
+
+                // Re-resolve from original `source_path` using the latest recognition rules/bindings
+                // so previously mis-identified items (e.g. `Episode 06.mkv` under `[1995][僵尸道长1]`)
+                // auto-correct their `media_type` / `tmdb_id` / `season` / `episode` on Retry!
+                let (src_rel_folder, src_filename) =
+                    split_source_rel_and_name(&cur_source_path, lookup_name);
+                let eff_rel = if !src_rel_folder.is_empty() {
+                    src_rel_folder.as_str()
+                } else {
+                    rel_path.as_str()
+                };
+                let eff_fname = if !src_filename.is_empty() {
+                    src_filename.as_str()
+                } else {
+                    lookup_name
+                };
+                let pipe_mt = pipeline_opt
+                    .as_ref()
+                    .map(|p| p.media_type.as_str())
+                    .unwrap_or("auto");
+
+                let mut eff_media_type = s_media_type.clone();
+                let mut eff_tmdb_id = s_tmdb_id.clone();
+                let mut eff_season = s_season;
+                let mut eff_episode = s_episode;
+                let mut eff_title = title.clone();
+                let mut eff_canon_title = String::new();
+                let mut identity_corrected = false;
+
+                if !eff_fname.is_empty() {
+                    if let Ok(ResolveOutcome::Matched(m)) =
+                        recognition.resolve(host, eff_fname, eff_rel, pipe_mt)
+                    {
+                        let (new_s, new_e) = m.episode.unwrap_or((0, 0));
+                        let changed = m.media_type != s_media_type
+                            || m.tmdb_id != s_tmdb_id
+                            || (m.media_type == "tv" && (new_s != s_season || new_e != s_episode));
+                        if changed {
+                            eff_media_type = m.media_type.clone();
+                            eff_tmdb_id = m.tmdb_id.clone();
+                            eff_season = new_s;
+                            eff_episode = new_e;
+                            eff_canon_title = m.title.clone();
+                            eff_title = if eff_media_type == "tv" && eff_episode > 0 {
+                                format!("{} S{:02}E{:02}", m.title, eff_season.max(1), eff_episode)
+                            } else {
+                                m.title.clone()
+                            };
+                            identity_corrected = true;
+                        }
+                    }
+                }
+
                 // Target-directory in-place re-organize using latest Mediary secondary category & rename templates!
                 if let Some((target_dir_cid, live_file, dir_files)) =
                     locate_archived_in_target_library(
@@ -4968,6 +5023,14 @@ pub fn retry_history_items(
                         s_episode,
                         &cur_target_path,
                     )
+                    .or_else(|| {
+                        locate_by_target_stem_fallback(
+                            host,
+                            cfg,
+                            archive_target_cid.as_deref(),
+                            &cur_target_path,
+                        )
+                    })
                 {
                     if !live_file.pick_code.is_empty() {
                         // Fast non-blocking cache check (2.5s max) so we don't burn 15s of the 45s UI budget!
@@ -4981,8 +5044,8 @@ pub fn retry_history_items(
                         size: live_file.size,
                         sha1: live_file.sha1.clone(),
                         pick_code: live_file.pick_code.clone(),
-                        season: s_season,
-                        episode: s_episode,
+                        season: eff_season,
+                        episode: eff_episode,
                     }];
                     if !v_stem.is_empty() {
                         for sub in dir_files {
@@ -4997,33 +5060,50 @@ pub fn retry_history_items(
                                     size: sub.size,
                                     sha1: sub.sha1,
                                     pick_code: sub.pick_code,
-                                    season: s_season,
-                                    episode: s_episode,
+                                    season: eff_season,
+                                    episode: eff_episode,
                                 });
                             }
                         }
                     }
 
-                    let resp = host.open115_organize_files_with_timeout(
+                    let resp = match host.open115_organize_files_with_timeout(
                         &target_dir_cid,
                         archive_target_cid.as_deref(),
                         archive_task_name.as_deref(),
                         prefer_task_dir,
-                        &s_media_type,
-                        &s_tmdb_id,
+                        &eff_media_type,
+                        &eff_tmdb_id,
                         &org_batch,
                         36,
-                    )?;
+                    ) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            let err_txt = format!("{err:#}");
+                            if notices.len() < 5 {
+                                if err_txt.contains("该目录名称已存在")
+                                    || err_txt.contains("failed_files")
+                                {
+                                    notices.push(format!(
+                                        "《{eff_title}》原地重整跳过（宿主提示目标目录冲突或无需移动；若识别有误请点「自定义」指定正确 TMDB ID）"
+                                    ));
+                                } else {
+                                    notices.push(format!("《{eff_title}》重整失败：{err_txt}"));
+                                }
+                            }
+                            continue;
+                        }
+                    };
                     let new_target = resolve_organized_target_path(
                         host,
                         &resp,
                         &live_file.file_id,
                         &live_file.pick_code,
                         &live_file.name,
-                        &s_media_type,
-                        &s_tmdb_id,
-                        s_season,
-                        s_episode,
+                        &eff_media_type,
+                        &eff_tmdb_id,
+                        eff_season,
+                        eff_episode,
                         &cur_target_path,
                     );
                     let final_target = if !new_target.is_empty() {
@@ -5047,6 +5127,12 @@ pub fn retry_history_items(
                                 &s_media_type,
                                 &[&cur_target_path],
                             )
+                            .or_else(|| {
+                                category::locate(&cfg.host_sync.categories, "movie", &[&cur_target_path])
+                            })
+                            .or_else(|| {
+                                category::locate(&cfg.host_sync.categories, "tv", &[&cur_target_path])
+                            })
                             .map(|c| c.split('/').filter(|s| !s.is_empty()).count())
                             .unwrap_or(0);
                             if cat_depth > 0 && old_segs.len() > cat_depth {
@@ -5080,7 +5166,7 @@ pub fn retry_history_items(
                     let mut eff_slot_label = slot.clone();
                     if let Some(cat) = category::locate(
                         &cfg.host_sync.categories,
-                        &s_media_type,
+                        &eff_media_type,
                         &[&final_target],
                     ) {
                         eff_slot_label = if !s_slot.trim().is_empty() {
@@ -5096,20 +5182,48 @@ pub fn retry_history_items(
                     } else {
                         String::new()
                     };
-                    let updated_detail = if preserved_reason.is_empty() {
-                        "已从媒体库目标目录按最新命名模板重新整理并刷新 STRM".to_string()
+                    let lead_msg = if identity_corrected {
+                        format!(
+                            "已按最新识别结果纠正并重新整理（{eff_media_type} · tmdbid={eff_tmdb_id}）"
+                        )
                     } else {
-                        format!("已从媒体库目标目录按最新命名模板重新整理并刷新 STRM · {preserved_reason}")
+                        "已从媒体库目标目录按最新命名模板重新整理并刷新 STRM".to_string()
                     };
+                    let updated_detail = if preserved_reason.is_empty() {
+                        lead_msg
+                    } else {
+                        format!("{lead_msg} · {preserved_reason}")
+                    };
+                    let now = now_ts();
+                    if identity_corrected {
+                        let _ = db.execute(
+                            "UPDATE staging_items
+                                SET media_type = ?1, tmdb_id = ?2, title = ?3, season = ?4, episode = ?5, updated_at = ?6
+                              WHERE id = ?7",
+                            params![
+                                eff_media_type,
+                                eff_tmdb_id,
+                                if eff_canon_title.is_empty() { &eff_title } else { &eff_canon_title },
+                                eff_season,
+                                eff_episode,
+                                now,
+                                s_id
+                            ],
+                        );
+                    }
                     db.execute(
                         "UPDATE activity_logs
-                            SET target_path = ?, slot = ?, detail = ?, status = 'done', created_at = ?
+                            SET title = ?, target_path = ?, slot = ?, detail = ?, status = 'done', created_at = ?
                           WHERE id = ?",
-                        params![final_target, eff_slot_label, updated_detail, now_ts(), aid],
+                        params![eff_title, final_target, eff_slot_label, updated_detail, now, aid],
                     )?;
                     retried += 1;
                     if notices.len() < 4 {
-                        notices.push(format!("《{title}》已从媒体库目标目录按最新模板重新整理"));
+                        notices.push(if identity_corrected {
+                            format!("《{eff_title}》已纠正为 {eff_media_type}:{eff_tmdb_id} 并重新整理")
+                        } else {
+                            format!("《{eff_title}》已从媒体库目标目录按最新模板重新整理")
+                        });
                     }
                 } else {
                     // Fallback: check if user manually moved it back into `待洗版`!

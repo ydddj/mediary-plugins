@@ -35,7 +35,7 @@
     {
       "id": "mediwash",
       "name": "MediWash 归档入库与权重洗版",
-      "version": "3.2.3",
+      "version": "3.2.4",
       "description": "115 单目录权重洗版与原生归档插件：支持双引擎打分、流媒体识别、自动删旧与 PT 升级。",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/mediwash",
@@ -63,9 +63,9 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/mediwash-3.2.3-linux-amd64.tar.gz",
-          "sha256": "9e20fded93426656feff36b31d8bc42affc9b06ab42a02d1c05a1189d6bd6e9f",
-          "size": 4322724
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/mediwash-3.2.4-linux-amd64.tar.gz",
+          "sha256": "804f4f26518d610a275976c2fe8d2e1c9e5f0762da3ab8be593f8be31da5a4a5",
+          "size": 4325702
         }
       }
     },
