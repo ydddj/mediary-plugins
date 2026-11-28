@@ -914,7 +914,17 @@ fn evaluate_staging_file(
         }
     };
 
-    evaluate_staging_with_identity(host, cfg, pipeline, file, rel_dir, wait_probe, rec, false)
+    evaluate_staging_with_identity(
+        host,
+        cfg,
+        pipeline,
+        file,
+        rel_dir,
+        wait_probe,
+        rec,
+        false,
+        false,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -927,6 +937,7 @@ fn evaluate_staging_with_identity(
     wait_probe: bool,
     rec: RecognizedMedia,
     ignore_self_in_lib: bool,
+    fallback_on_probing: bool,
 ) -> StagingEval {
     let mut out = StagingEval {
         media_type: String::new(),
@@ -1186,11 +1197,13 @@ fn evaluate_staging_with_identity(
                 probe_cached = info.cached;
             }
             Ok(info) if matches!(info.status.as_str(), "pending" | "probing" | "queued") => {
-                out.verdict = "probing".to_string();
-                out.reason = "115 远程 MediaInfo 正在后台排队探测（1.25s 节流队列），下轮自动复检".to_string();
-                return out;
+                if !fallback_on_probing {
+                    out.verdict = "probing".to_string();
+                    out.reason = "115 远程 MediaInfo 正在后台排队探测（1.25s 节流队列），下轮自动复检".to_string();
+                    return out;
+                }
             }
-            Ok(_) | Err(_) if pipeline.probe_mode == "always" => {
+            Ok(_) | Err(_) if pipeline.probe_mode == "always" && !fallback_on_probing => {
                 out.verdict = "review".to_string();
                 out.reason = "115 MediaInfo 探测未返回有效流数据，留待复核".to_string();
                 return out;
@@ -4434,13 +4447,19 @@ fn locate_archived_in_target_library(
         }
     }
 
-    // Fallback: direct target root bucket (e.g. flat library bucket without nested category subfolders)
+    // Fallback: quick 1-page check on target root bucket (never scan 30 pages of root category folders)
     for &root_cid in &root_cids {
         if tried_cids.insert(root_cid.to_string()) {
-            if let Ok(Some((hit, files))) =
-                host.open115_find_file_in_cid_ext(root_cid, file_id, &discovered_pick_code)
-            {
-                return Some((root_cid.to_string(), hit, files));
+            if let Ok(page) = host.open115_list_page(root_cid, 0, 200, true) {
+                let files: Vec<Cloud115File> =
+                    page.items.into_iter().filter(|f| !f.is_dir).collect();
+                if let Some(hit) = files.iter().find(|f| {
+                    (!file_id.is_empty() && f.file_id == file_id)
+                        || (!discovered_pick_code.is_empty()
+                            && f.pick_code.eq_ignore_ascii_case(&discovered_pick_code))
+                }) {
+                    return Some((root_cid.to_string(), hit.clone(), files));
+                }
             }
         }
     }
@@ -5084,11 +5103,11 @@ pub fn retry_history_items(
                         }
                     }
 
-                    // When re-identification switched to a different TMDB/media identity, run full weight-wash
-                    // scoring against existing same-slot versions in the target library!
+                    // When re-identification switched to a different TMDB/media identity, run fast non-blocking
+                    // weight-wash scoring (cache probe + filename fallback, never blocking 15s on UI!)
                     let mut wash_eval_opt: Option<StagingEval> = None;
                     if identity_corrected {
-                        let mut eff_pipe = pipeline_opt
+                        let eff_pipe = pipeline_opt
                             .clone()
                             .or_else(|| cfg.pipelines.first().cloned())
                             .unwrap_or_default();
@@ -5113,8 +5132,9 @@ pub fn retry_history_items(
                                 &eff_pipe,
                                 &live_file,
                                 eff_rel,
-                                true,
+                                false,
                                 rec_for_eval,
+                                true,
                                 true,
                             );
                             wash_eval_opt = Some(ev);
@@ -5228,6 +5248,9 @@ pub fn retry_history_items(
                         });
                     }
 
+                    let org_timeout = 28u64
+                        .saturating_sub(retry_clock.elapsed().as_secs())
+                        .clamp(10, 24);
                     let resp = match host.open115_organize_files_with_timeout(
                         &target_dir_cid,
                         archive_target_cid.as_deref(),
@@ -5236,7 +5259,7 @@ pub fn retry_history_items(
                         &eff_media_type,
                         &eff_tmdb_id,
                         &org_batch,
-                        36,
+                        org_timeout,
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -5329,7 +5352,9 @@ pub fn retry_history_items(
                                 &eff_title,
                                 now,
                             );
-                            let _ = reconcile_ledger(db, host, cfg, settings);
+                            if retry_clock.elapsed() < Duration::from_secs(18) {
+                                let _ = reconcile_ledger(db, host, cfg, settings);
+                            }
                         }
                     }
                     if identity_corrected {
@@ -5816,7 +5841,7 @@ pub fn custom_reorganize_history_items(
     let custom_task_name = req.task_name.trim();
 
     let clock = Instant::now();
-    let soft_budget_secs: u64 = 22;
+    let soft_budget_secs: u64 = 12;
     let mut staging_dir_cache: BTreeMap<String, Vec<Cloud115File>> = BTreeMap::new();
     let mut reorganized = 0usize;
     let mut recycled = 0usize;
@@ -6165,8 +6190,9 @@ pub fn custom_reorganize_history_items(
                 &eff_pipe,
                 &live_file,
                 &src_rel_folder,
-                true,
+                false,
                 rec,
+                true,
                 true,
             ))
         } else {
@@ -6296,6 +6322,9 @@ pub fn custom_reorganize_history_items(
             });
         }
 
+        let org_timeout = 28u64
+            .saturating_sub(clock.elapsed().as_secs())
+            .clamp(10, 24);
         let resp = match host.open115_organize_files_with_timeout(
             &live_parent_cid,
             eff_target_cid.as_deref(),
@@ -6304,7 +6333,7 @@ pub fn custom_reorganize_history_items(
             &media_type,
             &tmdb_id,
             &org_batch,
-            38,
+            org_timeout,
         ) {
             Ok(v) => v,
             Err(err) => {
@@ -6442,7 +6471,7 @@ pub fn custom_reorganize_history_items(
         reorganized += 1;
     }
 
-    if upgraded > 0 {
+    if upgraded > 0 && clock.elapsed() < Duration::from_secs(18) {
         let _ = reconcile_ledger(db, host, cfg, settings);
     }
 

@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "mediwash",
   "name": "MediWash 归档入库与权重洗版",
-  "version": "3.2.5",
+  "version": "3.2.6",
   "min_mediary_version": "3.4.6",
   "description": "115 单目录权重洗版与原生归档插件：支持双引擎打分、流媒体识别、自动删旧与 PT 升级。",
   "action_runtime": {

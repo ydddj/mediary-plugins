@@ -374,6 +374,8 @@ pub struct HostClient {
     token: String,
     agent: ureq::Agent,
     tmdb_resolve_cache: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
+    subpath_cid_cache:
+        std::cell::RefCell<std::collections::HashMap<(String, String), Option<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +414,7 @@ impl HostClient {
             token: token.trim().to_string(),
             agent,
             tmdb_resolve_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+            subpath_cid_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         })
     }
 
@@ -981,6 +984,8 @@ impl HostClient {
 
     /// Resolves a nested directory path (`segments`, e.g. `["电视剧", "日韩剧", "2020-2030", "剧名", "Season 01"]`)
     /// starting from `root_cid` (e.g. `transfer_target_cid` `媒体库`) to its final 115 folder CID.
+    /// Caches every directory seen on each listed page in-memory for the lifetime of this `HostClient`
+    /// so repeated sibling/parent lookups (locate + prune + batch retry) complete in 0ms!
     pub fn open115_resolve_subpath_cid(
         &self,
         root_cid: &str,
@@ -995,10 +1000,34 @@ impl HostClient {
             if want.is_empty() {
                 continue;
             }
+            let cache_key = (cur.clone(), want.to_string());
+            if let Some(cached) = self.subpath_cid_cache.borrow().get(&cache_key).cloned() {
+                match cached {
+                    Some(c) if !c.is_empty() => {
+                        cur = c;
+                        continue;
+                    }
+                    _ => return Ok(None),
+                }
+            }
             let mut offset = 0usize;
             let mut next_cid = None;
             for _ in 0..20 {
                 let page = self.open115_list_page(&cur, offset, 1000, true)?;
+                {
+                    let mut cache = self.subpath_cid_cache.borrow_mut();
+                    for it in &page.items {
+                        if it.is_dir && !it.file_id.is_empty() {
+                            let dname = it.name.trim();
+                            if !dname.is_empty() {
+                                cache.insert(
+                                    (cur.clone(), dname.to_string()),
+                                    Some(it.file_id.clone()),
+                                );
+                            }
+                        }
+                    }
+                }
                 if let Some(dir) = page.items.iter().find(|it| it.is_dir && it.name.trim() == want) {
                     next_cid = Some(dir.file_id.clone());
                     break;
@@ -1007,6 +1036,9 @@ impl HostClient {
                 if page.items.is_empty() || offset >= page.count {
                     break;
                 }
+            }
+            if next_cid.is_none() {
+                self.subpath_cid_cache.borrow_mut().insert(cache_key, None);
             }
             match next_cid {
                 Some(c) if !c.is_empty() => cur = c,
