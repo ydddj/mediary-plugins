@@ -4,8 +4,8 @@
     {
       "id": "medifind",
       "name": "MediFind 网盘聚合引擎",
-      "version": "3.2.4",
-      "description": "面向 Mediary 3.4.6/3.4.8+ 的 Rust 上游找片与转存进货引擎：原生接入宿主参数化 TMDB 发现与同源海报代理、分季已入库集号比对、确定性库诊断、Mediary 3.4.8 流媒体平台 web_source 与结构化搜索规格徽章、115 分享与 ED2K/Magnet 指定目录离线进货，支持影巢中转/HDHive、Telegram MTProto 频道订阅、AYClub、RSS 与 NextFind 同款权重打分",
+      "version": "3.2.5",
+      "description": "聚合TG、影巢、AYClub与RSS多源搜片，支持订阅自动追更、115精准选集转存与离线进货。",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/medifind",
       "source": "https://github.com/ydddj/mediary-plugins",
@@ -26,9 +26,9 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/medifind-3.2.4-linux-amd64.tar.gz",
-          "sha256": "5b23e70aea8a0a2db5b2b54947027861391628f0d37fbd3404073a199cb697b7",
-          "size": 6044893
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/medifind-3.2.5-linux-amd64.tar.gz",
+          "sha256": "ba032270b6f3b9c265afdbbffecf794efe9d9d0cf12b35006baea6c6f91cb953",
+          "size": 6042281
         }
       }
     },

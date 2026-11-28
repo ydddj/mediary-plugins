@@ -1,4 +1,4 @@
-# MediFind 网盘聚合引擎 (v3.2.4)
+# MediFind 网盘聚合引擎 (v3.2.5)
 
 面向 **Mediary 3.4.6 / 3.4.8+** 的 Rust 插件（`rusqlite` WAL 索引存储 + 纯 `action_runtime` 零常驻进程）。承担三段式媒体流水线（`medifind` 找片进货 → `mediwash` 守门整理洗版 → `medinext` 302 播放负载）中的**上游找片与转存进货**职责，同时挂载进 Mediary 原生「资源搜索」与独立可视化工作台。
 

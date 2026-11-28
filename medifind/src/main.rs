@@ -514,6 +514,8 @@ fn run() -> Result<()> {
                 cfg.notifications = nc;
             }
 
+            let hdhive_key_unchanged = req.hdhive.api_key == SECRET_MASK
+                || req.hdhive.api_key.trim() == cfg.hdhive.api_key.trim();
             if req.hdhive.api_key == SECRET_MASK {
                 req.hdhive.api_key = cfg.hdhive.api_key.clone();
             }
@@ -529,6 +531,11 @@ fn run() -> Result<()> {
                 .hdhive
                 .base_url
                 .eq_ignore_ascii_case(cfg.hdhive.base_url.trim().trim_end_matches('/'));
+            req.hdhive.access_expire_at = if same_hd_base && hdhive_key_unchanged {
+                cfg.hdhive.access_expire_at
+            } else {
+                0
+            };
             req.hdhive.protocol = if same_hd_base {
                 cfg.hdhive.protocol.clone()
             } else {

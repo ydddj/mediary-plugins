@@ -474,11 +474,12 @@ pub fn search_hdhive(
 
         if st == 404 {
             cfg.hdhive.protocol = "official".into();
-            return search_hdhive_official_http(&agent, &base, &token, tmdb_id.trim(), mtype, season_totals);
+            search_hdhive_official_http(&agent, &base, &token, tmdb_id.trim(), mtype, season_totals)?
+        } else {
+            ensure!(st == 200, "影巢中转搜索返回 HTTP {}", st);
+            cfg.hdhive.protocol = "relay".into();
+            parse_relay_resources_json(&raw, tmdb_id.trim(), mtype, Some(season_totals))?
         }
-        ensure!(st == 200, "影巢中转搜索返回 HTTP {}", st);
-        cfg.hdhive.protocol = "relay".into();
-        parse_relay_resources_json(&raw, tmdb_id.trim(), mtype, Some(season_totals))?
     } else {
         match search_hdhive_official_http(&agent, &base, &token, tmdb_id.trim(), mtype, season_totals) {
             Ok(list) => {
@@ -777,6 +778,17 @@ pub fn parse_hdhive_resources_json(
     Ok(out)
 }
 
+fn strip_hdhive_resource_prefix(raw: &str) -> &str {
+    let no_relay = raw.trim().strip_prefix("relay://").unwrap_or(raw.trim());
+    let no_type = no_relay
+        .strip_prefix("movie:")
+        .or_else(|| no_relay.strip_prefix("tv:"))
+        .unwrap_or(no_relay);
+    no_type
+        .trim_start_matches("hdhive://")
+        .trim_start_matches("radar://")
+}
+
 pub fn unlock_hdhive(
     db: &Db,
     cfg: &mut AppConfig,
@@ -796,15 +808,7 @@ pub fn unlock_hdhive(
         }
     }
 
-    let raw_without_type = raw
-        .strip_prefix("relay://")
-        .unwrap_or(raw)
-        .strip_prefix("movie:")
-        .or_else(|| raw.strip_prefix("tv:"))
-        .unwrap_or(raw);
-    let raw_clean = raw_without_type
-        .trim_start_matches("hdhive://")
-        .trim_start_matches("radar://");
+    let raw_clean = strip_hdhive_resource_prefix(raw);
     let (sc0, rc0) = rules::parse_115_share(raw_clean, "");
     if !sc0.is_empty() && raw_clean.to_lowercase().contains("115") {
         let url = rules::format_115_share_url(&sc0, &rc0);
@@ -2228,5 +2232,22 @@ mod tests {
         assert_eq!(hd_items.len(), 1);
         assert_eq!(hd_items[0].slug, "hdhive://abc123slug");
         assert_eq!(hd_items[0].unlock_points, 2);
+
+        assert_eq!(
+            strip_hdhive_resource_prefix("relay://tv:hdhive://abc123"),
+            "abc123"
+        );
+        assert_eq!(
+            strip_hdhive_resource_prefix("relay://movie:https://115.com/s/sw123?password=abcd"),
+            "https://115.com/s/sw123?password=abcd"
+        );
+        assert_eq!(
+            strip_hdhive_resource_prefix("relay://hdhive://xyz789"),
+            "xyz789"
+        );
+        assert_eq!(
+            strip_hdhive_resource_prefix("movie:radar://r001"),
+            "r001"
+        );
     }
 }

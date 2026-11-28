@@ -450,23 +450,45 @@ impl Db {
         let tid = tmdb_id.trim();
         let mut out = Vec::new();
 
-        let sql = "SELECT channel_norm, tmdb_id, search_blob, payload FROM tg_items ORDER BY seq DESC LIMIT 800";
+        let sql = if !tid.is_empty() && kw.is_empty() {
+            "SELECT channel_norm, tmdb_id, search_blob, payload FROM tg_items WHERE tmdb_id = ?1 ORDER BY seq DESC LIMIT 400"
+        } else if !tid.is_empty() {
+            "SELECT channel_norm, tmdb_id, search_blob, payload FROM tg_items WHERE tmdb_id = ?1 OR instr(search_blob, ?2) > 0 ORDER BY seq DESC LIMIT 600"
+        } else if !kw.is_empty() {
+            "SELECT channel_norm, tmdb_id, search_blob, payload FROM tg_items WHERE instr(search_blob, ?1) > 0 ORDER BY seq DESC LIMIT 600"
+        } else {
+            "SELECT channel_norm, tmdb_id, search_blob, payload FROM tg_items ORDER BY seq DESC LIMIT 400"
+        };
         let Ok(mut stmt) = self.conn.prepare(sql) else {
             return out;
         };
-        let Ok(rows) = stmt.query_map([], |r| {
+        let map_row = |r: &rusqlite::Row<'_>| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?,
             ))
-        }) else {
-            return out;
+        };
+        let rows: Vec<(String, String, String, String)> = if !tid.is_empty() && kw.is_empty() {
+            stmt.query_map(params![tid], map_row)
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default()
+        } else if !tid.is_empty() {
+            stmt.query_map(params![tid, kw], map_row)
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default()
+        } else if !kw.is_empty() {
+            stmt.query_map(params![kw], map_row)
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default()
+        } else {
+            stmt.query_map([], map_row)
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default()
         };
 
-        for row in rows.flatten() {
-            let (ch_norm, row_tid, blob, payload) = row;
+        for (ch_norm, row_tid, blob, payload) in rows {
             if excluded_channels.contains(&ch_norm) {
                 continue;
             }
@@ -483,6 +505,9 @@ impl Db {
                         item.channel_id = ch_norm;
                     }
                     out.push(item);
+                    if out.len() >= 400 {
+                        break;
+                    }
                 }
             }
         }
@@ -660,6 +685,10 @@ impl Db {
             return;
         }
         let now = chrono::Utc::now().timestamp();
+        let _ = self.conn.execute(
+            "DELETE FROM in_flight_locks WHERE ts < ?1",
+            params![now - 86400 * 2],
+        );
         let _ = self.conn.execute(
             "INSERT OR REPLACE INTO in_flight_locks (lock_key, ts) VALUES (?1, ?2)",
             params![key, now],
@@ -1263,6 +1292,38 @@ mod tests {
         assert!(!db.is_slug_transferred("115:sw888888"));
         assert!(!db.is_in_flight("tv:12345:S02E01", 3600));
         assert_eq!(db.record_counts(), (0, 1));
+
+        // Verify search_tg_cache searches full cache beyond 800 rows by tmdb_id and keyword
+        let old_target = vec![ResourceItem {
+            slug: "https://115.com/s/swoldtarget01?password=abcd".into(),
+            clean_slug: "115:swoldtarget01".into(),
+            title: "远古经典剧集".into(),
+            tmdb_id: "987654".into(),
+            media_type: "tv".into(),
+            source_type: "telegram".into(),
+            ..Default::default()
+        }];
+        db.insert_tg_items_with_channel(&old_target, "lsp115").unwrap();
+        let mut bulk_tg = Vec::with_capacity(850);
+        for i in 0..850 {
+            bulk_tg.push(ResourceItem {
+                slug: format!("https://115.com/s/swfill{:06}?password=1234", i),
+                clean_slug: format!("115:swfill{:06}", i),
+                title: format!("填充片名 {}", i),
+                tmdb_id: format!("{}", 100000 + i),
+                media_type: "movie".into(),
+                source_type: "telegram".into(),
+                ..Default::default()
+            });
+        }
+        db.insert_tg_items_with_channel(&bulk_tg, "lsp115").unwrap();
+        let empty_excl = HashSet::new();
+        let by_tid = db.search_tg_cache("", "987654", &empty_excl);
+        assert_eq!(by_tid.len(), 1);
+        assert_eq!(by_tid[0].clean_slug, "115:swoldtarget01");
+        let by_kw = db.search_tg_cache("远古经典", "", &empty_excl);
+        assert_eq!(by_kw.len(), 1);
+        assert_eq!(by_kw[0].tmdb_id, "987654");
 
         let _ = fs::remove_dir_all(&dir);
     }

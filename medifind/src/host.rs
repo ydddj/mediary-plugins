@@ -721,13 +721,9 @@ impl HostClient {
     }
 
     pub fn get_tmdb_details(&self, tmdb_id: &str, media_type: &str) -> Result<TMDBDetails> {
-        let primary_mt = if media_type.trim().eq_ignore_ascii_case("tv") {
-            "tv"
-        } else {
-            "movie"
-        };
-        let fallback_mt = if primary_mt == "tv" { "movie" } else { "tv" };
-        for (idx, mt) in [primary_mt, fallback_mt].into_iter().enumerate() {
+        let candidates = tmdb_detail_candidate_types(media_type);
+        let last_idx = candidates.len().saturating_sub(1);
+        for (idx, mt) in candidates.iter().copied().enumerate() {
             let res = self.call_raw(
                 "GET",
                 "/search/tmdb/details",
@@ -748,7 +744,7 @@ impl HostClient {
                         }
                     }
                 }
-                Err(e) if idx == 1 => return Err(e),
+                Err(e) if idx == last_idx => return Err(e),
                 Err(_) => continue,
             }
         }
@@ -1183,7 +1179,15 @@ pub fn decode_tmdb_resolve_raw(raw: &str) -> Result<TMDBMediaItem> {
     Ok(serde_json::from_value(v)?)
 }
 
-pub fn decode_tmdb_details_raw(raw: &str) -> Result<TMDBDetails> {
+pub fn tmdb_detail_candidate_types(media_type: &str) -> &'static [&'static str] {
+    match media_type.trim().to_ascii_lowercase().as_str() {
+        "tv" | "series" => &["tv"],
+        "movie" => &["movie"],
+        _ => &["movie", "tv"],
+    }
+}
+
+fn decode_tmdb_details_raw(raw: &str) -> Result<TMDBDetails> {
     let v: Value = serde_json::from_str(raw)?;
     for key in ["details", "data", "item"] {
         if let Some(inner) = v.get(key).filter(|x| x.is_object()) {
@@ -1274,5 +1278,11 @@ mod tests {
             tmdb_card_image_https(&det.backdrop_path, &det.poster_path).as_deref(),
             Some("https://image.tmdb.org/t/p/w780/xPw16NMyAtgwub5Du8j3ByAqPxV.jpg")
         );
+
+        assert_eq!(tmdb_detail_candidate_types("tv"), &["tv"]);
+        assert_eq!(tmdb_detail_candidate_types("series"), &["tv"]);
+        assert_eq!(tmdb_detail_candidate_types("movie"), &["movie"]);
+        assert_eq!(tmdb_detail_candidate_types(""), &["movie", "tv"]);
+        assert_eq!(tmdb_detail_candidate_types("all"), &["movie", "tv"]);
     }
 }

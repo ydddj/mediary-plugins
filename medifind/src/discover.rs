@@ -750,24 +750,26 @@ fn discover_objective_troubleshoot(
         if !has_post_filters && items.len() >= page_size {
             break;
         }
-        if detail_budget > 0 {
-            if let Some(det) = cached_tmdb_details(host, db, &tid, &mt) {
+        if let Some((det, used_net)) =
+            cached_tmdb_details_with_budget(host, db, &tid, &mt, detail_budget > 0)
+        {
+            if used_net {
                 detail_budget = detail_budget.saturating_sub(1);
-                if !det.id.is_empty() {
-                    let media_item = det.to_media_item(&mt);
-                    if matches_all_metadata_filters(
-                        &media_item,
-                        eff_type,
-                        region,
-                        year,
-                        genre,
-                        sort,
-                        query,
-                    ) {
-                        items.push(media_item);
-                    }
-                    continue;
+            }
+            if !det.id.is_empty() {
+                let media_item = det.to_media_item(&mt);
+                if matches_all_metadata_filters(
+                    &media_item,
+                    eff_type,
+                    region,
+                    year,
+                    genre,
+                    sort,
+                    query,
+                ) {
+                    items.push(media_item);
                 }
+                continue;
             }
         }
         let fallback_item = TMDBMediaItem {
@@ -920,6 +922,7 @@ fn discover_by_tg_channel(
     let mut direct_cards: Vec<Value> = Vec::new();
     let mut seen_tmdb = HashSet::new();
     let mut seen_titles = HashSet::new();
+    let mut detail_budget = 24usize;
     let mut network_resolves = 0usize;
 
     for r in tg_rows {
@@ -937,7 +940,16 @@ fn discover_by_tg_channel(
         if !r.tmdb_id.trim().is_empty() {
             let key = format!("{}:{}", mt, r.tmdb_id.trim());
             if seen_tmdb.insert(key) {
-                if let Some(det) = cached_tmdb_details(host, db, r.tmdb_id.trim(), mt) {
+                if let Some((det, used_net)) = cached_tmdb_details_with_budget(
+                    host,
+                    db,
+                    r.tmdb_id.trim(),
+                    mt,
+                    detail_budget > 0,
+                ) {
+                    if used_net {
+                        detail_budget = detail_budget.saturating_sub(1);
+                    }
                     if !det.id.is_empty() {
                         resolved_items.push(det.to_media_item(mt));
                         continue;
@@ -1101,9 +1113,13 @@ fn collect_local_status_items(
         if eff_type != "all" && eff_type != mt {
             continue;
         }
-        if !tid.is_empty() && detail_budget > 0 {
-            if let Some(det) = cached_tmdb_details(host, db, &tid, &mt) {
-                detail_budget = detail_budget.saturating_sub(1);
+        if !tid.is_empty() {
+            if let Some((det, used_net)) =
+                cached_tmdb_details_with_budget(host, db, &tid, &mt, detail_budget > 0)
+            {
+                if used_net {
+                    detail_budget = detail_budget.saturating_sub(1);
+                }
                 if !det.id.is_empty() {
                     let it = det.to_media_item(&mt);
                     if matches_all_metadata_filters(&it, eff_type, region, year, genre, sort, query)
@@ -1135,12 +1151,13 @@ fn collect_local_status_items(
     out
 }
 
-fn cached_tmdb_details(
+fn cached_tmdb_details_with_budget(
     host: &HostClient,
     db: &Db,
     tmdb_id: &str,
     mtype: &str,
-) -> Option<TMDBDetails> {
+    allow_network: bool,
+) -> Option<(TMDBDetails, bool)> {
     let tid = tmdb_id.trim();
     if tid.is_empty() {
         return None;
@@ -1148,14 +1165,26 @@ fn cached_tmdb_details(
     let key = format!("tmdb_det:{}:{}", mtype, tid);
     if let Some(val) = db.get_json_cache(&key, 7 * 86400) {
         if let Ok(det) = serde_json::from_value::<TMDBDetails>(val) {
-            return Some(det);
+            return Some((det, false));
         }
+    }
+    if !allow_network {
+        return None;
     }
     let det = host.get_tmdb_details(tid, mtype).ok()?;
     if let Ok(val) = serde_json::to_value(&det) {
         let _ = db.put_json_cache(&key, &val);
     }
-    Some(det)
+    Some((det, true))
+}
+
+fn cached_tmdb_details(
+    host: &HostClient,
+    db: &Db,
+    tmdb_id: &str,
+    mtype: &str,
+) -> Option<TMDBDetails> {
+    cached_tmdb_details_with_budget(host, db, tmdb_id, mtype, true).map(|(d, _)| d)
 }
 
 fn cached_resolve_tmdb(

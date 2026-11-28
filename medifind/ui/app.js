@@ -956,6 +956,7 @@ async function openInspectModal(item) {
         tmdb_id: state.selectedMedia?.tmdb_id || item.tmdb_id,
         media_type: state.selectedMedia?.media_type || item.media_type,
         source_type: item.source_type,
+        channel_name: item.channel_name || '',
         allow_unlock: true,
         trigger_reason: '预览弹窗整包 FlowLink 转存',
       });
@@ -972,6 +973,7 @@ async function openInspectModal(item) {
         tmdb_id: state.selectedMedia?.tmdb_id || item.tmdb_id,
         media_type: state.selectedMedia?.media_type || item.media_type,
         source_type: item.source_type,
+        channel_name: item.channel_name || '',
         file_ids: ids,
         target_cid: targetCID,
         allow_unlock: true,
@@ -1597,9 +1599,10 @@ async function openTGBatchImportModal(root) {
       const kw = keyword.trim().toLowerCase();
       const filtered = dialogs.filter((it) => {
         if (!kw) return true;
-        return `${it.name || ''} ${it.username || ''} ${it.identifier || ''}`.toLowerCase().includes(kw);
+        return `${it.name || ''} ${it.identifier || ''}`.toLowerCase().includes(kw);
       });
-      const selectableCount = filtered.filter((it) => !existingSet.has(cleanTGInputId(it.identifier).toLowerCase())).length;
+      const isAlreadyAdded = (it) => !!it.already_added || existingSet.has(cleanTGInputId(it.identifier).toLowerCase());
+      const selectableCount = filtered.filter((it) => !isAlreadyAdded(it)).length;
 
       modalRoot.innerHTML = `
         <div class="mf-modal" style="width:min(680px, 95vw)">
@@ -1628,14 +1631,15 @@ async function openTGBatchImportModal(root) {
                 ? `<div class="mf-empty">没有匹配的已加入频道</div>`
                 : filtered.map((it) => {
                     const norm = cleanTGInputId(it.identifier).toLowerCase();
-                    const already = existingSet.has(norm);
+                    const already = isAlreadyAdded(it);
                     const checked = already || selected.has(norm);
+                    const isGroup = it.is_broadcast === false;
                     return `
                       <label class="nf-dialog-item" style="${already ? 'opacity:0.58;cursor:default' : ''}">
                         <input type="checkbox" data-dlg-id="${esc(norm)}" ${checked ? 'checked' : ''} ${already ? 'disabled' : ''} />
-                        <span class="mf-pill ${it.is_megagroup ? '' : 'info'}">${it.is_megagroup ? '群组' : '频道'}</span>
+                        <span class="mf-pill ${isGroup ? '' : 'info'}">${isGroup ? '群组' : '频道'}</span>
                         <strong style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</strong>
-                        <span style="font-size:11.5px;color:var(--mf-muted)">${it.username ? `@${esc(it.username)}` : esc(it.identifier)}</span>
+                        <span style="font-size:11.5px;color:var(--mf-muted)">${esc(it.identifier)}</span>
                         ${already ? `<span class="mf-pill success">已添加</span>` : ''}
                       </label>
                     `;
@@ -1675,7 +1679,7 @@ async function openTGBatchImportModal(root) {
       modalRoot.querySelector('#tg-imp-sel-all').onclick = () => {
         filtered.forEach((it) => {
           const norm = cleanTGInputId(it.identifier).toLowerCase();
-          if (norm && !existingSet.has(norm)) selected.add(norm);
+          if (norm && !isAlreadyAdded(it)) selected.add(norm);
         });
         renderList();
       };
@@ -1701,7 +1705,7 @@ async function openTGBatchImportModal(root) {
         let addedCnt = 0;
         dialogs.forEach((it, i) => {
           const norm = cleanTGInputId(it.identifier).toLowerCase();
-          if (!selected.has(norm) || existingSet.has(norm)) return;
+          if (!selected.has(norm) || isAlreadyAdded(it)) return;
           d.telegram.channels.push({
             id: `ch-${Date.now().toString(36)}-${i}`,
             identifier: it.identifier,

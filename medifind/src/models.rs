@@ -1058,7 +1058,11 @@ impl ActivityRecord {
 
     pub fn source_group(&self) -> &'static str {
         let s = self.source.trim().to_ascii_lowercase();
-        if s == "telegram" || s.starts_with("tg") || !self.channel_name.trim().is_empty() && s == "115" {
+        let ch = self.channel_name.trim();
+        if s == "telegram"
+            || s.starts_with("tg")
+            || (s == "115" && !ch.is_empty() && ch != "手动直链")
+        {
             "telegram"
         } else if s == "hdhive" || s.contains("relay") {
             "hdhive"
@@ -1073,7 +1077,7 @@ impl ActivityRecord {
         } else if s == "manual" {
             "manual"
         } else if matches!(s.as_str(), "115" | "ed2k" | "magnet") {
-            if !self.channel_name.trim().is_empty() && self.channel_name != "手动直链" {
+            if !ch.is_empty() && ch != "手动直链" {
                 "telegram"
             } else {
                 "manual"
@@ -1087,7 +1091,7 @@ impl ActivityRecord {
         let a = self.action.trim();
         if a.contains("追更") {
             "chase"
-        } else if a.contains("入新") || a.contains("全量") {
+        } else if a.contains("入新") || a.contains("全量") || a.contains("洗版") {
             "tg_auto"
         } else if a.contains("待审") {
             "review"

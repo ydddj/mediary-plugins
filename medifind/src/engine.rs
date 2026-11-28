@@ -912,6 +912,7 @@ pub struct TransferRequest {
     #[serde(deserialize_with = "crate::models::flex_id")]
     pub tmdb_id: String,
     pub media_type: String,
+    pub season: u32,
     pub source_type: String,
     pub channel_name: String,
     pub unlock_points: i32,
@@ -1112,6 +1113,7 @@ pub fn transfer_resource(
             .filter(|s| !s.is_empty())
             .collect();
         let mut to_submit = Vec::new();
+        let mut to_submit_ids = Vec::new();
         for f in &inspected.files {
             if f.direct_link.is_empty() {
                 continue;
@@ -1119,10 +1121,21 @@ pub fn transfer_resource(
             if !want_ids.is_empty() && !want_ids.contains(&f.id) {
                 continue;
             }
-            if want_ids.is_empty() && req.only_missing_episodes && !f.is_missing_in_db {
-                continue;
+            if want_ids.is_empty() && req.only_missing_episodes {
+                if !f.is_missing_in_db {
+                    continue;
+                }
+                if req.season > 0 && !f.episode_label.is_empty() {
+                    let pairs = rules::extract_episode_pairs(&f.episode_label, 1);
+                    if !pairs.is_empty() && !pairs.iter().any(|p| p.season == req.season) {
+                        continue;
+                    }
+                }
             }
             to_submit.push(f.direct_link.clone());
+            if !f.id.is_empty() {
+                to_submit_ids.push(f.id.clone());
+            }
         }
         if to_submit.is_empty() && req.only_missing_episodes {
             return Ok(TransferResult {
@@ -1132,12 +1145,14 @@ pub fn transfer_resource(
             });
         }
         if to_submit.is_empty() {
-            to_submit = inspected
-                .files
-                .iter()
-                .filter(|f| !f.direct_link.is_empty())
-                .map(|f| f.direct_link.clone())
-                .collect();
+            for f in &inspected.files {
+                if !f.direct_link.is_empty() {
+                    to_submit.push(f.direct_link.clone());
+                    if !f.id.is_empty() {
+                        to_submit_ids.push(f.id.clone());
+                    }
+                }
+            }
         }
 
         let offline_cid = resolve_effective_target_cid(mc, cfg, &req.target_cid, true);
@@ -1229,6 +1244,12 @@ pub fn transfer_resource(
         } else {
             format!("{}个文件 → FlowLink", submitted)
         };
+        let (ed2k_episodes, _, _) = summarize_transferred_files(
+            &inspected.files,
+            &to_submit_ids,
+            &inspected.parsed_episodes,
+            &eff_req.media_type,
+        );
         mark_transferred(
             db,
             cfg,
@@ -1236,7 +1257,7 @@ pub fn transfer_resource(
             slug,
             &clean_t,
             "ed2k",
-            &inspected.parsed_episodes,
+            &ed2k_episodes,
             reason,
             &notice,
         );
@@ -1249,7 +1270,7 @@ pub fn transfer_resource(
                 raw_title: &clean_t,
                 resource_title: &ed2k_sample,
                 source_type: if req.source_type.is_empty() { "ed2k" } else { &req.source_type },
-                season_episode: &inspected.parsed_episodes,
+                season_episode: &ed2k_episodes,
                 download_action: "离线下载",
                 size_str: &ed2k_size,
                 target_hint: &ed2k_target_hint,
@@ -1259,7 +1280,7 @@ pub fn transfer_resource(
             status: "success".into(),
             notice,
             submitted_count: submitted,
-            episodes: inspected.parsed_episodes,
+            episodes: ed2k_episodes,
             warnings,
             ..Default::default()
         });
@@ -1330,26 +1351,32 @@ pub fn transfer_resource(
     if selected_ids.is_empty() && req.only_missing_episodes && req.media_type.eq_ignore_ascii_case("tv")
     {
         let tid_trim = req.tmdb_id.trim();
-        let mut missing_ep_labels = HashSet::new();
+        let mut missing_ep_pairs: HashSet<EpisodePair> = HashSet::new();
         let mut selected_video_stems = Vec::new();
         for f in &inspected.files {
             if f.is_video && f.is_missing_in_db && !f.id.is_empty() {
-                if !tid_trim.is_empty() && !f.episode_label.is_empty() {
-                    let pairs = rules::extract_episode_pairs(&f.episode_label, 1);
-                    if !pairs.is_empty()
-                        && pairs.iter().all(|p| {
-                            db.is_in_flight(
-                                &format!("tv:{}:{}", tid_trim, p.key()),
-                                IN_FLIGHT_CHASE_TTL_SECS,
-                            )
-                        })
-                    {
+                let pairs = if !f.episode_label.is_empty() {
+                    rules::extract_episode_pairs(&f.episode_label, 1)
+                } else {
+                    Vec::new()
+                };
+                if req.season > 0 && !pairs.is_empty() && !pairs.iter().any(|p| p.season == req.season)
+                {
+                    continue;
+                }
+                if !tid_trim.is_empty() && !pairs.is_empty() {
+                    if pairs.iter().all(|p| {
+                        db.is_in_flight(
+                            &format!("tv:{}:{}", tid_trim, p.key()),
+                            IN_FLIGHT_CHASE_TTL_SECS,
+                        )
+                    }) {
                         continue;
                     }
                 }
                 selected_ids.push(f.id.clone());
-                if !f.episode_label.is_empty() {
-                    missing_ep_labels.insert(f.episode_label.clone());
+                for p in pairs {
+                    missing_ep_pairs.insert(p);
                 }
                 let stem = file_base_stem_lower(&f.name);
                 if !stem.is_empty() {
@@ -1359,19 +1386,30 @@ pub fn transfer_resource(
         }
         if !selected_ids.is_empty() {
             for f in &inspected.files {
-                if f.is_subtitle
-                    && !f.id.is_empty()
-                    && ((!f.episode_label.is_empty() && missing_ep_labels.contains(&f.episode_label))
-                        || (f.episode_label.is_empty()
-                            && subtitle_matches_video_stems(f, &selected_video_stems)))
-                {
-                    selected_ids.push(f.id.clone());
+                if f.is_subtitle && !f.id.is_empty() {
+                    let sub_pairs = if !f.episode_label.is_empty() {
+                        rules::extract_episode_pairs(&f.episode_label, 1)
+                    } else {
+                        Vec::new()
+                    };
+                    let matched_by_ep = !sub_pairs.is_empty()
+                        && sub_pairs.iter().any(|p| missing_ep_pairs.contains(p));
+                    let matched_by_stem = sub_pairs.is_empty()
+                        && subtitle_matches_video_stems(f, &selected_video_stems);
+                    if matched_by_ep || matched_by_stem {
+                        selected_ids.push(f.id.clone());
+                    }
                 }
             }
-        } else if !inspected.files.is_empty() {
+        } else {
+            let skip_msg = if inspected.files.is_empty() {
+                "分享目录为空或未解析到视频文件，已跳过转存"
+            } else {
+                "对比媒体库及在途队列后未发现新缺集，已跳过重复转存"
+            };
             return Ok(TransferResult {
                 status: "skipped".into(),
-                notice: "对比媒体库及在途队列后未发现新缺集，已跳过重复转存".into(),
+                notice: skip_msg.into(),
                 ..Default::default()
             });
         }
@@ -1430,9 +1468,29 @@ pub fn transfer_resource(
         ) {
             if is_115_reviewing_text(&e.to_string()) {
                 enqueue_reviewing(db, &eff_req, &inspected.share_code, &inspected.receive_code, &target_cid);
+                let notice = "115 分享处于审核中，已加入待审重试队列".to_string();
+                let _ = db.append_activity(crate::models::ActivityRecord {
+                    record_type: "transfer".into(),
+                    title: disp_title.to_string(),
+                    source: src_label.to_string(),
+                    channel_name: eff_req.channel_name.clone(),
+                    slug: if !inspected.share_url.is_empty() {
+                        inspected.share_url.clone()
+                    } else {
+                        slug.to_string()
+                    },
+                    clean_slug: rules::clean_slug(slug),
+                    tmdb_id: eff_req.tmdb_id.clone(),
+                    media_type: eff_req.media_type.clone(),
+                    episodes: eff_episodes.clone(),
+                    action: "暂存待审".into(),
+                    status: "reviewing".into(),
+                    detail: notice.clone(),
+                    ..Default::default()
+                });
                 return Ok(TransferResult {
                     status: "reviewing".into(),
-                    notice: "115 分享处于审核中，已加入待审重试队列".into(),
+                    notice,
                     share_url: inspected.share_url,
                     ..Default::default()
                 });
@@ -1603,9 +1661,29 @@ pub fn transfer_resource(
             }
             if is_115_reviewing_text(&e.to_string()) {
                 enqueue_reviewing(db, &eff_req, &inspected.share_code, &inspected.receive_code, &target_cid);
+                let notice = "115 分享处于审核中，已加入待审重试队列".to_string();
+                let _ = db.append_activity(crate::models::ActivityRecord {
+                    record_type: "transfer".into(),
+                    title: disp_title.to_string(),
+                    source: src_label.to_string(),
+                    channel_name: eff_req.channel_name.clone(),
+                    slug: if !inspected.share_url.is_empty() {
+                        inspected.share_url.clone()
+                    } else {
+                        slug.to_string()
+                    },
+                    clean_slug: rules::clean_slug(slug),
+                    tmdb_id: eff_req.tmdb_id.clone(),
+                    media_type: eff_req.media_type.clone(),
+                    episodes: eff_episodes.clone(),
+                    action: "暂存待审".into(),
+                    status: "reviewing".into(),
+                    detail: notice.clone(),
+                    ..Default::default()
+                });
                 return Ok(TransferResult {
                     status: "reviewing".into(),
-                    notice: "115 分享处于审核中，已加入待审重试队列".into(),
+                    notice,
                     share_url: inspected.share_url,
                     ..Default::default()
                 });
@@ -2710,6 +2788,7 @@ pub fn chase_single_subscription(
                 title: title.to_string(),
                 tmdb_id: tid.to_string(),
                 media_type: mtype.to_string(),
+                season: sub.season,
                 source_type: cand.source_type,
                 channel_name: cand.channel_name,
                 unlock_points: cand.unlock_points,
@@ -2846,9 +2925,7 @@ fn process_tg_auto_levels(
                         if !resolved.effective_id().is_empty() {
                             tid = resolved.effective_id().to_string();
                             mtype = resolved.effective_type().to_string();
-                            if !resolved.effective_title().is_empty()
-                                && rules::is_suspect_banner_title(&title)
-                            {
+                            if title.trim().is_empty() && !resolved.effective_title().is_empty() {
                                 title = resolved.effective_title().to_string();
                             }
                         }
@@ -2945,7 +3022,6 @@ fn process_tg_auto_levels(
                 {
                     continue;
                 }
-                db.mark_in_flight(&wash_key);
                 if let Ok(res) = transfer_resource(
                     mc,
                     db,
@@ -2964,6 +3040,7 @@ fn process_tg_auto_levels(
                     },
                 ) {
                     if res.status == "success" || res.status == "reviewing" {
+                        db.mark_in_flight(&wash_key);
                         triggered += 1;
                     }
                 }
@@ -3097,7 +3174,7 @@ fn annotate_missing_on_nodes(
 ) -> (Vec<ShareFileNode>, usize) {
     let mut out = Vec::with_capacity(nodes.len());
     let mut missing = 0usize;
-    let mut missing_ep_labels = HashSet::new();
+    let mut missing_ep_pairs: HashSet<EpisodePair> = HashSet::new();
     let mut missing_video_stems = Vec::new();
 
     for n in nodes {
@@ -3109,8 +3186,8 @@ fn annotate_missing_on_nodes(
                 c.is_missing_in_db = is_node_missing_in_library(mtype, &pairs, snap);
                 if c.is_missing_in_db {
                     missing += 1;
-                    if !c.episode_label.is_empty() {
-                        missing_ep_labels.insert(c.episode_label.clone());
+                    for p in pairs {
+                        missing_ep_pairs.insert(p);
                     }
                     let stem = file_base_stem_lower(&c.name);
                     if !stem.is_empty() {
@@ -3124,9 +3201,14 @@ fn annotate_missing_on_nodes(
 
     for c in &mut out {
         if c.is_subtitle {
-            c.is_missing_in_db = (!c.episode_label.is_empty()
-                && missing_ep_labels.contains(&c.episode_label))
-                || (c.episode_label.is_empty()
+            let sub_pairs = if !c.episode_label.is_empty() {
+                rules::extract_episode_pairs(&c.episode_label, 1)
+            } else {
+                Vec::new()
+            };
+            c.is_missing_in_db = (!sub_pairs.is_empty()
+                && sub_pairs.iter().any(|p| missing_ep_pairs.contains(p)))
+                || (sub_pairs.is_empty()
                     && subtitle_matches_video_stems(c, &missing_video_stems));
         }
     }
@@ -3920,5 +4002,55 @@ mod tests {
         );
         assert_eq!(ep_sum, "S01E11");
         assert_eq!(sz_sum, 369_623_040);
+
+        // Verify double-episode video matches single-episode subtitle via EpisodePair intersection
+        let multi_ep_nodes = vec![
+            ShareFileNode {
+                id: "v1".into(),
+                name: "Show.S01E01-E02.2160p.WEB-DL.mkv".into(),
+                is_video: true,
+                ..Default::default()
+            },
+            ShareFileNode {
+                id: "s1".into(),
+                name: "Show.S01E01.chs.ass".into(),
+                is_subtitle: true,
+                ..Default::default()
+            },
+            ShareFileNode {
+                id: "s3".into(),
+                name: "Show.S01E03.chs.ass".into(),
+                is_subtitle: true,
+                ..Default::default()
+            },
+        ];
+        let snap_empty = LibrarySnapshot {
+            media_type: "tv".into(),
+            ..Default::default()
+        };
+        let (annotated, miss_cnt) = annotate_missing_on_nodes(&multi_ep_nodes, "tv", &snap_empty);
+        assert_eq!(miss_cnt, 1);
+        assert!(annotated[0].is_missing_in_db);
+        assert!(annotated[1].is_missing_in_db, "S01E01 sub must match S01E01-E02 missing video");
+        assert!(!annotated[2].is_missing_in_db, "S01E03 sub must not match S01E01-E02");
+
+        // Verify ActivityRecord source_group & action_group classification
+        let manual_rec = crate::models::ActivityRecord {
+            source: "115".into(),
+            channel_name: "手动直链".into(),
+            action: "手动转存".into(),
+            ..Default::default()
+        };
+        assert_eq!(manual_rec.source_group(), "manual");
+        assert_eq!(manual_rec.action_group(), "manual");
+
+        let wash_rec = crate::models::ActivityRecord {
+            source: "telegram".into(),
+            channel_name: "4K洗版频道".into(),
+            action: "TG洗版频道高分升级".into(),
+            ..Default::default()
+        };
+        assert_eq!(wash_rec.source_group(), "telegram");
+        assert_eq!(wash_rec.action_group(), "tg_auto");
     }
 }
