@@ -3,6 +3,7 @@ mod discover;
 mod engine;
 mod host;
 mod models;
+mod nextbot;
 mod providers;
 mod rules;
 mod tg_mtproto;
@@ -14,9 +15,9 @@ use discover::DiscoverRequest;
 use engine::{AggregateRequest, InspectRequest, TransferRequest};
 use host::{HostClient, HostStatus, Subscription};
 use models::{
-    normalize_tg_level, AYClubConfig, AppConfig, HDHiveConfig, HistoryFilter, IgnoredEpisodeRule,
-    NotificationConfig, PluginSettings, RSSFeedConfig, ResourceItem, RuleConfig, TGChannelEntry,
-    TelegramConfig,
+    default_nextbot_template, normalize_tg_level, AYClubConfig, AppConfig, HDHiveConfig,
+    HistoryFilter, IgnoredEpisodeRule, NextBotConfig, NotificationConfig, PluginSettings,
+    RSSFeedConfig, ResourceItem, RuleConfig, TGChannelEntry, TelegramConfig,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -86,6 +87,36 @@ fn run() -> Result<()> {
             let _ = db.save_config(&cfg);
             let msg = res?;
             json!({ "notice": msg })
+        }
+
+        "nextbot_poll" => {
+            if !nextbot::has_active_transfer_bots(&cfg) {
+                return Ok(println!(
+                    r#"{{"notice":"未启用任何开启「BOT 转存」的 NextBOT，已快速跳过"}}"#
+                ));
+            }
+            let host = mc
+                .as_ref()
+                .ok_or_else(|| anyhow!("缺少 Mediary 插件 API 运行环境"))?;
+            let Some(_guard) = db.try_acquire_tick_lock() else {
+                return Ok(println!(
+                    r#"{{"notice":"已有后台巡检运行中，本轮 NextBOT 轮询自动跳过"}}"#
+                ));
+            };
+            let proxy_url = engine::effective_proxy(Some(host), &cfg);
+            let (cnt, errs) =
+                nextbot::poll_bot_transfers(host, &db, &settings, &mut cfg, &proxy_url);
+            db.save_config(&cfg)?;
+            let _ = db.write_dashboard(&cfg);
+            let mut msg = format!("NextBOT 接收轮询完成：处理转存 {} 条", cnt);
+            if !errs.is_empty() {
+                msg.push_str(&format!("（异常 {} 项：{}）", errs.len(), errs.join("；")));
+            }
+            json!({
+                "notice": msg,
+                "transferred": cnt,
+                "errors": errs,
+            })
         }
 
         // --- Mediary Native Resource Search Integration (source_id: -10) ---
@@ -510,7 +541,45 @@ fn run() -> Result<()> {
             }
             let mut req: SaveChannelsReq = serde_json::from_value(input_val)?;
             cfg.custom_proxy = req.custom_proxy.trim().to_string();
-            if let Some(nc) = req.notifications {
+            if let Some(mut nc) = req.notifications {
+                let prev_bots = cfg.notifications.telegram_bots.clone();
+                for (i, bot) in nc.telegram_bots.iter_mut().enumerate() {
+                    if bot.id.trim().is_empty() {
+                        bot.id = format!("bot-{}-{}", Utc::now().timestamp_millis(), i);
+                    }
+                    bot.bot_token = bot.bot_token.trim().to_string();
+                    bot.chat_id = bot.chat_id.trim().to_string();
+                    let resolved_tok = nextbot::resolve_saved_bot_token(
+                        &bot.bot_token,
+                        &bot.id,
+                        &bot.chat_id,
+                        &prev_bots,
+                    );
+                    if !resolved_tok.is_empty() {
+                        bot.bot_token = resolved_tok;
+                    } else if nextbot::is_masked_bot_token(&bot.bot_token) {
+                        if let Some(prev) = prev_bots.get(i) {
+                            bot.bot_token = prev.bot_token.clone();
+                        }
+                    }
+                    // Preserve persisted getUpdates offset
+                    if let Some(prev) = prev_bots
+                        .iter()
+                        .find(|p| !p.id.is_empty() && p.id == bot.id)
+                        .or_else(|| {
+                            prev_bots.iter().find(|p| {
+                                !p.bot_token.is_empty() && p.bot_token == bot.bot_token
+                            })
+                        })
+                    {
+                        if bot.last_update_id == 0 {
+                            bot.last_update_id = prev.last_update_id;
+                        }
+                    }
+                    if bot.template_config.is_empty() {
+                        bot.template_config = default_nextbot_template();
+                    }
+                }
                 cfg.notifications = nc;
             }
 
@@ -1134,6 +1203,98 @@ fn run() -> Result<()> {
             build_bootstrap(mc.as_ref(), &db, &settings, &cfg, "已删除该神盾索引库及关联文件")
         }
 
+        "ui_verify_tg_bot" => {
+            let bot_id = first_str(&input_val, &["id", "bot_id"]);
+            let raw_token = first_str(&input_val, &["bot_token"]);
+            let raw_chat = first_str(&input_val, &["chat_id"]);
+            let real_token = nextbot::resolve_saved_bot_token(
+                &raw_token,
+                &bot_id,
+                &raw_chat,
+                &cfg.notifications.telegram_bots,
+            );
+            let proxy_url = engine::effective_proxy(mc.as_ref(), &cfg);
+            let res = nextbot::verify_bot_chat(
+                &db.data_dir,
+                &cfg,
+                &real_token,
+                &raw_chat,
+                &proxy_url,
+            )?;
+            // Persist resolved title/avatar/chat_id if matching saved bot exists
+            if let Some(saved) = cfg
+                .notifications
+                .telegram_bots
+                .iter_mut()
+                .find(|b| (!bot_id.is_empty() && b.id == bot_id) || b.bot_token == real_token)
+            {
+                saved.chat_id = res.corrected_chat_id.clone();
+                saved.verified_title = res.title.clone();
+                if !res.avatar.is_empty() {
+                    saved.avatar_url = res.avatar.clone();
+                }
+                let _ = db.save_config(&cfg);
+            }
+            json!({
+                "status": "success",
+                "title": res.title,
+                "avatar": res.avatar,
+                "corrected_chat_id": res.corrected_chat_id,
+            })
+        }
+
+        "ui_test_tg_bot" => {
+            let mut bot: NextBotConfig = if let Some(bc) = input_val.get("bot_conf") {
+                serde_json::from_value(bc.clone()).unwrap_or_default()
+            } else {
+                serde_json::from_value(input_val.clone()).unwrap_or_default()
+            };
+            let raw_token = first_str(&input_val, &["bot_token"]);
+            if !raw_token.is_empty() {
+                bot.bot_token = raw_token;
+            }
+            let raw_chat = first_str(&input_val, &["chat_id"]);
+            if !raw_chat.is_empty() {
+                bot.chat_id = raw_chat;
+            }
+            bot.bot_token = nextbot::resolve_saved_bot_token(
+                &bot.bot_token,
+                &bot.id,
+                &bot.chat_id,
+                &cfg.notifications.telegram_bots,
+            );
+            let proxy_url = engine::effective_proxy(mc.as_ref(), &cfg);
+            let notice = nextbot::test_bot_template(&bot, &proxy_url)?;
+            json!({
+                "status": "success",
+                "notice": notice,
+            })
+        }
+
+        "ui_poll_nextbot_transfers" => {
+            let host = mc
+                .as_ref()
+                .ok_or_else(|| anyhow!("缺少 Mediary 插件 API 运行环境"))?;
+            ensure!(
+                nextbot::has_active_transfer_bots(&cfg),
+                "当前没有开启「BOT 转存」且处于运行中的 NextBOT，请先在模板配置中勾选「BOT 转存」并保存"
+            );
+            let proxy_url = engine::effective_proxy(Some(host), &cfg);
+            let (cnt, errs) =
+                nextbot::poll_bot_transfers(host, &db, &settings, &mut cfg, &proxy_url);
+            db.save_config(&cfg)?;
+            let _ = db.write_dashboard(&cfg);
+            let mut msg = if cnt > 0 {
+                format!("NextBOT 接收完成：已自动转存 {} 条资源", cnt)
+            } else {
+                "NextBOT 收件箱已拉取，暂无待处理的新资源链接".to_string()
+            };
+            if !errs.is_empty() {
+                msg.push_str(&format!("（提示：{}）", errs.join("；")));
+            }
+            build_bootstrap(mc.as_ref(), &db, &settings, &cfg, &msg)
+        }
+
         _ => return Err(anyhow!("不支持的 MediFind 插件动作: {}", action)),
     };
 
@@ -1190,6 +1351,16 @@ fn build_bootstrap(
         ay_dto.nf_token = SECRET_MASK.into();
     }
 
+    let mut notif_dto = cfg.notifications.clone();
+    for b in &mut notif_dto.telegram_bots {
+        if !b.bot_token.trim().is_empty() {
+            b.bot_token = nextbot::mask_bot_token(&b.bot_token);
+        }
+        if b.template_config.is_empty() {
+            b.template_config = default_nextbot_template();
+        }
+    }
+
     json!({
         "notice": notice,
         "settings": settings,
@@ -1207,7 +1378,7 @@ fn build_bootstrap(
             "has_ayclub_token": has_ay_token,
             "rss_feeds": cfg.rss_feeds,
             "rules": cfg.rules,
-            "notifications": cfg.notifications,
+            "notifications": notif_dto,
             "reviewing_queue": db.list_reviewing(),
             "ignored_episodes": cfg.ignored_episodes,
             "shield_shares": db.list_shield_shares(),

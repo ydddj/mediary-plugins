@@ -2191,6 +2191,8 @@ pub struct TickSummary {
     pub rss_processed: usize,
     pub subs_checked: usize,
     pub subs_transferred: usize,
+    pub nextbot_radar: usize,
+    pub nextbot_transfers: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
     pub message: String,
@@ -2270,13 +2272,30 @@ pub fn run_tick(
     let mut sum = TickSummary::default();
     let proxy_url = effective_proxy(mc, cfg);
 
-    // 1. Telegram sync + NextFind level 64 (入新) / 99 (全量)
+    // 1. Telegram sync + NextFind level 64 (入新) / 99 (全量) + NextBOT 推送雷达
     let (tg_added, tg_by_ch, tg_errs) = providers::sync_all_tg_channels(db, cfg, false, &proxy_url);
     sum.tg_added = tg_added;
     sum.errors.extend(tg_errs);
+    if !tg_by_ch.is_empty() {
+        if let Some(host) = mc {
+            if settings.auto_chase {
+                sum.subs_transferred += process_tg_auto_levels(host, db, settings, cfg, &tg_by_ch);
+            }
+        }
+        if settings.notify {
+            let new_tg_flat: Vec<ResourceItem> = tg_by_ch.values().flatten().cloned().collect();
+            sum.nextbot_radar =
+                crate::nextbot::notify_radar_bots(db, mc, cfg, &new_tg_flat, &proxy_url);
+        }
+    }
+
+    // 1.5 NextBOT BOT 转存队列拉取
     if let Some(host) = mc {
-        if settings.auto_chase && !tg_by_ch.is_empty() {
-            sum.subs_transferred += process_tg_auto_levels(host, db, settings, cfg, &tg_by_ch);
+        if crate::nextbot::has_active_transfer_bots(cfg) {
+            let (nb_cnt, nb_errs) =
+                crate::nextbot::poll_bot_transfers(host, db, settings, cfg, &proxy_url);
+            sum.nextbot_transfers += nb_cnt;
+            sum.errors.extend(nb_errs);
         }
     }
 
@@ -2328,6 +2347,12 @@ pub fn run_tick(
         sum.subs_transferred,
         sum.subs_checked
     );
+    if sum.nextbot_transfers > 0 || sum.nextbot_radar > 0 {
+        sum.message.push_str(&format!(
+            "，NextBOT(转存{}/雷达{})",
+            sum.nextbot_transfers, sum.nextbot_radar
+        ));
+    }
     if !sum.errors.is_empty() {
         sum.message
             .push_str(&format!("（警告 {} 项）", sum.errors.len()));
@@ -2337,6 +2362,8 @@ pub fn run_tick(
         || sum.review_retried > 0
         || sum.rss_processed > 0
         || sum.subs_transferred > 0
+        || sum.nextbot_transfers > 0
+        || sum.nextbot_radar > 0
         || !sum.errors.is_empty()
     {
         let _ = db.append_activity(crate::models::ActivityRecord {
@@ -3566,11 +3593,30 @@ fn notify_transfer_templated(
     cfg: &AppConfig,
     inp: &TransferNotifyInput<'_>,
 ) {
-    if !(settings.notify && cfg.notifications.enabled && cfg.notifications.on_transfer) {
+    if !settings.notify {
         return;
     }
-    let tpls = mc.get_notification_templates();
-    if !tpls.download_started.enabled {
+    let host_notify_on = cfg.notifications.enabled && cfg.notifications.on_transfer;
+    let has_nextbot_notify = cfg.notifications.telegram_bots.iter().any(|b| {
+        !b.is_paused
+            && b.library_notification_enabled
+            && !b.bot_token.trim().is_empty()
+            && !b.chat_id.trim().is_empty()
+    });
+    if !host_notify_on && !has_nextbot_notify {
+        return;
+    }
+    let tpls = if host_notify_on {
+        Some(mc.get_notification_templates())
+    } else {
+        None
+    };
+    let should_send_host = host_notify_on
+        && tpls
+            .as_ref()
+            .map(|t| t.download_started.enabled)
+            .unwrap_or(false);
+    if !should_send_host && !has_nextbot_notify {
         return;
     }
 
@@ -3607,6 +3653,11 @@ fn notify_transfer_templated(
         "movie".to_string()
     };
     let mut poster_url: Option<String> = None;
+    let mut nb_posters: Vec<String> = Vec::new();
+    let mut nb_vote = String::new();
+    let mut nb_theme = String::new();
+    let mut nb_region = String::new();
+    let mut nb_overview = String::new();
 
     if !tid.is_empty() {
         let alt_mtype = if mtype == "tv" { "movie" } else { "tv" };
@@ -3644,9 +3695,29 @@ fn notify_transfer_templated(
             {
                 clean_name = det_title.to_string();
             }
-            if cfg.notifications.include_poster {
-                poster_url =
-                    crate::host::tmdb_card_image_https(&det.backdrop_path, &det.poster_path);
+            if det.vote_average > 0.0 {
+                nb_vote = format!("{:.1}", det.vote_average);
+            }
+            let gnames: Vec<String> = det.genres.iter().map(|g| g.name.clone()).collect();
+            nb_theme = crate::nextbot::map_tmdb_genres_to_theme(&det.genre_ids, &gnames);
+            nb_region = crate::nextbot::map_tmdb_country_to_region(
+                &det.origin_country,
+                &det.original_language,
+            )
+            .to_string();
+            nb_overview = det.overview.clone();
+            if let Some(p) =
+                crate::host::tmdb_card_image_https(&det.backdrop_path, &det.poster_path)
+            {
+                if cfg.notifications.include_poster {
+                    poster_url = Some(p.clone());
+                }
+                nb_posters.push(p);
+            }
+            if let Some(p2) = crate::host::tmdb_poster_https(&det.poster_path) {
+                if !nb_posters.contains(&p2) {
+                    nb_posters.push(p2);
+                }
             }
         }
     }
@@ -3686,6 +3757,9 @@ fn notify_transfer_templated(
                 if !eff_t.is_empty() {
                     mtype = eff_t;
                 }
+                if tid.is_empty() && !resolved.effective_id().is_empty() {
+                    tid = resolved.effective_id().to_string();
+                }
                 let r_year = resolved.effective_year();
                 if year.is_empty() && !r_year.is_empty() {
                     year = r_year;
@@ -3697,25 +3771,58 @@ fn notify_transfer_templated(
                 {
                     clean_name = r_title.to_string();
                 }
-                if cfg.notifications.include_poster && poster_url.is_none() {
-                    // Upgrade to full TMDB details if search/resolve lacked `backdrop_path` so WeCom gets `w780` 16:9 card!
+                if nb_vote.is_empty() && resolved.vote_average > 0.0 {
+                    nb_vote = format!("{:.1}", resolved.vote_average);
+                }
+                if nb_overview.is_empty() && !resolved.overview.trim().is_empty() {
+                    nb_overview = resolved.overview.clone();
+                }
+                if nb_theme.is_empty() && !resolved.genre_ids.is_empty() {
+                    nb_theme = crate::nextbot::map_tmdb_genres_to_theme(&resolved.genre_ids, &[]);
+                }
+                if nb_region.is_empty()
+                    && (!resolved.origin_country.is_empty()
+                        || !resolved.original_language.trim().is_empty())
+                {
+                    nb_region = crate::nextbot::map_tmdb_country_to_region(
+                        &resolved.origin_country,
+                        &resolved.original_language,
+                    )
+                    .to_string();
+                }
+                if (cfg.notifications.include_poster || has_nextbot_notify)
+                    && (poster_url.is_none() || nb_posters.is_empty())
+                {
+                    // Upgrade to full TMDB details if search/resolve lacked `backdrop_path` so WeCom/NextBOT gets `w780` 16:9 card!
                     if resolved.backdrop_path.trim().is_empty()
                         && !resolved.effective_id().is_empty()
                     {
                         if let Ok(det) =
                             mc.get_tmdb_details(resolved.effective_id(), resolved.effective_type())
                         {
-                            poster_url = crate::host::tmdb_card_image_https(
+                            if let Some(p) = crate::host::tmdb_card_image_https(
                                 &det.backdrop_path,
                                 &det.poster_path,
-                            );
+                            ) {
+                                if cfg.notifications.include_poster && poster_url.is_none() {
+                                    poster_url = Some(p.clone());
+                                }
+                                if !nb_posters.contains(&p) {
+                                    nb_posters.push(p);
+                                }
+                            }
                         }
                     }
-                    if poster_url.is_none() {
-                        poster_url = crate::host::tmdb_card_image_https(
-                            &resolved.backdrop_path,
-                            &resolved.poster_path,
-                        );
+                    if let Some(p) = crate::host::tmdb_card_image_https(
+                        &resolved.backdrop_path,
+                        &resolved.poster_path,
+                    ) {
+                        if cfg.notifications.include_poster && poster_url.is_none() {
+                            poster_url = Some(p.clone());
+                        }
+                        if !nb_posters.contains(&p) {
+                            nb_posters.push(p);
+                        }
                     }
                 }
                 if poster_url.is_some() && !year.is_empty() {
@@ -3749,25 +3856,71 @@ fn notify_transfer_templated(
     };
     let site = format_source_site_label(inp.source_type, &inp.req.channel_name);
 
-    let mut vars = HashMap::new();
-    vars.insert("media_icon", media_icon.to_string());
-    vars.insert("name", clean_name);
-    vars.insert("year", year);
-    vars.insert("display_title", display_title);
-    vars.insert("season_episode", inp.season_episode.trim().to_string());
-    vars.insert("download_action", inp.download_action.trim().to_string());
-    vars.insert("torrent_title", torrent_title);
-    vars.insert("site", site);
-    vars.insert("size", inp.size_str.trim().to_string());
+    if should_send_host {
+        if let Some(tpls) = tpls {
+            let mut vars = HashMap::new();
+            vars.insert("media_icon", media_icon.to_string());
+            vars.insert("name", clean_name.clone());
+            vars.insert("year", year.clone());
+            vars.insert("display_title", display_title.clone());
+            vars.insert("season_episode", inp.season_episode.trim().to_string());
+            vars.insert("download_action", inp.download_action.trim().to_string());
+            vars.insert("torrent_title", torrent_title.clone());
+            vars.insert("site", site.clone());
+            vars.insert("size", inp.size_str.trim().to_string());
 
-    let title = crate::host::render_mediary_template(&tpls.download_started.title, &vars);
-    let content = crate::host::render_mediary_template(&tpls.download_started.content, &vars);
-    let img = if cfg.notifications.include_poster {
-        poster_url.as_deref()
-    } else {
-        None
-    };
-    let _ = mc.notify_with_image(&title, &content, img);
+            let title = crate::host::render_mediary_template(&tpls.download_started.title, &vars);
+            let content =
+                crate::host::render_mediary_template(&tpls.download_started.content, &vars);
+            let img = if cfg.notifications.include_poster {
+                poster_url.as_deref()
+            } else {
+                None
+            };
+            let _ = mc.notify_with_image(&title, &content, img);
+        }
+    }
+
+    if has_nextbot_notify {
+        let parsed_attrs =
+            rules::parse_movie_attributes(&format!("{} {}", inp.raw_title, inp.resource_title));
+        let trigger_lbl = if !inp.req.trigger_reason.trim().is_empty() {
+            if !inp.target_hint.trim().is_empty() {
+                format!(
+                    "{} · {}",
+                    inp.req.trigger_reason.trim(),
+                    inp.target_hint.trim()
+                )
+            } else {
+                inp.req.trigger_reason.trim().to_string()
+            }
+        } else if !inp.target_hint.trim().is_empty() {
+            format!("{} · {}", inp.download_action.trim(), inp.target_hint.trim())
+        } else {
+            inp.download_action.trim().to_string()
+        };
+        let nb_data = crate::nextbot::NextBotMessageData {
+            notification_type: "入库通知".into(),
+            media_type: if is_tv { "tv".into() } else { "movie".into() },
+            base_title: display_title,
+            ep_part: inp.season_episode.trim().to_string(),
+            tmdb_id: tid,
+            vote_average: nb_vote,
+            theme: nb_theme,
+            region: nb_region,
+            overview: nb_overview,
+            media_tags: crate::nextbot::format_movie_attrs_tags(&parsed_attrs),
+            size_str: inp.size_str.trim().to_string(),
+            total_size_str: inp.size_str.trim().to_string(),
+            trigger_reason_folder: trigger_lbl,
+            source: site,
+            slug: inp.req.slug.trim().to_string(),
+            poster_urls: nb_posters,
+            was_encrypted: false,
+        };
+        let proxy_url = effective_proxy(Some(mc), cfg);
+        crate::nextbot::notify_transfer_bots(cfg, &nb_data, &proxy_url);
+    }
 }
 
 pub fn is_115_reviewing_text(s: &str) -> bool {

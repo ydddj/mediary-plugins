@@ -452,6 +452,165 @@ pub struct BlockFilterGroup {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct NextBotTemplateField {
+    #[serde(deserialize_with = "null_default")]
+    pub id: String,
+    #[serde(deserialize_with = "null_default")]
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub append_episodes: bool,
+    #[serde(default)]
+    pub show_total_size: bool,
+    #[serde(default)]
+    pub encrypt_link: bool,
+}
+
+impl Default for NextBotTemplateField {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            enabled: true,
+            append_episodes: false,
+            show_total_size: false,
+            encrypt_link: false,
+        }
+    }
+}
+
+pub fn default_nextbot_template() -> Vec<NextBotTemplateField> {
+    vec![
+        NextBotTemplateField {
+            id: "title".into(),
+            name: "标题".into(),
+            enabled: true,
+            append_episodes: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "download_episodes".into(),
+            name: "入库".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "tmdb_id".into(),
+            name: "ID".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "rating".into(),
+            name: "评分".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "theme".into(),
+            name: "题材".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "region".into(),
+            name: "地区".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "quality".into(),
+            name: "质量".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "size".into(),
+            name: "大小".into(),
+            enabled: true,
+            show_total_size: false,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "trigger".into(),
+            name: "触发".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "channel".into(),
+            name: "频道".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "link".into(),
+            name: "链接".into(),
+            enabled: true,
+            encrypt_link: false,
+            ..Default::default()
+        },
+        NextBotTemplateField {
+            id: "overview".into(),
+            name: "剧情".into(),
+            enabled: false,
+            ..Default::default()
+        },
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NextBotConfig {
+    #[serde(deserialize_with = "flex_id")]
+    pub id: String,
+    #[serde(deserialize_with = "null_default")]
+    pub bot_token: String,
+    #[serde(deserialize_with = "flex_id")]
+    pub chat_id: String,
+    #[serde(deserialize_with = "null_default")]
+    pub verified_title: String,
+    #[serde(deserialize_with = "null_default")]
+    pub avatar_url: String,
+    pub is_paused: bool,
+    #[serde(default = "default_true")]
+    pub enable_poster: bool,
+    pub enable_signature: bool,
+    #[serde(deserialize_with = "null_default")]
+    pub custom_signature: String,
+    pub is_bot_transfer: bool,
+    pub receive_radar: bool,
+    #[serde(default = "default_true")]
+    pub library_notification_enabled: bool,
+    #[serde(default = "default_nextbot_template", deserialize_with = "null_default")]
+    pub template_config: Vec<NextBotTemplateField>,
+    pub last_update_id: i64,
+}
+
+impl Default for NextBotConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            bot_token: String::new(),
+            chat_id: String::new(),
+            verified_title: String::new(),
+            avatar_url: String::new(),
+            is_paused: false,
+            enable_poster: true,
+            enable_signature: false,
+            custom_signature: String::new(),
+            is_bot_transfer: false,
+            receive_radar: false,
+            library_notification_enabled: true,
+            template_config: default_nextbot_template(),
+            last_update_id: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationConfig {
@@ -460,6 +619,8 @@ pub struct NotificationConfig {
     pub on_rss_subscribe: bool,
     pub on_checkin: bool,
     pub include_poster: bool,
+    #[serde(deserialize_with = "null_default")]
+    pub telegram_bots: Vec<NextBotConfig>,
 }
 
 impl Default for NotificationConfig {
@@ -470,6 +631,7 @@ impl Default for NotificationConfig {
             on_rss_subscribe: true,
             on_checkin: true,
             include_poster: true,
+            telegram_bots: Vec::new(),
         }
     }
 }

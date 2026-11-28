@@ -2,9 +2,9 @@
   "api_version": 1,
   "id": "medifind",
   "name": "MediFind 网盘聚合引擎",
-  "version": "3.2.5",
+  "version": "3.2.6",
   "min_mediary_version": "3.4.6",
-  "description": "聚合TG、影巢、AYClub与RSS多源搜片，支持订阅自动追更、115精准选集转存与离线进货。",
+  "description": "聚合TG、影巢、AYClub与RSS多源搜片，支持订阅追更、115选集转存与NextBOT联动。",
   "action_runtime": {
     "entrypoint": "./plugin"
   },
@@ -40,6 +40,13 @@
       "manual": true,
       "cron": "15 8 * * *",
       "timeout_seconds": 180
+    },
+    {
+      "action": "nextbot_poll",
+      "label": "NextBOT 消息接收转存",
+      "manual": true,
+      "cron": "*/2 * * * *",
+      "timeout_seconds": 90
     }
   ],
   "requested_scopes": [

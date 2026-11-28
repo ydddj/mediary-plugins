@@ -176,6 +176,13 @@ function mergeServerBootIntoDrafts(actionName, bootRes, opts = {}) {
         _deleting: false,
       }));
       d.telegram.channels = [...mappedSrv, ...unsavedBlankRows];
+      const srvBots = (srvState.notifications?.telegram_bots || []).map((b, idx) => normalizeNextBotJS(b, idx));
+      const unsavedBlankBots = (d.notifications?.telegram_bots || []).filter(
+        (b) => !String(b.bot_token || '').trim() && !String(b.chat_id || '').trim(),
+      );
+      if (d.notifications) {
+        d.notifications.telegram_bots = [...srvBots, ...unsavedBlankBots];
+      }
     } else {
       // Non-channel actions (e.g. RSS, notify test, TG check, sync): merge stats/logos without wiping draft rows
       const byId = new Map();
@@ -1438,6 +1445,95 @@ function cleanTGInputId(raw) {
   return s.trim();
 }
 
+const NEXTBOT_DEFAULT_TEMPLATE = [
+  { id: 'title', name: '标题', example: '📺 电视剧：绝命毒师 (2008)', enabled: true, append_episodes: true },
+  { id: 'download_episodes', name: '入库', example: '📥 转存入库: S01E01', enabled: true },
+  { id: 'tmdb_id', name: 'ID', example: '🍿 TMDB ID: 1396', enabled: true },
+  { id: 'rating', name: '评分', example: '⭐️ 评分: 9.3', enabled: true },
+  { id: 'theme', name: '题材', example: '🎭 题材: 惊悚犯罪', enabled: true },
+  { id: 'region', name: '地区', example: '📂 地区: 欧美', enabled: true },
+  { id: 'quality', name: '质量', example: '🎞️ 质量: [4K] [DV&HDR] [DTS]', enabled: true },
+  { id: 'size', name: '大小', example: '💾 大小: 14.44 GB', enabled: true, show_total_size: false },
+  { id: 'trigger', name: '触发', example: '🎯 触发: 订阅自动追更 · 待洗版', enabled: true },
+  { id: 'channel', name: '频道', example: '📢 频道: TG · 爱影频道', enabled: true },
+  { id: 'link', name: '链接', example: '🔗 链接: https://115.com/s/...', enabled: true, encrypt_link: false },
+  { id: 'overview', name: '剧情', example: '📝 剧情简介: 一段简介文本...', enabled: false },
+];
+
+function normalizeNextBotTemplateJS(rawTpl) {
+  const src = Array.isArray(rawTpl) && rawTpl.length > 0 ? rawTpl : NEXTBOT_DEFAULT_TEMPLATE;
+  const out = [];
+  const seen = new Set();
+  src.forEach((f) => {
+    if (!f || !f.id || seen.has(f.id)) return;
+    const def = NEXTBOT_DEFAULT_TEMPLATE.find((d) => d.id === f.id);
+    if (!def) return;
+    seen.add(f.id);
+    out.push({
+      id: def.id,
+      name: f.name || def.name,
+      example: def.example,
+      enabled: f.enabled !== false,
+      append_episodes: f.id === 'title' ? (f.append_episodes !== false) : !!f.append_episodes,
+      show_total_size: f.id === 'size' ? !!f.show_total_size : false,
+      encrypt_link: f.id === 'link' ? !!f.encrypt_link : false,
+    });
+  });
+  NEXTBOT_DEFAULT_TEMPLATE.forEach((def) => {
+    if (!seen.has(def.id)) {
+      out.push({ ...def });
+    }
+  });
+  return out;
+}
+
+function normalizeNextBotJS(b = {}, idx = 0) {
+  return {
+    id: String(b.id || `bot-${Date.now().toString(36)}-${idx}`),
+    bot_token: String(b.bot_token || ''),
+    chat_id: String(b.chat_id || ''),
+    verified_title: String(b.verified_title || ''),
+    avatar_url: String(b.avatar_url || ''),
+    is_paused: !!b.is_paused,
+    enable_poster: b.enable_poster !== false,
+    enable_signature: !!b.enable_signature,
+    custom_signature: String(b.custom_signature || ''),
+    is_bot_transfer: !!b.is_bot_transfer,
+    receive_radar: !!b.receive_radar,
+    library_notification_enabled: b.library_notification_enabled !== false,
+    template_config: normalizeNextBotTemplateJS(b.template_config),
+    last_update_id: Number(b.last_update_id || 0),
+    _verifying: false,
+    _deleting: false,
+  };
+}
+
+function serializeNextBotJS(b) {
+  return {
+    id: b.id,
+    bot_token: String(b.bot_token || '').trim(),
+    chat_id: String(b.chat_id || '').trim(),
+    verified_title: String(b.verified_title || '').trim(),
+    avatar_url: String(b.avatar_url || ''),
+    is_paused: !!b.is_paused,
+    enable_poster: b.enable_poster !== false,
+    enable_signature: !!b.enable_signature,
+    custom_signature: String(b.custom_signature || ''),
+    is_bot_transfer: !!b.is_bot_transfer,
+    receive_radar: !!b.receive_radar,
+    library_notification_enabled: b.library_notification_enabled !== false,
+    template_config: normalizeNextBotTemplateJS(b.template_config).map((f) => ({
+      id: f.id,
+      name: f.name,
+      enabled: f.enabled !== false,
+      append_episodes: !!f.append_episodes,
+      show_total_size: !!f.show_total_size,
+      encrypt_link: !!f.encrypt_link,
+    })),
+    last_update_id: Number(b.last_update_id || 0),
+  };
+}
+
 function ensureChannelDraft() {
   if (state.channelDraft) return state.channelDraft;
   const st = state.boot.state;
@@ -1485,6 +1581,7 @@ function ensureChannelDraft() {
       on_rss_subscribe: st.notifications?.on_rss_subscribe !== false,
       on_checkin: st.notifications?.on_checkin !== false,
       include_poster: st.notifications?.include_poster !== false,
+      telegram_bots: (st.notifications?.telegram_bots || []).map((b, idx) => normalizeNextBotJS(b, idx)),
     },
   };
   return state.channelDraft;
@@ -1513,6 +1610,12 @@ function syncDraftFromChannelsDOM(root) {
   if (q('#nt-rss')) d.notifications.on_rss_subscribe = q('#nt-rss').checked;
   if (q('#nt-checkin')) d.notifications.on_checkin = q('#nt-checkin').checked;
   if (q('#nt-poster')) d.notifications.include_poster = q('#nt-poster').checked;
+  (d.notifications.telegram_bots || []).forEach((b, i) => {
+    const tokEl = q(`[data-nb-token="${i}"]`);
+    if (tokEl) b.bot_token = tokEl.value.trim();
+    const chatEl = q(`[data-nb-chat="${i}"]`);
+    if (chatEl && !b.verified_title) b.chat_id = chatEl.value.trim();
+  });
 }
 
 function buildSaveChannelsPayload(d) {
@@ -1533,6 +1636,10 @@ function buildSaveChannelsPayload(d) {
     })
     .filter(Boolean);
 
+  const telegram_bots = (d.notifications.telegram_bots || [])
+    .filter((b) => String(b.bot_token || '').trim() || String(b.chat_id || '').trim())
+    .map(serializeNextBotJS);
+
   return {
     custom_proxy: d.custom_proxy,
     hdhive: d.hdhive,
@@ -1545,7 +1652,10 @@ function buildSaveChannelsPayload(d) {
       bot_chat_id: d.telegram.bot_chat_id,
     },
     ayclub: d.ayclub,
-    notifications: d.notifications,
+    notifications: {
+      ...d.notifications,
+      telegram_bots,
+    },
   };
 }
 
@@ -2109,6 +2219,91 @@ function renderChannelsTab(root) {
         <label class="mf-row"><input type="checkbox" id="nt-poster" ${d.notifications.include_poster ? 'checked' : ''} /> 推送附带 TMDB 影视海报封面</label>
       </div>
     </div>
+
+    <div class="mf-card" style="padding:20px 22px">
+      ${(() => {
+        const bots = d.notifications.telegram_bots || [];
+        const activeCnt = bots.filter((b) => !b.is_paused && b.bot_token && b.chat_id).length;
+        const hasTransferBot = bots.some((b) => !b.is_paused && b.is_bot_transfer && b.bot_token);
+        return `
+          <div class="mf-card-head" style="margin-bottom:16px">
+            <div>
+              <div class="nf-tg-head-title">
+                <div class="nf-tg-icon-box">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                </div>
+                <span>6. NextBOT</span>
+                <span class="mf-pill ${activeCnt > 0 ? 'success' : 'neutral'}">${activeCnt > 0 ? `${activeCnt}/${bots.length} 运行中` : '多机器人自定义推送 · 雷达 · BOT转存'}</span>
+              </div>
+              <div class="mf-card-sub" style="margin-top:4px">支持配置多个 Telegram Bot：自定义拖拽通知模板、TMDB 横版海报、NextFind 同款链接加密、TG 新片推送雷达，以及私聊/群组发送 115/ED2K/磁力自动 <strong>BOT 转存</strong>（每 2 分钟自动轮询）</div>
+            </div>
+            <div class="mf-actions">
+              ${hasTransferBot ? `<button type="button" class="mf-btn sm" id="btn-nb-poll">立即拉取 BOT 转存</button>` : ''}
+              <button type="button" class="mf-btn sm primary" id="btn-nb-save">保存 NextBOT 配置</button>
+            </div>
+          </div>
+
+          <div class="nf-bot-list" id="nb-bot-list">
+            ${bots.map((bot, i) => `
+              <div class="nf-bot-row ${bot._deleting ? 'deleting' : ''}" data-nb-row="${i}">
+                <div class="nf-bot-token-wrap">
+                  <div class="nf-float-box ${bot._deleting ? 'deleting' : ''}">
+                    <label class="nf-float-label">Bot Token</label>
+                    <input type="text" class="nf-tg-input" data-nb-token="${i}" value="${esc(bot.bot_token)}" placeholder="123456789:AAH..." autocomplete="off" />
+                    <button type="button" class="nf-tg-toggle ${bot.is_paused ? 'hidden-mode' : ''}" data-nb-pause="${i}" data-tip="${bot.is_paused ? '推送已暂停（点击恢复）' : '推送运行中（点击暂停）'}">
+                      <span class="nf-tg-toggle-knob"></span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="nf-bot-right">
+                  <div class="nf-float-box nf-bot-chat-box ${bot._deleting ? 'deleting' : ''}">
+                    <label class="nf-float-label">接收方</label>
+                    <button type="button" class="nf-tg-avatar" data-nb-verify="${i}" title="搜索并验证接收方频道/群组/账号">
+                      ${bot._verifying
+                        ? `<svg class="nf-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke-linecap="round"/></svg>`
+                        : bot.avatar_url
+                          ? `<img src="${esc(bot.avatar_url)}" alt="" />`
+                          : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5" stroke-linecap="round"/></svg>`}
+                    </button>
+                    ${bot.verified_title
+                      ? `<input type="text" class="nf-tg-input" value="${esc(bot.verified_title)}" readonly title="${esc(bot.verified_title)}" />
+                         <button type="button" class="nf-bot-clear" data-nb-clear="${i}" title="清除重新输入">×</button>`
+                      : `<input type="text" class="nf-tg-input" data-nb-chat="${i}" value="${esc(bot.chat_id)}" placeholder="Chat ID / @频道 / 中文频道名" autocomplete="off" />`}
+                  </div>
+
+                  <div class="nf-bot-badges">
+                    ${bot.library_notification_enabled ? `<span class="mf-pill info">入库</span>` : ''}
+                    ${bot.receive_radar ? `<span class="mf-pill warn">雷达</span>` : ''}
+                    ${bot.is_bot_transfer ? `<span class="mf-pill success">转存</span>` : ''}
+                  </div>
+
+                  <div class="nf-tg-ops" data-nb-ops="${i}">
+                    <button type="button" class="nf-tg-icon-btn" data-nb-tpl="${i}" title="配置模板与测试">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </button>
+                    ${bot._deleting
+                      ? `<button type="button" class="nf-tg-icon-btn nf-tg-del-confirm" data-nb-del-confirm="${i}" data-tip="确认删除">
+                           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                         </button>`
+                      : `<button type="button" class="nf-tg-icon-btn nf-tg-del-arm" data-nb-del-arm="${i}" title="删除机器人">
+                           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="9" y1="12" x2="15" y2="12" stroke-width="2.6" stroke-linecap="round"/></svg>
+                         </button>`}
+                    <div class="nf-tg-icon-btn nf-tg-drag" draggable="true" data-nb-drag="${i}" title="按住拖动排序">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 15l5 5 5-5M7 9l5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <button type="button" class="nf-tg-add" id="btn-nb-add" style="width:100%;margin-top:${bots.length ? '10px' : '0'}">
+            <span>+ 添加机器人</span>
+          </button>
+        `;
+      })()}
+    </div>
   `;
 
   const collectAndSave = async (toastMsg = '已保存资源渠道配置', silent = false) => {
@@ -2473,6 +2668,383 @@ function renderChannelsTab(root) {
   });
   root.querySelectorAll('[data-toggle-rss]').forEach((b) => { b.onclick = () => callAction('ui_toggle_rss', { id: b.dataset.toggleRss }); });
   root.querySelectorAll('[data-del-rss]').forEach((b) => { b.onclick = () => callAction('ui_delete_rss', { id: b.dataset.delRss }); });
+
+  // ==================== NextBOT Events ====================
+  const bots = d.notifications.telegram_bots || [];
+  const verifyNextBotAt = async (idx) => {
+    syncDraftFromChannelsDOM(root);
+    const bot = bots[idx];
+    if (!bot || bot._verifying) return;
+    if (!bot.bot_token.trim() || !bot.chat_id.trim()) {
+      showToast('请先填写 Bot Token 和 接收方 Chat ID / 频道名', 'error');
+      return;
+    }
+    bot._verifying = true;
+    renderChannelsTab(root);
+    try {
+      const res = await bridge.action('ui_verify_tg_bot', {
+        id: bot.id,
+        bot_token: bot.bot_token,
+        chat_id: bot.chat_id,
+      });
+      bot.verified_title = res.title || '';
+      bot.avatar_url = res.avatar || '';
+      if (res.corrected_chat_id) bot.chat_id = String(res.corrected_chat_id);
+      bot._verifying = false;
+      renderChannelsTab(root);
+      showToast(`验证成功：${bot.verified_title}`, 'success');
+      scheduleAutoSave();
+    } catch (err) {
+      bot._verifying = false;
+      bot.verified_title = '';
+      bot.avatar_url = '';
+      renderChannelsTab(root);
+      showToast(err.message || String(err), 'error');
+    }
+  };
+
+  root.querySelectorAll('[data-nb-pause]').forEach((btn) => {
+    btn.onclick = () => {
+      syncDraftFromChannelsDOM(root);
+      const bot = bots[Number(btn.dataset.nbPause)];
+      if (!bot) return;
+      bot.is_paused = !bot.is_paused;
+      renderChannelsTab(root);
+      scheduleAutoSave();
+    };
+  });
+
+  root.querySelectorAll('[data-nb-verify]').forEach((btn) => {
+    btn.onclick = () => verifyNextBotAt(Number(btn.dataset.nbVerify));
+  });
+
+  root.querySelectorAll('[data-nb-chat]').forEach((inp) => {
+    const idx = Number(inp.dataset.nbChat);
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        verifyNextBotAt(idx);
+      }
+    };
+    inp.onblur = () => {
+      syncDraftFromChannelsDOM(root);
+      const b = bots[idx];
+      if (b && b.bot_token.trim() && b.chat_id.trim() && !b.verified_title) {
+        verifyNextBotAt(idx);
+      }
+    };
+  });
+
+  root.querySelectorAll('[data-nb-clear]').forEach((btn) => {
+    btn.onclick = () => {
+      syncDraftFromChannelsDOM(root);
+      const bot = bots[Number(btn.dataset.nbClear)];
+      if (!bot) return;
+      bot.verified_title = '';
+      bot.chat_id = '';
+      bot.avatar_url = '';
+      renderChannelsTab(root);
+    };
+  });
+
+  root.querySelectorAll('[data-nb-tpl]').forEach((btn) => {
+    btn.onclick = () => {
+      syncDraftFromChannelsDOM(root);
+      const bot = bots[Number(btn.dataset.nbTpl)];
+      if (bot) openNextBotTemplateModal(bot, root, collectAndSave);
+    };
+  });
+
+  root.querySelectorAll('[data-nb-del-arm]').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      syncDraftFromChannelsDOM(root);
+      bots.forEach((b, idx) => { b._deleting = idx === Number(btn.dataset.nbDelArm); });
+      renderChannelsTab(root);
+    };
+  });
+
+  root.querySelectorAll('[data-nb-ops]').forEach((ops) => {
+    ops.onmouseleave = () => {
+      const bot = bots[Number(ops.dataset.nbOps)];
+      if (bot && bot._deleting) {
+        syncDraftFromChannelsDOM(root);
+        bot._deleting = false;
+        renderChannelsTab(root);
+      }
+    };
+  });
+
+  root.querySelectorAll('[data-nb-del-confirm]').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      syncDraftFromChannelsDOM(root);
+      bots.splice(Number(btn.dataset.nbDelConfirm), 1);
+      renderChannelsTab(root);
+      scheduleAutoSave();
+    };
+  });
+
+  root.querySelectorAll('[data-nb-drag]').forEach((handle) => {
+    const idx = Number(handle.dataset.nbDrag);
+    const row = root.querySelector(`[data-nb-row="${idx}"]`);
+    handle.ondragstart = (e) => {
+      syncDraftFromChannelsDOM(root);
+      state.dragNBIndex = idx;
+      if (row) row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(idx));
+    };
+    handle.ondragend = () => {
+      state.dragNBIndex = -1;
+      root.querySelectorAll('[data-nb-row]').forEach((r) => r.classList.remove('dragging', 'drag-over'));
+    };
+  });
+
+  root.querySelectorAll('[data-nb-row]').forEach((row) => {
+    const targetIdx = Number(row.dataset.nbRow);
+    row.ondragover = (e) => {
+      if (state.dragNBIndex < 0 || state.dragNBIndex === targetIdx) return;
+      e.preventDefault();
+      row.classList.add('drag-over');
+    };
+    row.ondragleave = () => row.classList.remove('drag-over');
+    row.ondrop = (e) => {
+      e.preventDefault();
+      row.classList.remove('drag-over');
+      const fromIdx = state.dragNBIndex;
+      state.dragNBIndex = -1;
+      if (fromIdx < 0 || fromIdx === targetIdx || fromIdx >= bots.length) return;
+      const [moved] = bots.splice(fromIdx, 1);
+      bots.splice(targetIdx, 0, moved);
+      renderChannelsTab(root);
+      scheduleAutoSave();
+    };
+  });
+
+  const nbAddBtn = root.querySelector('#btn-nb-add');
+  if (nbAddBtn) {
+    nbAddBtn.onclick = () => {
+      syncDraftFromChannelsDOM(root);
+      d.notifications.telegram_bots.push(normalizeNextBotJS({ id: `bot-${Date.now().toString(36)}` }, bots.length));
+      renderChannelsTab(root);
+      const lastInp = root.querySelector(`[data-nb-token="${d.notifications.telegram_bots.length - 1}"]`);
+      if (lastInp) lastInp.focus();
+    };
+  }
+  const nbSaveBtn = root.querySelector('#btn-nb-save');
+  if (nbSaveBtn) nbSaveBtn.onclick = () => collectAndSave('已保存 NextBOT 配置');
+  const nbPollBtn = root.querySelector('#btn-nb-poll');
+  if (nbPollBtn) {
+    nbPollBtn.onclick = async () => {
+      await collectAndSave('', true);
+      await callAction('ui_poll_nextbot_transfers', {});
+    };
+  }
+}
+
+function openNextBotTemplateModal(bot, root, onSaveChannels) {
+  bot.template_config = normalizeNextBotTemplateJS(bot.template_config);
+  const modalRoot = document.getElementById('modal-root');
+  modalRoot.classList.remove('hidden');
+  let dragFieldIdx = -1;
+
+  const renderModal = () => {
+    const fieldPreview = (f) => {
+      if (f.id === 'title') {
+        return f.append_episodes ? '📺 电视剧：绝命毒师 (2008) S01E01-E07' : '📺 电视剧：绝命毒师 (2008)';
+      }
+      if (f.id === 'size') {
+        return f.show_total_size ? '💾 大小: 101.08 GB (总大小)' : '💾 大小: 14.44 GB (本次转存)';
+      }
+      if (f.id === 'link') {
+        return f.encrypt_link ? '🔗 链接: https://115cdn.com/s/[加密绑定防转发]' : '🔗 链接: https://115.com/s/...';
+      }
+      return f.example || '';
+    };
+
+    modalRoot.innerHTML = `
+      <div class="mf-modal" style="width:min(560px, 95vw)">
+        <div class="mf-modal-head">
+          <strong>⚙️ NextBOT 模板配置</strong>
+          <div class="mf-actions">
+            <button type="button" class="mf-btn sm primary" id="nb-tpl-test">发送测试消息</button>
+            <button type="button" class="mf-btn sm" id="nb-tpl-close">关闭</button>
+          </div>
+        </div>
+        <div class="mf-modal-body" style="max-height:66vh;overflow-y:auto">
+          <div class="nf-tpl-row fixed ${bot.enable_poster ? '' : 'muted'}">
+            <span class="nf-tpl-drag disabled">⋮⋮</span>
+            <span class="nf-tpl-name">海报</span>
+            <span class="nf-tpl-preview">🖼️ TMDB 横版高清背景图（发图失败自动回退文本）</span>
+            <button type="button" class="nf-tg-toggle ${bot.enable_poster ? '' : 'hidden-mode'}" id="nb-tpl-poster">
+              <span class="nf-tg-toggle-knob"></span>
+            </button>
+          </div>
+
+          <div class="nf-tpl-list">
+            ${bot.template_config.map((f, idx) => `
+              <div class="nf-tpl-row ${f.enabled ? '' : 'muted'}" data-tpl-row="${idx}">
+                <span class="nf-tpl-drag" draggable="true" data-tpl-drag="${idx}" title="拖动排序">⋮⋮</span>
+                <span class="nf-tpl-name">${esc(f.name)}</span>
+                <span class="nf-tpl-preview">${esc(fieldPreview(f))}</span>
+                ${f.id === 'title' ? `<label class="nf-tpl-extra"><input type="checkbox" data-tpl-opt="append_episodes:${idx}" ${f.append_episodes ? 'checked' : ''} /> 附加集</label>` : ''}
+                ${f.id === 'size' ? `<label class="nf-tpl-extra"><input type="checkbox" data-tpl-opt="show_total_size:${idx}" ${f.show_total_size ? 'checked' : ''} /> 总大小</label>` : ''}
+                ${f.id === 'link' ? `<label class="nf-tpl-extra"><input type="checkbox" data-tpl-opt="encrypt_link:${idx}" ${f.encrypt_link ? 'checked' : ''} /> 加密</label>` : ''}
+                <div class="nf-tpl-moves">
+                  <button type="button" class="nf-tpl-mv" data-tpl-mv="${idx}:-1" ${idx === 0 ? 'disabled' : ''} title="上移">↑</button>
+                  <button type="button" class="nf-tpl-mv" data-tpl-mv="${idx}:1" ${idx === bot.template_config.length - 1 ? 'disabled' : ''} title="下移">↓</button>
+                </div>
+                <button type="button" class="nf-tg-toggle ${f.enabled ? '' : 'hidden-mode'}" data-tpl-en="${idx}">
+                  <span class="nf-tg-toggle-knob"></span>
+                </button>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="nf-tpl-row fixed ${bot.enable_signature ? '' : 'muted'}" style="margin-top:6px">
+            <span class="nf-tpl-drag disabled">⋮⋮</span>
+            <span class="nf-tpl-name">签名</span>
+            <input type="text" id="nb-tpl-sig" class="mf-input" style="flex:1;min-width:0;height:32px;font-size:12.5px" value="${esc(bot.custom_signature || '')}" placeholder="例如：- Powered by MediFind" />
+            <button type="button" class="nf-tg-toggle ${bot.enable_signature ? '' : 'hidden-mode'}" id="nb-tpl-sig-en">
+              <span class="nf-tg-toggle-knob"></span>
+            </button>
+          </div>
+        </div>
+        <div class="mf-modal-foot" style="flex-wrap:wrap;gap:10px">
+          <div class="mf-row" style="gap:14px;flex-wrap:wrap">
+            <label class="mf-row"><input type="checkbox" id="nb-opt-lib" ${bot.library_notification_enabled ? 'checked' : ''} /> 转存/入库通知</label>
+            <label class="mf-row"><input type="checkbox" id="nb-opt-transfer" ${bot.is_bot_transfer ? 'checked' : ''} /> BOT 转存</label>
+            <label class="mf-row"><input type="checkbox" id="nb-opt-radar" ${bot.receive_radar ? 'checked' : ''} /> 推送雷达</label>
+          </div>
+          <button type="button" class="mf-btn primary" id="nb-tpl-done">完成并保存</button>
+        </div>
+      </div>
+    `;
+
+    const syncSigInput = () => {
+      const el = modalRoot.querySelector('#nb-tpl-sig');
+      if (el) bot.custom_signature = el.value;
+    };
+
+    modalRoot.querySelector('#nb-tpl-close').onclick = () => {
+      syncSigInput();
+      modalRoot.classList.add('hidden');
+      renderChannelsTab(root);
+    };
+
+    modalRoot.querySelector('#nb-tpl-poster').onclick = () => {
+      syncSigInput();
+      bot.enable_poster = !bot.enable_poster;
+      renderModal();
+    };
+    modalRoot.querySelector('#nb-tpl-sig-en').onclick = () => {
+      syncSigInput();
+      bot.enable_signature = !bot.enable_signature;
+      renderModal();
+    };
+    modalRoot.querySelector('#nb-opt-lib').onchange = (e) => { bot.library_notification_enabled = e.target.checked; };
+    modalRoot.querySelector('#nb-opt-transfer').onchange = (e) => { bot.is_bot_transfer = e.target.checked; };
+    modalRoot.querySelector('#nb-opt-radar').onchange = (e) => { bot.receive_radar = e.target.checked; };
+
+    modalRoot.querySelectorAll('[data-tpl-en]').forEach((btn) => {
+      btn.onclick = () => {
+        syncSigInput();
+        const f = bot.template_config[Number(btn.dataset.tplEn)];
+        if (f) f.enabled = !f.enabled;
+        renderModal();
+      };
+    });
+
+    modalRoot.querySelectorAll('[data-tpl-opt]').forEach((chk) => {
+      chk.onchange = () => {
+        syncSigInput();
+        const [prop, idxStr] = chk.dataset.tplOpt.split(':');
+        const f = bot.template_config[Number(idxStr)];
+        if (f) f[prop] = chk.checked;
+        renderModal();
+      };
+    });
+
+    modalRoot.querySelectorAll('[data-tpl-mv]').forEach((btn) => {
+      btn.onclick = () => {
+        syncSigInput();
+        const [idxStr, deltaStr] = btn.dataset.tplMv.split(':');
+        const idx = Number(idxStr);
+        const nextIdx = idx + Number(deltaStr);
+        if (nextIdx < 0 || nextIdx >= bot.template_config.length) return;
+        const [moved] = bot.template_config.splice(idx, 1);
+        bot.template_config.splice(nextIdx, 0, moved);
+        renderModal();
+      };
+    });
+
+    modalRoot.querySelectorAll('[data-tpl-drag]').forEach((handle) => {
+      const idx = Number(handle.dataset.tplDrag);
+      handle.ondragstart = (e) => {
+        syncSigInput();
+        dragFieldIdx = idx;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(idx));
+      };
+      handle.ondragend = () => {
+        dragFieldIdx = -1;
+        modalRoot.querySelectorAll('[data-tpl-row]').forEach((r) => r.classList.remove('drag-over'));
+      };
+    });
+
+    modalRoot.querySelectorAll('[data-tpl-row]').forEach((row) => {
+      const targetIdx = Number(row.dataset.tplRow);
+      row.ondragover = (e) => {
+        if (dragFieldIdx < 0 || dragFieldIdx === targetIdx) return;
+        e.preventDefault();
+        row.classList.add('drag-over');
+      };
+      row.ondragleave = () => row.classList.remove('drag-over');
+      row.ondrop = (e) => {
+        e.preventDefault();
+        row.classList.remove('drag-over');
+        if (dragFieldIdx < 0 || dragFieldIdx === targetIdx) return;
+        const [moved] = bot.template_config.splice(dragFieldIdx, 1);
+        bot.template_config.splice(targetIdx, 0, moved);
+        dragFieldIdx = -1;
+        renderModal();
+      };
+    });
+
+    modalRoot.querySelector('#nb-tpl-test').onclick = async () => {
+      syncSigInput();
+      if (!bot.bot_token.trim() || !bot.chat_id.trim()) {
+        showToast('请先填写 Bot Token 和 接收方 Chat ID', 'error');
+        return;
+      }
+      const btn = modalRoot.querySelector('#nb-tpl-test');
+      btn.disabled = true;
+      btn.textContent = '发送中…';
+      try {
+        const res = await bridge.action('ui_test_tg_bot', {
+          bot_token: bot.bot_token,
+          chat_id: bot.chat_id,
+          bot_conf: serializeNextBotJS(bot),
+        });
+        showToast(res?.notice || 'NextBOT 测试消息发送成功', 'success');
+      } catch (err) {
+        showToast(err.message || String(err), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '发送测试消息';
+      }
+    };
+
+    modalRoot.querySelector('#nb-tpl-done').onclick = async () => {
+      syncSigInput();
+      modalRoot.classList.add('hidden');
+      renderChannelsTab(root);
+      if (onSaveChannels) await onSaveChannels('已保存 NextBOT 模板配置');
+    };
+  };
+
+  renderModal();
 }
 
 function openEditRSSModal(feed) {

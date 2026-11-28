@@ -763,6 +763,77 @@ pub fn list_joined_dialogs(
     })
 }
 
+/// Search logged-in Telegram dialogs (channels, supergroups, groups, and private chats) by display name
+/// to resolve real numeric Bot API chat IDs for NextBOT verification.
+pub fn find_dialog_chat_ids_by_name(
+    data_dir: &Path,
+    cfg: &AppConfig,
+    query: &str,
+    proxy_url: &str,
+) -> Result<Vec<String>> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() || !has_session_file(data_dir) {
+        return Ok(Vec::new());
+    }
+    let session_path = data_dir.join(SESSION_FILENAME);
+    let session = Session::load_file(&session_path).context("加载 Telegram 会话失败")?;
+    let (api_id, api_hash) = effective_api_credentials(cfg);
+
+    let rt = build_runtime()?;
+    rt.block_on(async {
+        let socks5 = prepare_mtproto_proxy(proxy_url).await?;
+        let client = connect_client(session, api_id, &api_hash, None, socks5).await?;
+        if !client.is_authorized().await.unwrap_or(false) {
+            return Ok(Vec::new());
+        }
+        let mut exact = Vec::new();
+        let mut partial = Vec::new();
+        let mut seen = HashSet::new();
+        let mut dialogs = client.iter_dialogs();
+        let mut scanned = 0usize;
+        while scanned < 250 {
+            match tokio::time::timeout(Duration::from_secs(10), dialogs.next()).await {
+                Ok(Ok(Some(d))) => {
+                    scanned += 1;
+                    let chat = d.chat().clone();
+                    let name_low = chat.name().trim().to_lowercase();
+                    if name_low.is_empty() {
+                        continue;
+                    }
+                    let is_exact = name_low == q;
+                    let is_partial = !is_exact && name_low.contains(&q);
+                    if !is_exact && !is_partial {
+                        continue;
+                    }
+                    let real_id = match &chat {
+                        Chat::Channel(ch) => format!("-100{}", ch.id()),
+                        Chat::Group(g) => {
+                            let id_s = g.id().to_string();
+                            if id_s.starts_with('-') {
+                                id_s
+                            } else {
+                                format!("-{}", id_s)
+                            }
+                        }
+                        Chat::User(u) => u.id().to_string(),
+                    };
+                    if seen.insert(real_id.clone()) {
+                        if is_exact {
+                            exact.push(real_id);
+                        } else {
+                            partial.push(real_id);
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        let _ = save_session_bytes(client.session(), &session_path);
+        exact.extend(partial);
+        Ok(exact)
+    })
+}
+
 pub fn sync_channels_mtproto(
     data_dir: &Path,
     db: &Db,
