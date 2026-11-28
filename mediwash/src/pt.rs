@@ -716,12 +716,20 @@ pub fn act_pt_candidate(
             };
             let mut vars = std::collections::BTreeMap::new();
             vars.insert("media_icon", media_icon.to_string());
+            vars.insert("name", title.clone());
             vars.insert("display_title", title.clone());
             vars.insert("season_episode", se_tag);
             vars.insert("download_action", "PT洗版下载".to_string());
             vars.insert("torrent_title", torrent_title.clone());
             vars.insert("site", site_label);
             vars.insert("size", size_str);
+            if live_item.production_year > 0 {
+                vars.insert("year", live_item.production_year.to_string());
+            }
+            if !category.is_empty() {
+                vars.insert("category", category.clone());
+                vars.insert("secondary_category", category.clone());
+            }
             let nt_title =
                 crate::host::render_mediary_template(&tpls.download_started.title, &vars);
             let mut nt_body =
@@ -734,7 +742,9 @@ pub fn act_pt_candidate(
                 nt_body.push('\n');
             }
             nt_body.push_str(&extra);
-            let img = host.resolve_tmdb_card_image(&tmdb_id, &media_type);
+            let img = host.resolve_tmdb_card_image(&tmdb_id, &media_type).or_else(|| {
+                crate::host::tmdb_card_image_https(&live_item.backdrop_path, &live_item.poster_path)
+            });
             host.notify(&nt_title, &nt_body, img.as_deref());
         }
     }

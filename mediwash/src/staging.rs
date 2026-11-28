@@ -1854,6 +1854,7 @@ pub fn execute_staging_items_opts(
         verdict: String,
         media_type: String,
         tmdb_id: String,
+        year: u32,
         season: u32,
         episode: u32,
         category: String,
@@ -1876,7 +1877,7 @@ pub fn execute_staging_items_opts(
         let row = db
             .query_row(
                 "SELECT pipeline_id, file_id, parent_cid, rel_path, name, sha1, media_type, tmdb_id,
-                        title, season, episode, category, slot, cand_score, lib_score,
+                        title, year, season, episode, category, slot, cand_score, lib_score,
                         verdict, state, reason, detail_json, sidecar_ids_json
                  FROM staging_items WHERE id = ?",
                 [row_id],
@@ -1893,15 +1894,16 @@ pub fn execute_staging_items_opts(
                         r.get::<_, String>(8)?,
                         r.get::<_, u32>(9)?,
                         r.get::<_, u32>(10)?,
-                        r.get::<_, String>(11)?,
+                        r.get::<_, u32>(11)?,
                         r.get::<_, String>(12)?,
-                        r.get::<_, f64>(13)?,
-                        r.get::<_, Option<f64>>(14)?,
-                        r.get::<_, String>(15)?,
+                        r.get::<_, String>(13)?,
+                        r.get::<_, f64>(14)?,
+                        r.get::<_, Option<f64>>(15)?,
                         r.get::<_, String>(16)?,
                         r.get::<_, String>(17)?,
                         r.get::<_, String>(18)?,
                         r.get::<_, String>(19)?,
+                        r.get::<_, String>(20)?,
                     ))
                 },
             )
@@ -1916,6 +1918,7 @@ pub fn execute_staging_items_opts(
             media_type,
             tmdb_id,
             title,
+            year,
             season,
             episode,
             category,
@@ -2091,6 +2094,7 @@ pub fn execute_staging_items_opts(
             verdict,
             media_type,
             tmdb_id,
+            year,
             season,
             episode,
             category: eff_category,
@@ -2848,6 +2852,20 @@ pub fn execute_staging_items_opts(
 
         let now_str = format_ts_cn(now_ts());
         let tpls = host.get_notification_templates();
+        let clean_notify_name = |raw: &str| -> String {
+            let trimmed = raw.trim();
+            let base = if is_video_name(trimmed) {
+                trimmed.rsplit_once('.').map_or(trimmed, |(s, _)| s)
+            } else {
+                trimmed
+            };
+            let chars: Vec<char> = base.chars().collect();
+            if chars.len() > 42 {
+                format!("{}…", chars[..42].iter().collect::<String>().trim_end())
+            } else {
+                base.to_string()
+            }
+        };
 
         if !organized_indices.is_empty() {
             if tpls.transfer_completed.enabled {
@@ -2855,17 +2873,36 @@ pub fn execute_staging_items_opts(
                 let first_pa = &pending_actions[organized_indices[0]];
                 let media_icon = if first_pa.media_type == "tv" { "📺" } else { "🎬" };
                 let display_name = if org_groups.len() == 1 {
-                    org_groups[0].2.clone()
+                    clean_notify_name(&org_groups[0].2)
                 } else {
-                    format!("{} 等 {} 部影视", strip_ep(&first_pa.display_title), org_groups.len())
+                    format!(
+                        "{} 等 {} 部影视",
+                        clean_notify_name(&strip_ep(&first_pa.display_title)),
+                        org_groups.len()
+                    )
                 };
                 let mut vars = BTreeMap::new();
                 vars.insert("is_success", "true".to_string());
                 vars.insert("media_icon", media_icon.to_string());
-                vars.insert("name", strip_ep(&first_pa.display_title));
+                vars.insert("name", clean_notify_name(&strip_ep(&first_pa.display_title)));
                 vars.insert("display_name", display_name);
-                if org_groups.len() == 1 && !first_pa.category.is_empty() {
-                    vars.insert("category", first_pa.category.clone());
+                if org_groups.len() == 1 {
+                    if !first_pa.category.is_empty() {
+                        vars.insert("category", first_pa.category.clone());
+                        vars.insert("secondary_category", first_pa.category.clone());
+                    }
+                    if first_pa.year > 0 {
+                        vars.insert("year", first_pa.year.to_string());
+                    }
+                    if organized_indices.len() == 1
+                        && first_pa.media_type == "tv"
+                        && first_pa.episode > 0
+                    {
+                        vars.insert(
+                            "season_episode",
+                            format!("S{:02}E{:02}", first_pa.season.max(1), first_pa.episode),
+                        );
+                    }
                 }
                 let nt_title =
                     crate::host::render_mediary_template(&tpls.transfer_completed.title, &vars);
@@ -2917,59 +2954,108 @@ pub fn execute_staging_items_opts(
                 host.notify(&nt_title, &lines.join("\n"), img.as_deref());
             }
         } else if !recycled_indices.is_empty() {
-            let rec_groups = build_group_labels(&recycled_indices);
-            let first_rec = recycled_indices
-                .iter()
-                .map(|&i| &pending_actions[i])
-                .find(|pa| !pa.tmdb_id.is_empty())
-                .unwrap_or(&pending_actions[recycled_indices[0]]);
-            let media_icon = if first_rec.media_type == "tv" { "📺" } else { "🎬" };
-            let nt_title = if recycled_indices.len() == 1 {
-                format!("{media_icon} {} 🗑️去重回收", rec_groups[0].2)
-            } else if rec_groups.len() == 1 {
-                format!("{media_icon} {} 🗑️回收清理 ({recycled_115} 项)", rec_groups[0].2)
-            } else {
-                format!(
-                    "🧹 {} 等 {} 部影视 🗑️回收清理 ({recycled_115} 项)",
-                    strip_ep(&first_rec.display_title),
-                    rec_groups.len()
-                )
-            };
-            let dup_cnt = recycled_indices
-                .iter()
-                .filter(|&&i| {
-                    pending_actions[i].verdict == "already_in_lib"
-                        || pending_actions[i].reason.contains("同批次")
-                })
-                .count();
-            let low_cnt = recycled_indices.len().saturating_sub(dup_cnt);
-            let reason_summary = match (dup_cnt > 0, low_cnt > 0) {
-                (true, true) => format!("已在库/重复 {dup_cnt} 项 · 低分淘汰 {low_cnt} 项"),
-                (true, false) => format!("同源已在库/同批重复 {dup_cnt} 项"),
-                (false, true) => format!("权重评分未达标淘汰 {low_cnt} 项"),
-                (false, false) => format!("移入 115 回收站 {recycled_115} 项"),
-            };
-            let preview: Vec<&str> = rec_groups.iter().take(4).map(|g| g.2.as_str()).collect();
-            let more = if rec_groups.len() > 4 { " 等" } else { "" };
-            let mut lines = Vec::new();
-            if rec_groups.len() > 1 || recycled_indices.len() > 1 {
-                lines.push(format!("📌 涉及: {}{more}", preview.join(" / ")));
+            if tpls.transfer_completed.enabled {
+                let rec_groups = build_group_labels(&recycled_indices);
+                let first_rec = recycled_indices
+                    .iter()
+                    .map(|&i| &pending_actions[i])
+                    .find(|pa| !pa.tmdb_id.is_empty())
+                    .unwrap_or(&pending_actions[recycled_indices[0]]);
+                let media_icon = if first_rec.media_type == "tv" { "📺" } else { "🎬" };
+                let base_name = clean_notify_name(&strip_ep(&first_rec.display_title));
+                let display_name = if recycled_indices.len() == 1 {
+                    clean_notify_name(&rec_groups[0].2)
+                } else if rec_groups.len() == 1 {
+                    format!("{} ({recycled_115} 项)", clean_notify_name(&rec_groups[0].2))
+                } else {
+                    format!("{base_name} 等 {} 项", recycled_115)
+                };
+                let mut vars = BTreeMap::new();
+                vars.insert("is_success", "true".to_string());
+                vars.insert("media_icon", media_icon.to_string());
+                vars.insert("name", base_name);
+                vars.insert("display_name", display_name);
+                if rec_groups.len() == 1 {
+                    if !first_rec.category.is_empty() {
+                        vars.insert("category", first_rec.category.clone());
+                        vars.insert("secondary_category", first_rec.category.clone());
+                    }
+                    if first_rec.year > 0 {
+                        vars.insert("year", first_rec.year.to_string());
+                    }
+                    if recycled_indices.len() == 1
+                        && first_rec.media_type == "tv"
+                        && first_rec.episode > 0
+                    {
+                        vars.insert(
+                            "season_episode",
+                            format!("S{:02}E{:02}", first_rec.season.max(1), first_rec.episode),
+                        );
+                    }
+                }
+                let raw_title =
+                    crate::host::render_mediary_template(&tpls.transfer_completed.title, &vars);
+                let badge = if recycled_indices.len() == 1 {
+                    "🗑️去重回收"
+                } else {
+                    "🗑️回收清理"
+                };
+                let nt_title = crate::host::format_transfer_template_title(&raw_title, badge);
+                let mut lines: Vec<String> = Vec::new();
+                let rendered_body =
+                    crate::host::render_mediary_template(&tpls.transfer_completed.content, &vars);
+                if !rendered_body.is_empty() {
+                    lines.push(rendered_body);
+                }
+                let dup_cnt = recycled_indices
+                    .iter()
+                    .filter(|&&i| {
+                        pending_actions[i].verdict == "already_in_lib"
+                            || pending_actions[i].reason.contains("同批次")
+                    })
+                    .count();
+                let low_cnt = recycled_indices.len().saturating_sub(dup_cnt);
+                let reason_summary = match (dup_cnt > 0, low_cnt > 0) {
+                    (true, true) => format!("已在库/重复 {dup_cnt} 项 · 低分淘汰 {low_cnt} 项"),
+                    (true, false) => format!("同源已在库/同批重复 {dup_cnt} 项"),
+                    (false, true) => format!("权重评分未达标淘汰 {low_cnt} 项"),
+                    (false, false) => format!("移入 115 回收站 {recycled_115} 项"),
+                };
+                if rec_groups.len() > 1 || recycled_indices.len() > 1 {
+                    let preview: Vec<String> = rec_groups
+                        .iter()
+                        .take(4)
+                        .map(|g| clean_notify_name(&g.2))
+                        .collect();
+                    let more = if rec_groups.len() > 4 { " 等" } else { "" };
+                    lines.push(format!("📌 涉及: {}{more}", preview.join(" / ")));
+                }
+                lines.push(format!("🛡️ 原因: {reason_summary}"));
+                if cleaned_dirs > 0 || cleaned_files > 0 {
+                    lines.push(format!(
+                        "🧹 清理: 空/残留目录 {cleaned_dirs} 个 · 非媒体残留 {cleaned_files} 个"
+                    ));
+                }
+                lines.push(format!("🗓️ 时间: {now_str}"));
+                let img = host.resolve_tmdb_card_image(&first_rec.tmdb_id, &first_rec.media_type);
+                host.notify(&nt_title, &lines.join("\n"), img.as_deref());
             }
-            lines.push(format!("🛡️ 原因: {reason_summary}"));
-            if cleaned_dirs > 0 || cleaned_files > 0 {
-                lines.push(format!(
-                    "🧹 清理: 空/残留目录 {cleaned_dirs} 个 · 非媒体残留 {cleaned_files} 个"
-                ));
-            }
-            lines.push(format!("🗓️ 时间: {now_str}"));
-            let img = host.resolve_tmdb_card_image(&first_rec.tmdb_id, &first_rec.media_type);
-            host.notify(&nt_title, &lines.join("\n"), img.as_deref());
         } else if !failed_notices.is_empty() && tpls.transfer_completed.enabled {
             let (f_idx, ref f_err) = failed_notices[0];
             let f_pa = &pending_actions[f_idx];
+            let media_icon = if f_pa.media_type == "tv" { "📺" } else { "🎬" };
             let mut vars = BTreeMap::new();
             vars.insert("is_failed", "true".to_string());
-            vars.insert("name", f_pa.display_title.clone());
+            vars.insert("media_icon", media_icon.to_string());
+            vars.insert("name", clean_notify_name(&f_pa.display_title));
+            vars.insert("display_name", clean_notify_name(&f_pa.display_title));
+            if !f_pa.category.is_empty() {
+                vars.insert("category", f_pa.category.clone());
+                vars.insert("secondary_category", f_pa.category.clone());
+            }
+            if f_pa.year > 0 {
+                vars.insert("year", f_pa.year.to_string());
+            }
             vars.insert("path", f_pa.source_path.clone());
             vars.insert("error", f_err.clone());
             let nt_title =
@@ -4131,6 +4217,7 @@ pub fn reconcile_ledger(
     let mut organized_pt = 0usize;
     let mut verified_ready = 0usize;
     let mut auto_cleaned = 0usize;
+    let mut cached_tpls: Option<crate::host::HostNotificationTemplates> = None;
 
     for (
         lid,
@@ -4293,17 +4380,67 @@ pub fn reconcile_ledger(
                         &msg,
                     );
                     if settings.notify {
-                        let icon = if media_type == "tv" { "📺" } else { "🎬" };
-                        let cat_lbl = if category.is_empty() { "媒体库" } else { &category };
-                        let img = host.resolve_tmdb_card_image(&tmdb_id, &media_type);
-                        host.notify(
-                            &format!("{icon} {title} ✨洗版删旧完成"),
-                            &format!(
-                                "🗂 分类: {cat_lbl} · {slot}\n🧹 清理: 自动移除 {deleted_cnt} 个低分旧源\n🗓️ 时间: {}",
-                                format_ts_cn(now_ts())
-                            ),
-                            img.as_deref(),
-                        );
+                        let tpls = cached_tpls
+                            .get_or_insert_with(|| host.get_notification_templates());
+                        if tpls.transfer_completed.enabled {
+                            let icon = if media_type == "tv" { "📺" } else { "🎬" };
+                            let cat_lbl = if category.is_empty() { "媒体库" } else { &category };
+                            let base_name = if let Some(pos) = title.rfind(" S") {
+                                if title[pos + 2..].chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                                    title[..pos].trim().to_string()
+                                } else {
+                                    title.clone()
+                                }
+                            } else {
+                                title.clone()
+                            };
+                            let mut vars = BTreeMap::new();
+                            vars.insert("is_success", "true".to_string());
+                            vars.insert("media_icon", icon.to_string());
+                            vars.insert("name", base_name);
+                            vars.insert("display_name", title.clone());
+                            vars.insert("category", cat_lbl.to_string());
+                            vars.insert("secondary_category", cat_lbl.to_string());
+                            if live_item.production_year > 0 {
+                                vars.insert("year", live_item.production_year.to_string());
+                            }
+                            if media_type == "tv" && episode > 0 {
+                                vars.insert(
+                                    "season_episode",
+                                    format!("S{:02}E{:02}", season.max(1), episode),
+                                );
+                            }
+                            let raw_title = crate::host::render_mediary_template(
+                                &tpls.transfer_completed.title,
+                                &vars,
+                            );
+                            let nt_title = crate::host::format_transfer_template_title(
+                                &raw_title,
+                                "✨洗版删旧完成",
+                            );
+                            let mut lines = Vec::new();
+                            let rendered_body = crate::host::render_mediary_template(
+                                &tpls.transfer_completed.content,
+                                &vars,
+                            );
+                            if !rendered_body.is_empty() {
+                                lines.push(rendered_body);
+                            }
+                            if !slot.trim().is_empty() {
+                                lines.push(format!("🎞️ 槽位: {}", slot.trim()));
+                            }
+                            lines.push(format!("🧹 清理: 自动移除 {deleted_cnt} 个低分旧源"));
+                            lines.push(format!("🗓️ 时间: {}", format_ts_cn(now_ts())));
+                            let img = host
+                                .resolve_tmdb_card_image(&tmdb_id, &media_type)
+                                .or_else(|| {
+                                    crate::host::tmdb_card_image_https(
+                                        &live_item.backdrop_path,
+                                        &live_item.poster_path,
+                                    )
+                                });
+                            host.notify(&nt_title, &lines.join("\n"), img.as_deref());
+                        }
                     }
                 }
                 Ok(_) => {

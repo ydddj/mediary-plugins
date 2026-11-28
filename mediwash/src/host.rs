@@ -1706,7 +1706,11 @@ impl HostClient {
         let mut tpls = HostNotificationTemplates::default();
         if let Ok(v) = self.call_json::<Value>("GET", "/settings", &[], None, 6) {
             let root = v.get("data").filter(|x| x.is_object()).unwrap_or(&v);
-            if let Some(nt) = root.get("notification_templates") {
+            let nt_opt = root.get("notification_templates").or_else(|| {
+                root.get("system_config")
+                    .and_then(|sc| sc.get("notification_templates"))
+            });
+            if let Some(nt) = nt_opt {
                 let load_one = |key: &str, target: &mut NotificationTemplateItem| {
                     if let Some(obj) = nt.get(key).filter(|x| x.is_object()) {
                         if let Some(en) = obj.get("enabled").and_then(Value::as_bool) {
@@ -1822,29 +1826,35 @@ pub fn render_mediary_template(
     vars: &std::collections::BTreeMap<&str, String>,
 ) -> String {
     let mut out = tpl.to_string();
+    let is_truthy = |key: &str| {
+        vars.get(key).is_some_and(|v| {
+            let t = v.trim();
+            !t.is_empty() && t != "false" && t != "0"
+        })
+    };
     for _ in 0..32 {
-        let Some(start) = out.rfind("{{#if ") else {
-            break;
+        let if_pos = out.rfind("{{#if ");
+        let unless_pos = out.rfind("{{#unless ");
+        let (start, is_unless, tag_len, close_tag) = match (if_pos, unless_pos) {
+            (Some(a), Some(b)) if b > a => (b, true, 10usize, "{{/unless}}"),
+            (Some(a), _) => (a, false, 6usize, "{{/if}}"),
+            (None, Some(b)) => (b, true, 10usize, "{{/unless}}"),
+            (None, None) => break,
         };
-        let rest = &out[start + 6..];
+        let rest = &out[start + tag_len..];
         let Some(open_rel_end) = rest.find("}}") else {
             break;
         };
         let key = rest[..open_rel_end].trim();
-        let body_start = start + 6 + open_rel_end + 2;
+        let body_start = start + tag_len + open_rel_end + 2;
         let after_open = &out[body_start..];
-        let Some(close_rel) = after_open.find("{{/if}}") else {
+        let Some(close_rel) = after_open.find(close_tag) else {
             break;
         };
         let inner = &after_open[..close_rel];
-        let close_end = body_start + close_rel + 7;
-        let truthy = vars
-            .get(key)
-            .is_some_and(|v| {
-                let t = v.trim();
-                !t.is_empty() && t != "false" && t != "0"
-            });
-        let replacement = if truthy { inner.to_string() } else { String::new() };
+        let close_end = body_start + close_rel + close_tag.len();
+        let cond = if is_unless { !is_truthy(key) } else { is_truthy(key) };
+        let replacement = if cond { inner.to_string() } else { String::new() };
         out.replace_range(start..close_end, &replacement);
     }
 
@@ -1867,6 +1877,25 @@ pub fn render_mediary_template(
     out.trim().to_string()
 }
 
+/// Adapts a rendered `transfer_completed` host template title for MediWash sub-actions
+/// (e.g. `🗑️去重回收`, `🗑️回收清理`, `✨洗版删旧完成`) while preserving custom host prefixes/formats.
+pub fn format_transfer_template_title(rendered_title: &str, action_badge: &str) -> String {
+    let t = rendered_title.trim();
+    if t.is_empty() {
+        return action_badge.to_string();
+    }
+    for default_suffix in ["✅整理完成", "✅ 整理完成", "整理完成"] {
+        if t.contains(default_suffix) {
+            return t.replacen(default_suffix, action_badge, 1);
+        }
+    }
+    if t.contains(action_badge) {
+        t.to_string()
+    } else {
+        format!("{t} · {action_badge}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1885,6 +1914,15 @@ mod tests {
         assert_eq!(title, "📺 宝珠 · S01E18 ✅整理完成");
         assert!(body.contains("🗂 分类: 电视剧/国产剧/2020-2030"));
         assert!(body.contains("📅 年份: 2026"));
+
+        assert_eq!(
+            format_transfer_template_title(&title, "🗑️回收清理"),
+            "📺 宝珠 · S01E18 🗑️回收清理"
+        );
+        assert_eq!(
+            format_transfer_template_title("[自定义前缀] 宝珠", "✨洗版删旧完成"),
+            "[自定义前缀] 宝珠 · ✨洗版删旧完成"
+        );
 
         assert_eq!(
             tmdb_card_image_https("/bd123.jpg", "/ps456.jpg").as_deref(),
