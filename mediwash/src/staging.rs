@@ -3764,8 +3764,8 @@ pub fn reconcile_ledger(
                 category, slot, rule_id, expected_file_id, expected_sha1, download_id,
                 old_source_ids_json, state
          FROM wash_ledger
-         WHERE state IN ('downloading', 'downloaded', 'awaiting_ingest')
-         ORDER BY updated_at ASC LIMIT 40",
+         WHERE state IN ('downloading', 'downloaded', 'awaiting_ingest', 'review')
+         ORDER BY updated_at ASC LIMIT 60",
     )?;
     let entries: Vec<(
         i64,
@@ -3881,7 +3881,7 @@ pub fn reconcile_ledger(
             }
         }
 
-        if state != "awaiting_ingest" {
+        if state != "awaiting_ingest" && state != "review" {
             continue;
         }
 
@@ -3903,6 +3903,20 @@ pub fn reconcile_ledger(
         let Some(live_item) = live_item_opt else {
             continue;
         };
+
+        // Self-heal if all tracked `old_ids` are already gone from the library item
+        let any_old_still_present = live_item
+            .effective_sources()
+            .iter()
+            .any(|s| !s.id.is_empty() && old_ids.contains(&s.id));
+        if !any_old_still_present && !live_item.effective_sources().is_empty() {
+            db.execute(
+                "UPDATE wash_ledger SET item_id = ?, state = 'cleaned', message = '原旧源已不存在或已被清理，自动结清', updated_at = ? WHERE id = ?",
+                params![live_item.id, now_ts(), lid],
+            )?;
+            verified_ready += 1;
+            continue;
+        }
 
         let arrived = live_item.effective_sources().iter().any(|src| {
             let paths = [
@@ -3938,6 +3952,7 @@ pub fn reconcile_ledger(
                 &slot,
                 &rule_id,
                 &old_ids,
+                true,
             ) {
                 Ok((deleted_cnt, old_paths_s, new_winner_path)) if deleted_cnt > 0 => {
                     auto_cleaned += deleted_cnt;
@@ -4064,7 +4079,7 @@ pub fn execute_ledger_action(
             )?;
             Ok(json!({ "ok": true, "state": "awaiting_ingest" }))
         }
-        "clean_old" => {
+        "clean_old" | "keep_best" => {
             ensure!(
                 matches!(state.as_str(), "ready_to_clean" | "awaiting_ingest" | "review"),
                 "当前状态不支持清理旧源"
@@ -4074,32 +4089,100 @@ pub fn execute_ledger_action(
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
+            let strict_new = operation == "clean_old";
             let (deleted, old_paths_s, new_winner_path) = verify_and_clean_old_sources(
-                host, cfg, &item_id, &media_type, &category, &slot, &rule_id, &old_ids,
+                host, cfg, &item_id, &media_type, &category, &slot, &rule_id, &old_ids, strict_new,
             )?;
-            let msg = format!("已安全清理 {deleted} 个旧低分源并局部刷新");
+            let msg = if deleted == 0 {
+                "当前同槽仅剩单个胜出源或目标旧源已不存在，已结清".to_string()
+            } else if strict_new {
+                format!("已安全清理 {deleted} 个旧低分源并局部刷新")
+            } else {
+                format!("已按当前库内最高分保留胜出源并清理 {deleted} 个低分重复源")
+            };
             db.execute(
                 "UPDATE wash_ledger SET state = 'cleaned', message = ?, updated_at = ? WHERE id = ?",
                 params![msg, now_ts(), ledger_id],
             )?;
-            db::log_media_history(
-                db,
-                "删旧闭环",
-                &title,
-                "",
-                &old_paths_s,
-                &new_winner_path,
-                &format!("{} · {}", if category.is_empty() { "媒体库" } else { &category }, slot),
-                "clean_old",
-                "done",
-                &msg,
-            );
+            if deleted > 0 {
+                db::log_media_history(
+                    db,
+                    "删旧闭环",
+                    &title,
+                    "",
+                    &old_paths_s,
+                    &new_winner_path,
+                    &format!("{} · {}", if category.is_empty() { "媒体库" } else { &category }, slot),
+                    "clean_old",
+                    "done",
+                    &msg,
+                );
+            }
             Ok(json!({ "ok": true, "deleted": deleted, "message": msg }))
         }
         _ => bail!("不支持的账本动作: {operation}"),
     }
 }
 
+pub fn execute_ledger_batch_action(
+    db: &mut Connection,
+    host: &HostClient,
+    cfg: &AppConfig,
+    settings: &PluginSettings,
+    ids: &[i64],
+    operation: &str,
+) -> Result<Value> {
+    ensure!(!ids.is_empty(), "请先勾选要处理的追踪账本条目");
+    if operation != "dismiss" {
+        ensure!(
+            !settings.dry_run,
+            "当前处于「仅预览模式（干跑）」，请先关闭仅预览模式后再执行"
+        );
+    }
+    let mut processed = 0usize;
+    let mut deleted_sources = 0usize;
+    let mut failed = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for &lid in ids {
+        match execute_ledger_action(db, host, cfg, settings, lid, operation) {
+            Ok(v) => {
+                processed += 1;
+                deleted_sources += v["deleted"].as_u64().unwrap_or(0) as usize;
+            }
+            Err(err) => {
+                failed += 1;
+                if errors.len() < 3 {
+                    errors.push(format!("#{lid}: {err:#}"));
+                }
+            }
+        }
+    }
+    let op_label = match operation {
+        "keep_best" => "删低保留高",
+        "clean_old" => "安全删旧",
+        "dismiss" => "忽略",
+        _ => operation,
+    };
+    let mut notice = if operation == "dismiss" {
+        format!("批量{op_label}完成：成功 {processed} 条")
+    } else {
+        format!("批量{op_label}完成：处理 {processed} 条，清理 {deleted_sources} 个低分源")
+    };
+    if failed > 0 {
+        notice.push_str(&format!("，跳过/失败 {failed} 条"));
+    }
+    if !errors.is_empty() {
+        notice.push_str(&format!("（{}）", errors.join("；")));
+    }
+    Ok(json!({
+        "processed": processed,
+        "deleted_sources": deleted_sources,
+        "failed": failed,
+        "notice": notice,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn verify_and_clean_old_sources(
     host: &HostClient,
     cfg: &AppConfig,
@@ -4109,6 +4192,7 @@ fn verify_and_clean_old_sources(
     expected_slot: &str,
     rule_id: &str,
     old_ids: &BTreeSet<String>,
+    strict_new_winner: bool,
 ) -> Result<(usize, String, String)> {
     let detail = host.library_item_detail(item_id)?;
     let sources = detail.effective_sources();
@@ -4129,8 +4213,9 @@ fn verify_and_clean_old_sources(
     let rule = rules::find_rule(cfg, active_rule_id)?;
     let scorer = Scorer::new(rule)?;
 
-    // Gather all live sources in the target category & slot
+    // Gather all live sources in the target category & slot (plus drifted tracked `old_ids` in `keep_best` mode)
     let mut slot_profiles: Vec<(String, MediaProfile)> = Vec::new();
+    let mut drifted_old_profiles: Vec<(String, MediaProfile)> = Vec::new();
     let mut shared_ref = ReferenceBaseline::default();
     for src in sources {
         if src.id.is_empty() {
@@ -4162,14 +4247,26 @@ fn verify_and_clean_old_sources(
         if expected_slot.is_empty() || init.slot == expected_slot {
             shared_ref.observe(&prof);
             slot_profiles.push((src.id.clone(), prof));
+        } else if !strict_new_winner && old_ids.contains(&src.id) {
+            shared_ref.observe(&prof);
+            drifted_old_profiles.push((src.id.clone(), prof));
         }
     }
-    ensure!(
-        slot_profiles.len() > eff.keep_per_slot,
-        "同槽位当前仅有 {} 个源，必须至少保留 {} 个胜出版本，取消删旧",
-        slot_profiles.len(),
-        eff.keep_per_slot
-    );
+    if !strict_new_winner && slot_profiles.len() <= eff.keep_per_slot && !drifted_old_profiles.is_empty() {
+        // Handle cases like `一马当先 S01E13` where an old fake-HDR10 file probed as SDR drifted out of `4K-HDR`,
+        // while the new true HDR10 winner is in `4K-HDR`: include the drifted `old_id` for head-to-head comparison!
+        slot_profiles.extend(drifted_old_profiles);
+    }
+    if slot_profiles.len() <= eff.keep_per_slot {
+        if !strict_new_winner {
+            return Ok((0, String::new(), String::new()));
+        }
+        bail!(
+            "同槽位当前仅有 {} 个源，必须至少保留 {} 个胜出版本（若旧源已因实测流变更离开该槽位，请点「删低保留高」）",
+            slot_profiles.len(),
+            eff.keep_per_slot
+        );
+    }
 
     let max_sz = slot_profiles
         .iter()
@@ -4196,11 +4293,23 @@ fn verify_and_clean_old_sources(
         .take(eff.keep_per_slot)
         .map(|(sid, _)| sid.as_str())
         .collect();
-    // Must confirm at least one NEW source (not in `old_ids`) is among retained winners!
-    ensure!(
-        retained_ids.iter().any(|&sid| !old_ids.contains(sid)),
-        "尚未检测到高于旧源的新增胜出片源，已保护保留原片源"
-    );
+    if strict_new_winner {
+        // Must confirm at least one NEW source (not in `old_ids`) is among retained winners!
+        if !retained_ids.iter().any(|&sid| !old_ids.contains(sid)) {
+            let top_score = scored.first().map(|(_, s)| *s).unwrap_or(0.0);
+            let best_new = scored
+                .iter()
+                .find(|(sid, _)| !old_ids.contains(sid.as_str()))
+                .map(|(_, s)| *s);
+            let detail_hint = match best_new {
+                Some(ns) => format!("当前库内最高分仍为旧源 {top_score:.2} 分 > 新源 {ns:.2} 分"),
+                None => format!("当前同槽最高分 {top_score:.2} 分仍为原旧源"),
+            };
+            bail!(
+                "尚未检测到高于旧源的新增胜出片源（{detail_hint}），已保护保留原片源；如需自动保留最高分并删掉其余低分重复源请点「删低保留高」"
+            );
+        }
+    }
 
     let retained_srcs: Vec<&LibrarySource> = sources
         .iter()
@@ -4209,7 +4318,7 @@ fn verify_and_clean_old_sources(
     let to_delete: Vec<String> = scored
         .iter()
         .skip(eff.keep_per_slot)
-        .filter(|(sid, _)| old_ids.contains(sid.as_str()))
+        .filter(|(sid, _)| !strict_new_winner || old_ids.contains(sid.as_str()))
         .filter(|(sid, _)| {
             let Some(cand_src) = sources.iter().find(|s| &s.id == sid) else {
                 return false;
@@ -4269,6 +4378,7 @@ pub fn list_ledger(db: &Connection, state_filter: &str, limit: usize) -> Result<
             let safe = match state_filter {
                 "ready_to_clean" => "ready_to_clean",
                 "awaiting_ingest" => "awaiting_ingest",
+                "review" => "review",
                 "cleaned" => "cleaned",
                 "dismissed" => "dismissed",
                 _ => "",

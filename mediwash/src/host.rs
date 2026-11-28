@@ -374,6 +374,8 @@ pub struct HostClient {
     token: String,
     agent: ureq::Agent,
     tmdb_resolve_cache: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
+    tmdb_details_cache: std::cell::RefCell<std::collections::HashMap<String, Value>>,
+    tmdb_db: Option<std::cell::RefCell<Connection>>,
     subpath_cid_cache:
         std::cell::RefCell<std::collections::HashMap<(String, String), Option<String>>>,
 }
@@ -409,13 +411,71 @@ impl HostClient {
             .timeout(Duration::from_secs(30))
             .redirects(0)
             .build();
+        let tmdb_db = Self::open_tmdb_cache_conn().map(std::cell::RefCell::new);
         Ok(Self {
             base_url,
             token: token.trim().to_string(),
             agent,
             tmdb_resolve_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+            tmdb_details_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+            tmdb_db,
             subpath_cid_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         })
+    }
+
+    fn open_tmdb_cache_conn() -> Option<Connection> {
+        let data_dir = env::var_os("MEDIARY_PLUGIN_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("data"));
+        let db_path = data_dir.join("mediwash.db");
+        if !db_path.exists() {
+            return None;
+        }
+        let conn = Connection::open(&db_path).ok()?;
+        let _ = conn.busy_timeout(Duration::from_millis(3000));
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tmdb_cache (
+                 cache_key TEXT PRIMARY KEY,
+                 val_json TEXT NOT NULL,
+                 expires_at INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_tmdb_cache_exp ON tmdb_cache(expires_at);",
+        );
+        Some(conn)
+    }
+
+    fn tmdb_cache_read(&self, key: &str) -> Option<Value> {
+        let cell = self.tmdb_db.as_ref()?;
+        let conn = cell.borrow();
+        let now = now_ts() as i64;
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT val_json FROM tmdb_cache WHERE cache_key = ?1 AND expires_at > ?2",
+                rusqlite::params![key, now],
+                |r| r.get(0),
+            )
+            .ok();
+        raw.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    fn tmdb_cache_write(&self, key: &str, val: &Value, ttl_secs: u64) {
+        let Some(cell) = self.tmdb_db.as_ref() else {
+            return;
+        };
+        let conn = cell.borrow();
+        let now = now_ts() as i64;
+        let exp = now + ttl_secs as i64;
+        if let Ok(encoded) = serde_json::to_string(val) {
+            let _ = conn.execute(
+                "INSERT INTO tmdb_cache (cache_key, val_json, expires_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(cache_key) DO UPDATE SET val_json=excluded.val_json, expires_at=excluded.expires_at",
+                rusqlite::params![key, encoded, exp],
+            );
+            // Opportunistically prune expired entries (low cost with index on expires_at)
+            if now % 37 == 0 {
+                let _ = conn.execute("DELETE FROM tmdb_cache WHERE expires_at <= ?1", [now]);
+            }
+        }
     }
 
     pub fn call_raw(
@@ -1266,13 +1326,23 @@ impl HostClient {
         media_type: &str,
     ) -> Result<Option<String>> {
         let cache_key = format!(
-            "{}|{}|{}",
+            "resolve|{}|{}|{}",
             media_type.trim().to_ascii_lowercase(),
             year.unwrap_or(0),
             title.trim().to_ascii_lowercase()
         );
         if let Some(cached) = self.tmdb_resolve_cache.borrow().get(&cache_key) {
             return Ok(cached.clone());
+        }
+        if let Some(persisted) = self.tmdb_cache_read(&cache_key) {
+            let val = persisted["tmdb_id"]
+                .as_str()
+                .filter(|s| !s.is_empty() && *s != "0")
+                .map(str::to_string);
+            self.tmdb_resolve_cache
+                .borrow_mut()
+                .insert(cache_key, val.clone());
+            return Ok(val);
         }
         let mut body = json!({
             "title": title.trim(),
@@ -1292,6 +1362,13 @@ impl HostClient {
                     .or_else(|| v["id"].as_u64().map(|n| n.to_string()))
                     .unwrap_or_default();
                 let res = (!id.is_empty() && id != "0").then_some(id);
+                // Persist hits for 7 days, misses for 30 minutes
+                let ttl = if res.is_some() { 7 * 86_400 } else { 1_800 };
+                self.tmdb_cache_write(
+                    &cache_key,
+                    &json!({ "tmdb_id": res.as_deref().unwrap_or("") }),
+                    ttl,
+                );
                 self.tmdb_resolve_cache
                     .borrow_mut()
                     .insert(cache_key, res.clone());
@@ -1302,6 +1379,7 @@ impl HostClient {
                     .downcast_ref::<HttpStatusError>()
                     .is_some_and(|st| st.0 == 404)
                 {
+                    self.tmdb_cache_write(&cache_key, &json!({ "tmdb_id": "" }), 1_800);
                     self.tmdb_resolve_cache.borrow_mut().insert(cache_key, None);
                     Ok(None)
                 } else {
@@ -1327,25 +1405,42 @@ impl HostClient {
 
     pub fn get_tmdb_details(&self, tmdb_id: &str, media_type: &str) -> Result<Value> {
         let mt = if media_type == "tv" { "tv" } else { "movie" };
+        let tid = tmdb_id.trim();
+        let cache_key = format!("details|{mt}|{tid}");
+        if let Some(cached) = self.tmdb_details_cache.borrow().get(&cache_key) {
+            return Ok(cached.clone());
+        }
+        if let Some(persisted) = self.tmdb_cache_read(&cache_key) {
+            self.tmdb_details_cache
+                .borrow_mut()
+                .insert(cache_key, persisted.clone());
+            return Ok(persisted);
+        }
         let v: Value = self.call_json(
             "GET",
             "/search/tmdb/details",
             &[
-                ("tmdb_id", tmdb_id.trim()),
-                ("id", tmdb_id.trim()),
+                ("tmdb_id", tid),
+                ("id", tid),
                 ("media_type", mt),
                 ("type", mt),
             ],
             None,
             18,
         )?;
-        if let Some(d) = v.get("data").filter(|x| x.is_object()) {
-            return Ok(d.clone());
-        }
-        if let Some(d) = v.get("item").filter(|x| x.is_object()) {
-            return Ok(d.clone());
-        }
-        Ok(v)
+        let out = if let Some(d) = v.get("data").filter(|x| x.is_object()) {
+            d.clone()
+        } else if let Some(d) = v.get("item").filter(|x| x.is_object()) {
+            d.clone()
+        } else {
+            v
+        };
+        // Persist TMDB details (title, poster, TV seasons) for 24 hours
+        self.tmdb_cache_write(&cache_key, &out, 86_400);
+        self.tmdb_details_cache
+            .borrow_mut()
+            .insert(cache_key, out.clone());
+        Ok(out)
     }
 
     pub fn library_page(
@@ -1618,19 +1713,11 @@ impl HostClient {
             return None;
         }
         let mt = if media_type == "tv" { "tv" } else { "movie" };
-        if let Ok(v) = self.call_json::<Value>(
-            "GET",
-            "/search/tmdb/details",
-            &[("tmdb_id", tid), ("id", tid), ("media_type", mt), ("type", mt)],
-            None,
-            5,
-        ) {
-            let det = v
+        if let Ok(det) = self.get_tmdb_details(tid, mt) {
+            let det = det
                 .get("details")
-                .or_else(|| v.get("data"))
-                .or_else(|| v.get("item"))
                 .filter(|x| x.is_object())
-                .unwrap_or(&v);
+                .unwrap_or(&det);
             let bd = det["backdrop_path"].as_str().unwrap_or_default();
             let ps = det["poster_path"].as_str().unwrap_or_default();
             if let Some(url) = tmdb_card_image_https(bd, ps) {

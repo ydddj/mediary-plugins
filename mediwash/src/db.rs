@@ -232,7 +232,14 @@ pub fn open_db(data_dir: &Path) -> Result<Connection> {
              detail TEXT NOT NULL,
              created_at INTEGER NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_logs(id DESC);",
+         CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_logs(id DESC);
+
+         CREATE TABLE IF NOT EXISTS tmdb_cache (
+             cache_key TEXT PRIMARY KEY,
+             val_json TEXT NOT NULL,
+             expires_at INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_tmdb_cache_exp ON tmdb_cache(expires_at);",
     )?;
     ensure_activity_columns(&db)?;
     let _ = db.execute_batch(

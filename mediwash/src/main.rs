@@ -569,6 +569,24 @@ fn dispatch(
             }))
         }
 
+        "ui_ledger_batch_act" => {
+            let ids: Vec<i64> = input["ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_i64)
+                .collect();
+            let op = input["operation"].as_str().unwrap_or_default();
+            let host = HostClient::from_env()?;
+            let cfg = db::load_config(conn)?;
+            let res = staging::execute_ledger_batch_action(conn, &host, &cfg, settings, &ids, op)?;
+            Ok(json!({
+                "result": res,
+                "items": staging::list_ledger(conn, input["state"].as_str().unwrap_or("active"), 150)?,
+                "counts": db::summary_counts(conn),
+            }))
+        }
+
         // === Library Multi-Version Dedup ===
         "ui_lib_control" => {
             let scope = input["scope"].as_str().unwrap_or("movie");

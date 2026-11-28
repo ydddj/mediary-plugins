@@ -49,6 +49,7 @@ const state = {
   expandedStagingId: null,
   ledgerStateFilter: 'active',
   ledgerItems: [],
+  ledgerSelected: new Set(),
 
   // Tab 2: Library Dedup
   showOverrides: false,
@@ -720,11 +721,15 @@ function renderStagingTab(root) {
             : `<div class="mw-actions">
                 <select class="mw-select" id="sel-ledger-state" style="width:auto;">
                   <option value="active" ${state.ledgerStateFilter === 'active' ? 'selected' : ''}>进行中 / 待删旧</option>
+                  <option value="review" ${state.ledgerStateFilter === 'review' ? 'selected' : ''}>仅看需复核</option>
                   <option value="ready_to_clean" ${state.ledgerStateFilter === 'ready_to_clean' ? 'selected' : ''}>新源已入库·可删旧</option>
                   <option value="cleaned" ${state.ledgerStateFilter === 'cleaned' ? 'selected' : ''}>已完成删旧</option>
                   <option value="all" ${state.ledgerStateFilter === 'all' ? 'selected' : ''}>全部记录</option>
                 </select>
-                <button type="button" class="mw-btn sm primary" id="btn-reconcile-ledger">立即刷新核验入库</button>
+                <button type="button" class="mw-btn sm primary" id="btn-ledger-batch-keep-best" data-tip="对勾选条目按当前库内实测得分：严格保留最高分版本，自动清理同槽其余低分重复源">删低保留高 (${state.ledgerSelected.size})</button>
+                <button type="button" class="mw-btn sm danger" id="btn-ledger-batch-clean" data-tip="仅在确认新源高于旧源时清理旧源">安全删旧 (${state.ledgerSelected.size})</button>
+                <button type="button" class="mw-btn sm ghost" id="btn-ledger-batch-dismiss">忽略勾选 (${state.ledgerSelected.size})</button>
+                <button type="button" class="mw-btn sm" id="btn-reconcile-ledger">立即刷新核验入库</button>
               </div>`
         }
       </div>
@@ -1141,11 +1146,20 @@ function renderLedgerTable() {
   if (!items.length) {
     return `<div class="mw-empty">暂无洗版待删旧追踪记录。当 115 洗版胜出文件送入整理或提交 PT 洗版下载后，将在此自动追踪新源入库并安全删旧。</div>`;
   }
+  const allChecked = items.length > 0 && items.every((it) => state.ledgerSelected.has(it.id));
   return `
+    <div class="mw-mobile-select-bar">
+      <label class="mw-check">
+        <input type="checkbox" id="chk-ledger-all-m" ${allChecked ? 'checked' : ''} />
+        <span>全选当前 ${items.length} 条</span>
+      </label>
+      <span class="mw-muted" id="ledger-sel-count">已勾选 ${state.ledgerSelected.size} 项</span>
+    </div>
     <div class="mw-table-wrap">
       <table class="mw-table mw-card-table">
         <thead>
           <tr>
+            <th><input type="checkbox" id="chk-ledger-all" ${allChecked ? 'checked' : ''} /></th>
             <th>来源通道</th>
             <th>媒体作品</th>
             <th>分类与槽位</th>
@@ -1158,12 +1172,14 @@ function renderLedgerTable() {
         <tbody>
           ${items
             .map((it) => {
+              const checked = state.ledgerSelected.has(it.id) ? 'checked' : '';
               const se =
                 it.media_type === 'tv' && it.episode > 0
                   ? ` S${String(it.season || 1).padStart(2, '0')}E${String(it.episode).padStart(2, '0')}`
                   : '';
               return `
                 <tr>
+                  <td class="mw-col-chk" data-label="选择此项"><input type="checkbox" class="js-chk-ledger" data-id="${it.id}" ${checked} /></td>
                   <td data-label="来源通道"><div>${it.source_kind === 'pt' ? '<span class="mw-tag primary">PT 下载</span>' : '<span class="mw-tag ok">115 中转</span>'}</div></td>
                   <td data-label="媒体作品"><div><strong>${esc(it.title)}${esc(se)}</strong> <span class="mw-muted">(TMDB:${esc(it.tmdb_id)})</span></div></td>
                   <td data-label="分类与槽位"><div>${esc(it.category || '宿主决定')} · <span class="mw-tag">${esc(it.slot || '默认')}</span></div></td>
@@ -1182,7 +1198,8 @@ function renderLedgerTable() {
                       }
                       ${
                         it.state === 'ready_to_clean' || it.state === 'review'
-                          ? `<button type="button" class="mw-btn sm danger js-ledger-act" data-id="${it.id}" data-op="clean_old">安全删旧</button>`
+                          ? `<button type="button" class="mw-btn sm primary js-ledger-act" data-id="${it.id}" data-op="keep_best" data-tip="按当前库内实测得分保留最高分版本，删除同槽其余低分重复源">删低保留高</button>
+                             <button type="button" class="mw-btn sm danger js-ledger-act" data-id="${it.id}" data-op="clean_old">安全删旧</button>`
                           : ''
                       }
                       ${
@@ -1204,16 +1221,79 @@ function renderLedgerTable() {
 function bindLedgerEvents(root) {
   document.getElementById('sel-ledger-state').onchange = async (e) => {
     state.ledgerStateFilter = e.target.value;
+    state.ledgerSelected.clear();
     await loadCurrentTabData();
     render();
   };
+
+  const syncLedgerSelectionUI = () => {
+    const items = state.ledgerItems || [];
+    const n = state.ledgerSelected.size;
+    const allChecked = items.length > 0 && items.every((it) => state.ledgerSelected.has(it.id));
+    const btnBest = document.getElementById('btn-ledger-batch-keep-best');
+    if (btnBest) btnBest.textContent = `删低保留高 (${n})`;
+    const btnClean = document.getElementById('btn-ledger-batch-clean');
+    if (btnClean) btnClean.textContent = `安全删旧 (${n})`;
+    const btnDis = document.getElementById('btn-ledger-batch-dismiss');
+    if (btnDis) btnDis.textContent = `忽略勾选 (${n})`;
+    const mCount = document.getElementById('ledger-sel-count');
+    if (mCount) mCount.textContent = `已勾选 ${n} 项`;
+    const cAll = document.getElementById('chk-ledger-all');
+    if (cAll) cAll.checked = allChecked;
+    const cAllM = document.getElementById('chk-ledger-all-m');
+    if (cAllM) cAllM.checked = allChecked;
+  };
+  const toggleAllLedger = (checked) => {
+    if (checked) (state.ledgerItems || []).forEach((it) => state.ledgerSelected.add(it.id));
+    else state.ledgerSelected.clear();
+    root.querySelectorAll('.js-chk-ledger').forEach((chk) => {
+      chk.checked = checked;
+    });
+    syncLedgerSelectionUI();
+  };
+  const chkAll = document.getElementById('chk-ledger-all');
+  if (chkAll) chkAll.onchange = () => toggleAllLedger(chkAll.checked);
+  const chkAllM = document.getElementById('chk-ledger-all-m');
+  if (chkAllM) chkAllM.onchange = () => toggleAllLedger(chkAllM.checked);
+  root.querySelectorAll('.js-chk-ledger').forEach((chk) => {
+    chk.onchange = () => {
+      const id = Number(chk.dataset.id);
+      if (chk.checked) state.ledgerSelected.add(id);
+      else state.ledgerSelected.delete(id);
+      syncLedgerSelectionUI();
+    };
+  });
+
+  const runBatchLedger = async (operation) => {
+    const ids = Array.from(state.ledgerSelected);
+    if (!ids.length) return showToast('请先勾选要处理的追踪账本条目', 'error');
+    const res = await callAction('ui_ledger_batch_act', {
+      ids,
+      operation,
+      state: state.ledgerStateFilter,
+    });
+    state.ledgerSelected.clear();
+    state.ledgerItems = res.items || [];
+    state.boot.counts = res.counts || state.boot.counts;
+    syncSidebarBadges();
+    showToast(res.result?.notice || '批量操作完成', 'success');
+    render();
+  };
+  const btnBest = document.getElementById('btn-ledger-batch-keep-best');
+  if (btnBest) btnBest.onclick = () => runBatchLedger('keep_best');
+  const btnClean = document.getElementById('btn-ledger-batch-clean');
+  if (btnClean) btnClean.onclick = () => runBatchLedger('clean_old');
+  const btnDis = document.getElementById('btn-ledger-batch-dismiss');
+  if (btnDis) btnDis.onclick = () => runBatchLedger('dismiss');
+
   document.getElementById('btn-reconcile-ledger').onclick = async () => {
     const res = await callAction('ui_ledger_reconcile', { state: state.ledgerStateFilter });
+    state.ledgerSelected.clear();
     state.ledgerItems = res.items || [];
     state.boot.counts = res.counts || state.boot.counts;
     syncSidebarBadges();
     showToast(
-      `核验完成：新入库就绪 ${res.reconcile?.verified_ready || 0} 项，自动清理 ${res.reconcile?.auto_cleaned || 0} 个旧源`,
+      `核验完成：新入库/复核就绪 ${res.reconcile?.verified_ready || 0} 项，自动清理 ${res.reconcile?.auto_cleaned || 0} 个旧源`,
       'success'
     );
     render();
@@ -1227,6 +1307,7 @@ function bindLedgerEvents(root) {
         operation,
         state: state.ledgerStateFilter,
       });
+      state.ledgerSelected.delete(id);
       state.ledgerItems = res.items || [];
       state.boot.counts = res.counts || state.boot.counts;
       syncSidebarBadges();
