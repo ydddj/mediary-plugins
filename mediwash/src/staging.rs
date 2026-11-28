@@ -184,6 +184,62 @@ pub fn prune_pipeline_staging(
     )
 }
 
+/// Collects CIDs outside `root_cid` that staging walk & cleanup must NEVER enter
+/// (115 root `"0"`, library targets, offline/cloud-download folders, host-protected mount roots).
+fn build_forbidden_walk_cids(cfg: &AppConfig, root_cid: &str) -> BTreeSet<String> {
+    let root = root_cid.trim();
+    let mut set: BTreeSet<String> = BTreeSet::from(["0".to_string()]);
+    for c in &cfg.host_sync.protected_cids {
+        let t = c.trim();
+        if !t.is_empty() && t != root {
+            set.insert(t.to_string());
+        }
+    }
+    for c in [
+        cfg.host_sync.transfer_target_cid.as_str(),
+        cfg.host_sync.open115_target_cid.as_str(),
+        cfg.host_sync.open115_offline_cid.as_str(),
+        cfg.host_sync.transfer_source_cid.as_str(),
+    ] {
+        let t = c.trim();
+        if !t.is_empty() && t != root {
+            set.insert(t.to_string());
+        }
+    }
+    for p in &cfg.pipelines {
+        let tc = p.target_cid.trim();
+        if !tc.is_empty() && tc != root {
+            set.insert(tc.to_string());
+        }
+    }
+    set
+}
+
+/// Detects when 115 silently returned root (`CID=0`) directory contents for a deleted subfolder CID:
+/// e.g. the staging root itself (`待洗版`), `"0"`, or an unrelated protected top-level folder (`媒体库`/`云下载`)
+/// suddenly appears inside a nested subfolder!
+pub(crate) fn is_root_fallback_page(
+    root_cid: &str,
+    cur_cid: &str,
+    items: &[Cloud115File],
+    forbidden: &BTreeSet<String>,
+) -> bool {
+    let root = root_cid.trim();
+    let cur = cur_cid.trim();
+    if cur == "0" || cur.is_empty() {
+        return false;
+    }
+    items.iter().any(|it| {
+        if !it.is_dir {
+            return false;
+        }
+        let fid = it.file_id.trim();
+        fid == "0"
+            || fid == root
+            || (cur != root && forbidden.contains(fid))
+    })
+}
+
 pub fn prune_staging_root_with_rules(
     host: &HostClient,
     cfg: &AppConfig,
@@ -196,6 +252,7 @@ pub fn prune_staging_root_with_rules(
     if root.is_empty() || root == "0" {
         return stats;
     }
+    let forbidden = build_forbidden_walk_cids(cfg, root);
     let mut protected: BTreeSet<String> = cfg.host_sync.protected_cids.iter().cloned().collect();
     for p in &cfg.pipelines {
         if !p.source_cid.trim().is_empty() {
@@ -223,6 +280,10 @@ pub fn prune_staging_root_with_rules(
     let mut preserved_seen: BTreeSet<String> = BTreeSet::new();
 
     while let Some((cid, depth, rel_prefix)) = bfs.pop_front() {
+        if cid != root && forbidden.contains(&cid) {
+            own_clean.insert(cid, false);
+            continue;
+        }
         if seen.len() > 600 || clock.elapsed() >= max_dur {
             stats.truncated = true;
             // Incomplete subtree discovery: mark unexpanded directory as non-clean so we never delete an uninspected parent!
@@ -247,9 +308,17 @@ pub fn prune_staging_root_with_rules(
                 all_pages_ok = false;
                 break;
             };
+            if is_root_fallback_page(root, &cid, &page.items, &forbidden) {
+                all_pages_ok = false;
+                break;
+            }
             let n = page.items.len();
             for item in page.items {
                 if item.is_dir {
+                    if forbidden.contains(item.file_id.trim()) {
+                        protected.insert(item.file_id.clone());
+                        continue;
+                    }
                     let child_rel = if rel_prefix.is_empty() {
                         item.name.trim().to_string()
                     } else {
@@ -741,11 +810,29 @@ pub fn scan_pipeline_with_budget(
         }
     }
 
+    let forbidden_walk = build_forbidden_walk_cids(cfg, &pipeline.source_cid);
     while inspected < max_videos && clock.elapsed() < Duration::from_secs(scan_budget_secs) {
         let Some((cid, rel_dir, offset)) = queue.pop_front() else {
             break;
         };
+        if cid.trim().is_empty()
+            || (cid != pipeline.source_cid && forbidden_walk.contains(cid.trim()))
+        {
+            continue;
+        }
         let page = host.open115_list_page(&cid, offset, 1000, true)?;
+        if is_root_fallback_page(&pipeline.source_cid, &cid, &page.items, &forbidden_walk) {
+            // Deleted/stale subfolder CID fell back to 115 root (CID=0): drop immediately and heal ghost rows!
+            let empty_live: BTreeSet<&str> = BTreeSet::new();
+            reconcile_disappeared_in_cid(
+                db,
+                pipeline.id,
+                &cid,
+                false,
+                &empty_live,
+            );
+            continue;
+        }
 
         // Self-heal disappeared ghost `pending` / `failed` rows whenever we get a complete 1-page snapshot of `cid`!
         if offset == 0 && page.items.len() >= page.count {
@@ -771,7 +858,13 @@ pub fn scan_pipeline_with_budget(
         // Enqueue all child directories on this page upfront so mid-page quota breaks never miss trailing subfolders!
         if pipeline.recursive {
             for item in &page.items {
-                if item.is_dir && visited.len() < 2500 && visited.insert(item.file_id.clone()) {
+                if item.is_dir
+                    && !item.file_id.trim().is_empty()
+                    && !forbidden_walk.contains(item.file_id.trim())
+                    && item.file_id != pipeline.source_cid
+                    && visited.len() < 2500
+                    && visited.insert(item.file_id.clone())
+                {
                     let child_rel = if rel_dir.is_empty() {
                         item.name.clone()
                     } else {
@@ -2780,6 +2873,13 @@ pub fn execute_staging_items_opts(
                     let ps = prune_pipeline_staging(host, cfg, p, opts.prune_budget_secs);
                     cleaned_dirs += ps.cleaned_dirs;
                     cleaned_files += ps.cleaned_files;
+                    if ps.cleaned_dirs > 0 {
+                        // Invalidate persisted walk cursor so deleted subfolder CIDs are NEVER re-listed on next tick!
+                        let _ = db.execute(
+                            "DELETE FROM cursors WHERE key = ?",
+                            [format!("staging_walk:{}", p.id)],
+                        );
+                    }
                 }
             }
         }
@@ -7685,5 +7785,42 @@ mod tests {
             ..Default::default()
         };
         assert!(!is_leftover_clutter(&strm));
+
+        // Verify 115 root-fallback page detection blocks staging root or protected dirs appearing under a subfolder
+        let mut cfg = AppConfig::default();
+        cfg.host_sync.open115_offline_cid = "3269149014077998904".to_string(); // 云下载
+        cfg.host_sync.transfer_target_cid = "2803325654766616567".to_string(); // 媒体库
+        let forbidden = build_forbidden_walk_cids(&cfg, "3570317016130651367");
+        assert!(forbidden.contains("0"));
+        assert!(forbidden.contains("3269149014077998904"));
+        assert!(!forbidden.contains("3570317016130651367"));
+
+        let fallback_items = vec![
+            Cloud115File {
+                file_id: "3269149014077998904".to_string(),
+                name: "云下载".to_string(),
+                is_dir: true,
+                ..Default::default()
+            },
+        ];
+        assert!(is_root_fallback_page(
+            "3570317016130651367",
+            "999999",
+            &fallback_items,
+            &forbidden
+        ));
+        let normal_items = vec![Cloud115File {
+            file_id: "777777".to_string(),
+            parent_id: "999999".to_string(),
+            name: "Season 01".to_string(),
+            is_dir: true,
+            ..Default::default()
+        }];
+        assert!(!is_root_fallback_page(
+            "3570317016130651367",
+            "999999",
+            &normal_items,
+            &forbidden
+        ));
     }
 }

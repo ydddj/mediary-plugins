@@ -943,19 +943,21 @@ impl HostClient {
         let lim = limit.clamp(1, 1000);
         let off_s = offset.to_string();
         let lim_s = lim.to_string();
-        self.call_json(
-            "GET",
-            "/plugin/open115/files",
-            &[
-                ("cid", cid_s),
-                ("offset", &off_s),
-                ("limit", &lim_s),
-                ("show_dir", if show_dir { "true" } else { "false" }),
-            ],
-            None,
-            25,
-        )
-        .context("读取 115 目录失败（请确认已授予 open115:read 且宿主 115 已连接）")
+        let page: Cloud115Page = self
+            .call_json(
+                "GET",
+                "/plugin/open115/files",
+                &[
+                    ("cid", cid_s),
+                    ("offset", &off_s),
+                    ("limit", &lim_s),
+                    ("show_dir", if show_dir { "true" } else { "false" }),
+                ],
+                None,
+                25,
+            )
+            .context("读取 115 目录失败（请确认已授予 open115:read 且宿主 115 已连接）")?;
+        Ok(sanitize_open115_page(cid_s, page))
     }
 
     /// Lists all files inside `cid` (up to `max_pages * 1000` items) in minimal API calls so batch execution
@@ -1877,6 +1879,34 @@ pub fn render_mediary_template(
     out.trim().to_string()
 }
 
+/// Prevents 115 OpenAPI's notorious deleted-CID root fallback:
+/// when listing a deleted or non-existent directory CID (`requested_cid != "0"`), 115 may silently
+/// return items from the root directory (`cid == "0"` / `parent_id == "0"`).
+/// Dropping any mismatched `page.cid` or `item.parent_id` guarantees MediWash can NEVER escape
+/// the requested directory into the user's cloud drive root (`云下载`, `媒体库`, etc.).
+pub(crate) fn sanitize_open115_page(requested_cid: &str, mut page: Cloud115Page) -> Cloud115Page {
+    let req = requested_cid.trim();
+    if req.is_empty() || req == "0" {
+        return page;
+    }
+    let resp_cid = page.cid.trim();
+    if !resp_cid.is_empty() && resp_cid != req {
+        page.cid = req.to_string();
+        page.count = 0;
+        page.items.clear();
+        return page;
+    }
+    let before = page.items.len();
+    page.items.retain(|it| {
+        let pid = it.parent_id.trim();
+        pid.is_empty() || pid == req
+    });
+    if before > 0 && page.items.is_empty() {
+        page.count = 0;
+    }
+    page
+}
+
 /// Recognizes Mediary v3.4.13+'s safety rejection when selected delete source(s) and retained
 /// winner source point to the exact same underlying file (`所选版本与保留版本指向同一文件，拒绝删除`).
 pub fn is_same_file_delete_refused(err: &anyhow::Error) -> bool {
@@ -1938,6 +1968,51 @@ mod tests {
         assert!(!is_same_file_delete_refused(&anyhow::anyhow!(
             "删除媒体库重复低分源失败: 网络超时"
         )));
+
+        // Verify deleted-CID root fallback (`cid="0"` or `parent_id="0"`) is 100% blocked
+        let root_item = Cloud115File {
+            file_id: "3269149014077998904".to_string(),
+            parent_id: "0".to_string(),
+            name: "云下载".to_string(),
+            is_dir: true,
+            ..Default::default()
+        };
+        let echoed_fallback = Cloud115Page {
+            cid: "999888777".to_string(),
+            count: 1,
+            items: vec![root_item.clone()],
+            ..Default::default()
+        };
+        let clean1 = sanitize_open115_page("999888777", echoed_fallback);
+        assert!(clean1.items.is_empty());
+        assert_eq!(clean1.count, 0);
+
+        let root_cid_fallback = Cloud115Page {
+            cid: "0".to_string(),
+            count: 1,
+            items: vec![Cloud115File {
+                parent_id: String::new(),
+                ..root_item
+            }],
+            ..Default::default()
+        };
+        let clean2 = sanitize_open115_page("999888777", root_cid_fallback);
+        assert!(clean2.items.is_empty());
+        assert_eq!(clean2.count, 0);
+
+        let valid_page = Cloud115Page {
+            cid: "999888777".to_string(),
+            count: 1,
+            items: vec![Cloud115File {
+                file_id: "111".to_string(),
+                parent_id: "999888777".to_string(),
+                name: "ep01.mkv".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let clean3 = sanitize_open115_page("999888777", valid_page);
+        assert_eq!(clean3.items.len(), 1);
 
         assert_eq!(
             tmdb_card_image_https("/bd123.jpg", "/ps456.jpg").as_deref(),

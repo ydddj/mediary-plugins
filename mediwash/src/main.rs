@@ -462,6 +462,12 @@ fn dispatch(
                 let ps = staging::prune_pipeline_staging(&host, &cfg, p, 25);
                 total_dirs += ps.cleaned_dirs;
                 total_files += ps.cleaned_files;
+                if ps.cleaned_dirs > 0 {
+                    let _ = conn.execute(
+                        "DELETE FROM cursors WHERE key = ?",
+                        [format!("staging_walk:{}", p.id)],
+                    );
+                }
                 for h in ps.preserved_hits {
                     if !preserved_hits.contains(&h) {
                         preserved_hits.push(h);
