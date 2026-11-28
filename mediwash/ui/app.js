@@ -383,17 +383,44 @@ function ledgerBadge(st) {
   }
 }
 
+let lastRenderedTab = null;
+
 function render() {
   const root = document.getElementById('mw-view');
   if (!state.boot) {
     root.innerHTML = '<div class="mw-empty">正在连接 Mediary 加载 MediWash 工作台...</div>';
     return;
   }
+  const sameTab = lastRenderedTab === state.tab;
+  const mainEl = document.querySelector('.mw-main');
+  const prevWinY = sameTab ? window.scrollY || document.documentElement.scrollTop || 0 : 0;
+  const prevMainY = sameTab && mainEl ? mainEl.scrollTop : 0;
+  const prevWrap = sameTab ? root.querySelector('.mw-hist-table-wrap, .mw-table-wrap') : null;
+  const prevWrapY = prevWrap ? prevWrap.scrollTop : 0;
+  const prevWrapX = prevWrap ? prevWrap.scrollLeft : 0;
+  lastRenderedTab = state.tab;
+
   if (state.tab === 'staging') renderStagingTab(root);
   else if (state.tab === 'library') renderLibraryTab(root);
   else if (state.tab === 'pt') renderPtTab(root);
   else if (state.tab === 'rules') renderRulesTab(root);
   else if (state.tab === 'history') renderHistoryTab(root);
+
+  if (sameTab) {
+    const restoreScroll = () => {
+      if (mainEl && prevMainY > 0) mainEl.scrollTop = prevMainY;
+      if (prevWinY > 0) window.scrollTo(0, prevWinY);
+      const nextWrap = root.querySelector('.mw-hist-table-wrap, .mw-table-wrap');
+      if (nextWrap) {
+        if (prevWrapY > 0) nextWrap.scrollTop = prevWrapY;
+        if (prevWrapX > 0) nextWrap.scrollLeft = prevWrapX;
+      }
+    };
+    restoreScroll();
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(restoreScroll);
+    }
+  }
 }
 
 // ============================================================================
@@ -889,7 +916,7 @@ function renderStagingCandidatesTable() {
         <input type="checkbox" id="chk-staging-all-m" ${allChecked ? 'checked' : ''} />
         <span>全选当前 ${items.length} 条</span>
       </label>
-      <span class="mw-muted">已勾选 ${state.stagingSelected.size} 项</span>
+      <span class="mw-muted" id="staging-sel-count">已勾选 ${state.stagingSelected.size} 项</span>
     </div>
     <div class="mw-table-wrap">
       <table class="mw-table mw-card-table">
@@ -1011,13 +1038,29 @@ function bindStagingCandidatesEvents(root) {
     render();
   };
 
+  const syncStagingSelectionUI = () => {
+    const items = state.stagingItems || [];
+    const n = state.stagingSelected.size;
+    const allChecked = items.length > 0 && items.every((it) => state.stagingSelected.has(it.id));
+    const btnAdmit = document.getElementById('btn-batch-admit');
+    if (btnAdmit) btnAdmit.textContent = `执行勾选建议 (${n})`;
+    const mCount = document.getElementById('staging-sel-count');
+    if (mCount) mCount.textContent = `已勾选 ${n} 项`;
+    const cAll = document.getElementById('chk-staging-all');
+    if (cAll) cAll.checked = allChecked;
+    const cAllM = document.getElementById('chk-staging-all-m');
+    if (cAllM) cAllM.checked = allChecked;
+  };
   const toggleAllStaging = (checked) => {
     if (checked) {
       (state.stagingItems || []).forEach((it) => state.stagingSelected.add(it.id));
     } else {
       state.stagingSelected.clear();
     }
-    render();
+    root.querySelectorAll('.js-chk-staging').forEach((chk) => {
+      chk.checked = checked;
+    });
+    syncStagingSelectionUI();
   };
   const chkAll = document.getElementById('chk-staging-all');
   if (chkAll) chkAll.onchange = () => toggleAllStaging(chkAll.checked);
@@ -1028,7 +1071,7 @@ function bindStagingCandidatesEvents(root) {
       const id = Number(chk.dataset.id);
       if (chk.checked) state.stagingSelected.add(id);
       else state.stagingSelected.delete(id);
-      render();
+      syncStagingSelectionUI();
     };
   });
 
@@ -1383,7 +1426,7 @@ function renderLibraryTab(root) {
                 <input type="checkbox" id="chk-lib-all-m" ${(page.items || []).length > 0 && (page.items || []).every((it) => state.libSelected.has(it.id)) ? 'checked' : ''} />
                 <span>全选当前 ${(page.items || []).length} 组</span>
               </label>
-              <span class="mw-muted">已勾选 ${state.libSelected.size} 组</span>
+              <span class="mw-muted" id="lib-sel-count">已勾选 ${state.libSelected.size} 组</span>
             </div>
             <div class="mw-table-wrap">
               <table class="mw-table mw-card-table">
@@ -1562,10 +1605,26 @@ function renderLibraryTab(root) {
     render();
   };
 
+  const syncLibSelectionUI = () => {
+    const items = page.items || [];
+    const n = state.libSelected.size;
+    const allChecked = items.length > 0 && items.every((it) => state.libSelected.has(it.id));
+    const btnClean = document.getElementById('btn-lib-clean-selected');
+    if (btnClean) btnClean.textContent = `清理勾选 (${n})`;
+    const mCount = document.getElementById('lib-sel-count');
+    if (mCount) mCount.textContent = `已勾选 ${n} 组`;
+    const cAll = document.getElementById('chk-lib-all');
+    if (cAll) cAll.checked = allChecked;
+    const cAllM = document.getElementById('chk-lib-all-m');
+    if (cAllM) cAllM.checked = allChecked;
+  };
   const toggleAllLib = (checked) => {
     if (checked) (page.items || []).forEach((it) => state.libSelected.add(it.id));
     else state.libSelected.clear();
-    render();
+    root.querySelectorAll('.js-chk-lib').forEach((chk) => {
+      chk.checked = checked;
+    });
+    syncLibSelectionUI();
   };
   const chkAll = document.getElementById('chk-lib-all');
   if (chkAll) chkAll.onchange = () => toggleAllLib(chkAll.checked);
@@ -1576,7 +1635,7 @@ function renderLibraryTab(root) {
       const id = Number(chk.dataset.id);
       if (chk.checked) state.libSelected.add(id);
       else state.libSelected.delete(id);
-      render();
+      syncLibSelectionUI();
     };
   });
 
@@ -3752,7 +3811,7 @@ function renderHistoryTab(root) {
                 <input type="checkbox" id="chk-hist-all-m" ${items.length > 0 && items.every((it) => state.histSelected.has(it.id)) ? 'checked' : ''} />
                 <span>全选当前 ${items.length} 条</span>
               </label>
-              <span class="mw-muted">已选 ${state.histSelected.size} · 点说明看详情</span>
+              <span class="mw-muted" id="hist-sel-count">已选 ${state.histSelected.size} · 点说明看详情</span>
             </div>
             <div class="mw-hist-table-wrap">
               <table class="mw-table mw-hist-table">
@@ -3923,10 +3982,29 @@ function renderHistoryTab(root) {
     };
   }
 
+  const syncHistSelectionUI = () => {
+    const n = state.histSelected.size;
+    const allChecked = items.length > 0 && items.every((it) => state.histSelected.has(it.id));
+    const btnCustom = document.getElementById('btn-hist-custom-selected');
+    if (btnCustom) btnCustom.textContent = `自定义重整 (${n})`;
+    const btnRetry = document.getElementById('btn-hist-retry-selected');
+    if (btnRetry) btnRetry.textContent = `${isMedia ? '重整/重试勾选' : '重试勾选'} (${n})`;
+    const btnDel = document.getElementById('btn-hist-del-selected');
+    if (btnDel) btnDel.textContent = `删除勾选 (${n})`;
+    const mCount = document.getElementById('hist-sel-count');
+    if (mCount) mCount.textContent = `已选 ${n} · 点说明看详情`;
+    const cAll = document.getElementById('chk-hist-all');
+    if (cAll) cAll.checked = allChecked;
+    const cAllM = document.getElementById('chk-hist-all-m');
+    if (cAllM) cAllM.checked = allChecked;
+  };
   const toggleAllHist = (checked) => {
     if (checked) items.forEach((it) => state.histSelected.add(it.id));
     else state.histSelected.clear();
-    render();
+    root.querySelectorAll('.js-chk-hist').forEach((chk) => {
+      chk.checked = checked;
+    });
+    syncHistSelectionUI();
   };
   const chkAll = document.getElementById('chk-hist-all');
   if (chkAll) chkAll.onchange = () => toggleAllHist(chkAll.checked);
@@ -3973,7 +4051,7 @@ function renderHistoryTab(root) {
       const id = Number(chk.dataset.id);
       if (chk.checked) state.histSelected.add(id);
       else state.histSelected.delete(id);
-      render();
+      syncHistSelectionUI();
     };
   });
 
