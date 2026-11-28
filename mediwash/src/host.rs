@@ -373,6 +373,7 @@ pub struct HostClient {
     base_url: Url,
     token: String,
     agent: ureq::Agent,
+    tmdb_resolve_cache: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -410,6 +411,7 @@ impl HostClient {
             base_url,
             token: token.trim().to_string(),
             agent,
+            tmdb_resolve_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         })
     }
 
@@ -444,7 +446,7 @@ impl HostClient {
         let mut resp = send_once(body.clone());
         if let Err(ureq::Error::Transport(ref t)) = resp {
             if t.kind() == ureq::ErrorKind::ConnectionFailed {
-                std::thread::sleep(Duration::from_millis(350));
+                std::thread::sleep(Duration::from_millis(180));
                 resp = send_once(body);
             }
         }
@@ -1059,8 +1061,8 @@ impl HostClient {
             prefer_task_target_dir && clean_task_name.is_some() && clean_target.is_some();
 
         let mut last_resp = json!({});
-        // Cap each HTTP request to 15 files so 115's 0.8 QPS rate limiter (~2s/file) never exceeds HTTP read timeout!
-        for chunk in files.chunks(15) {
+        // Batch up to 30 files per HTTP request (Mediary allows up to 100) for higher throughput.
+        for chunk in files.chunks(30) {
             let items_json: Vec<Value> = chunk
                 .iter()
                 .map(|f| {
@@ -1231,6 +1233,15 @@ impl HostClient {
         year: Option<u32>,
         media_type: &str,
     ) -> Result<Option<String>> {
+        let cache_key = format!(
+            "{}|{}|{}",
+            media_type.trim().to_ascii_lowercase(),
+            year.unwrap_or(0),
+            title.trim().to_ascii_lowercase()
+        );
+        if let Some(cached) = self.tmdb_resolve_cache.borrow().get(&cache_key) {
+            return Ok(cached.clone());
+        }
         let mut body = json!({
             "title": title.trim(),
             "media_type": media_type,
@@ -1248,13 +1259,18 @@ impl HostClient {
                     .or_else(|| v["tmdb_id"].as_u64().map(|n| n.to_string()))
                     .or_else(|| v["id"].as_u64().map(|n| n.to_string()))
                     .unwrap_or_default();
-                Ok((!id.is_empty() && id != "0").then_some(id))
+                let res = (!id.is_empty() && id != "0").then_some(id);
+                self.tmdb_resolve_cache
+                    .borrow_mut()
+                    .insert(cache_key, res.clone());
+                Ok(res)
             }
             Err(err) => {
                 if err
                     .downcast_ref::<HttpStatusError>()
                     .is_some_and(|st| st.0 == 404)
                 {
+                    self.tmdb_resolve_cache.borrow_mut().insert(cache_key, None);
                     Ok(None)
                 } else {
                     Err(err.context("调用 Mediary TMDB 识别失败（需 catalog:read 权限）"))

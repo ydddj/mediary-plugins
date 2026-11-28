@@ -146,43 +146,12 @@ fn dispatch(
             let mut any_has_more = false;
             let tick_clock = std::time::Instant::now();
 
-            if !is_manual_ui
-                && db::get_cursor(conn, "pending_tmdbid_repair").as_deref() == Some("1")
-            {
-                match staging::repair_missing_tmdbid_history(conn, &host, &cfg, settings, 180) {
-                    Ok(rep) => {
-                        let rem = rep["remaining"].as_u64().unwrap_or(0);
-                        if rem == 0 {
-                            let _ = conn.execute(
-                                "DELETE FROM cursors WHERE key = 'pending_tmdbid_repair'",
-                                [],
-                            );
-                        } else {
-                            any_has_more = true;
-                        }
-                        if let Some(n) = rep["notice"].as_str().filter(|s| !s.is_empty()) {
-                            notices.push(n.to_string());
-                            db::log_task_history(
-                                conn,
-                                "115归档",
-                                "历史记录 TMDB 标签批量重整",
-                                &cfg.host_sync.transfer_task_name,
-                                "repair_tmdbid",
-                                "done",
-                                n,
-                            );
-                        }
-                    }
-                    Err(e) => notices.push(format!("TMDB 标签批量重整异常: {e:#}")),
-                }
-            }
-
             for p in cfg
                 .pipelines
                 .iter()
                 .filter(|p| p.enabled || (is_manual_ui && !p.source_cid.trim().is_empty()))
             {
-                if is_manual_ui && tick_clock.elapsed().as_secs() >= 15 {
+                if is_manual_ui && tick_clock.elapsed().as_secs() >= 26 {
                     any_has_more = true;
                     break;
                 }
@@ -193,9 +162,9 @@ fn dispatch(
                     );
                 }
                 let scan_res = if is_manual_ui {
-                    staging::scan_pipeline_ui(conn, &host, &cfg, settings, p.id, 12)
+                    staging::scan_pipeline_ui(conn, &host, &cfg, settings, p.id, 60)
                 } else {
-                    staging::scan_pipeline(conn, &host, &cfg, settings, p.id, 80)
+                    staging::scan_pipeline(conn, &host, &cfg, settings, p.id, 300)
                 };
                 match scan_res {
                     Ok(r) => {
@@ -210,7 +179,7 @@ fn dispatch(
                 }
             }
 
-            let ledger_res = if !is_manual_ui || (!any_has_more && tick_clock.elapsed().as_secs() < 16) {
+            let ledger_res = if !is_manual_ui || (!any_has_more && tick_clock.elapsed().as_secs() < 26) {
                 staging::reconcile_ledger(conn, &host, &cfg, settings)?
             } else {
                 json!({})
@@ -418,7 +387,7 @@ fn dispatch(
                         "DELETE FROM cursors WHERE key = ?",
                         [format!("staging_walk:{}", pipe.id)],
                     );
-                    scan_result = Some(staging::scan_pipeline_ui(conn, &host, &cfg, settings, pipe.id, 10)?);
+                    scan_result = Some(staging::scan_pipeline_ui(conn, &host, &cfg, settings, pipe.id, 60)?);
                 }
             }
             let mut boot = build_bootstrap_payload(conn, &cfg, settings, None, None);
@@ -455,10 +424,10 @@ fn dispatch(
             let host = HostClient::from_env()?;
             let _ = host.sync_unified_rules_if_stale(conn, 300);
             let cfg = db::load_config(conn)?;
-            let res = staging::scan_pipeline_ui(conn, &host, &cfg, settings, pid, 10)?;
+            let res = staging::scan_pipeline_ui(conn, &host, &cfg, settings, pid, 60)?;
             Ok(json!({
                 "scan": res,
-                "items": staging::list_staging_items(conn, Some(pid), "pending", "all", 150)?,
+                "items": staging::list_staging_items(conn, Some(pid), "pending", "all", 300)?,
                 "counts": db::summary_counts(conn),
             }))
         }
@@ -1160,7 +1129,7 @@ fn dispatch(
             Ok(res)
         }
 
-        "ui_history_repair_tmdbid" => {
+        "ui_history_custom_reorganize" => {
             let filter = db::ActivityFilter {
                 record_type: input["record_type"].as_str().unwrap_or("media").to_string(),
                 kind: input["kind"].as_str().unwrap_or("all").to_string(),
@@ -1169,20 +1138,71 @@ fn dispatch(
                 keyword: input["keyword"].as_str().unwrap_or_default().to_string(),
                 limit: input["limit"].as_u64().unwrap_or(200) as usize,
             };
+            let req = staging::CustomReorganizeRequest {
+                ids: input["ids"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_i64)
+                    .collect(),
+                media_type: input["media_type"].as_str().unwrap_or("tv").to_string(),
+                tmdb_id: input["tmdb_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| input["tmdb_id"].as_u64().map(|n| n.to_string()))
+                    .unwrap_or_default(),
+                title: input["title"].as_str().unwrap_or_default().to_string(),
+                year: input["year"]
+                    .as_u64()
+                    .filter(|&y| y > 1880)
+                    .map(|y| y as u32)
+                    .or_else(|| {
+                        input["year"]
+                            .as_str()
+                            .and_then(|s| s.trim().parse::<u32>().ok())
+                            .filter(|&y| y > 1880)
+                    }),
+                season: input["season"]
+                    .as_u64()
+                    .filter(|&s| s > 0)
+                    .map(|s| s as u32)
+                    .or_else(|| {
+                        input["season"]
+                            .as_str()
+                            .and_then(|s| s.trim().parse::<u32>().ok())
+                            .filter(|&s| s > 0)
+                    }),
+                episode: input["episode"]
+                    .as_u64()
+                    .filter(|&e| e > 0)
+                    .map(|e| e as u32)
+                    .or_else(|| {
+                        input["episode"]
+                            .as_str()
+                            .and_then(|s| s.trim().parse::<u32>().ok())
+                            .filter(|&e| e > 0)
+                    }),
+                episode_offset: input["episode_offset"]
+                    .as_i64()
+                    .map(|n| n.clamp(-500, 500) as i32)
+                    .or_else(|| {
+                        input["episode_offset"]
+                            .as_str()
+                            .and_then(|s| s.trim().parse::<i32>().ok())
+                            .map(|n| n.clamp(-500, 500))
+                    })
+                    .unwrap_or(0),
+                target_cid: input["target_cid"].as_str().unwrap_or_default().to_string(),
+                task_name: input["task_name"].as_str().unwrap_or_default().to_string(),
+                save_binding: input["save_binding"].as_bool().unwrap_or(false),
+            };
             let host = HostClient::from_env()?;
             let _ = host.sync_unified_rules_if_stale(conn, 180);
             let cfg = db::load_config(conn)?;
-            let rep = staging::repair_missing_tmdbid_history(conn, &host, &cfg, settings, 18)?;
-            if rep["remaining"].as_u64().unwrap_or(0) > 0 {
-                let _ = db::set_cursor(conn, "pending_tmdbid_repair", "1");
-            } else {
-                let _ = conn.execute(
-                    "DELETE FROM cursors WHERE key = 'pending_tmdbid_repair'",
-                    [],
-                );
-            }
+            let custom_res =
+                staging::custom_reorganize_history_items(conn, &host, &cfg, settings, &req)?;
             let mut res = db::query_activities(conn, &filter)?;
-            res["repair"] = rep;
+            res["custom_reorganize"] = custom_res;
             res["counts"] = db::summary_counts(conn);
             Ok(res)
         }

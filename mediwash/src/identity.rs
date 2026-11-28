@@ -29,6 +29,8 @@ pub struct ParsedFilename {
     #[serde(default)]
     pub web_source: String,
     pub inferred_type: &'static str,
+    #[serde(skip)]
+    pub episode_from_paren: bool,
 }
 
 /// Mediary v3.4.8+ canonical streaming platform (`{{webSource}}` / `{{web_source}}`) table:
@@ -393,13 +395,19 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
     static SE_SINGLE_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})\s*[._-]?E(\d{1,4})\b").unwrap());
     static EP_ONLY_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(?:\bEP?\s*(\d{1,4})\b|第\s*(\d{1,4})\s*[集话話期]|\[(\d{2,4})(?:v\d)?\])")
+        Regex::new(r"(?i)(?:\bEP?\s*[._#-]?\s*(\d{1,4})\b|第\s*(\d{1,4})\s*[集话話期]|\[(\d{2,4})(?:v\d)?\])")
             .unwrap()
+    });
+    static EPISODE_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b(?:Episode|Epi)\s*[._#-]?\s*(\d{1,4})\b").unwrap()
     });
     static TRAILING_PAREN_EP_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"[\(（]\s*(\d{1,3})\s*[\)）]\s*$").unwrap());
     static FOLDER_SEASON_RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)(?:\bSeason\s*(\d{1,2})\b|\bS(\d{1,2})\b|第\s*(\d{1,2})\s*季)").unwrap()
+    });
+    static FOLDER_TV_HINT_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:全\s*\d+\s*[集话話期]|共\s*\d+\s*[集话話期]|\d+\s*[集话話期]全|更新至\s*\d+|第\s*\d{1,2}\s*季|\bSeason\s*\d{1,2}\b|\bS\d{1,2}\s*[-~]\s*S?\d{1,2}\b)").unwrap()
     });
     static YEAR_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap());
@@ -420,7 +428,10 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
     let clean_folder = strip_invisible_chars(rel_folder);
     let filename = clean_file.as_str();
     let rel_folder = clean_folder.as_str();
-    let web_source = extract_web_source(filename);
+    let mut web_source = extract_web_source(filename);
+    if web_source.is_empty() && !rel_folder.trim().is_empty() {
+        web_source = extract_web_source(rel_folder);
+    }
 
     let folder_is_movie = rel_folder.split('/').any(|s| {
         matches!(
@@ -429,12 +440,12 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
         )
     });
     let folder_is_tv = !folder_is_movie
-        && rel_folder.split('/').any(|s| {
+        && (rel_folder.split('/').any(|s| {
             matches!(
                 s.trim(),
                 "电视剧" | "剧集" | "国产剧" | "日韩剧" | "欧美剧" | "港台剧" | "番剧" | "综艺" | "国漫" | "日漫"
             )
-        });
+        }) || FOLDER_TV_HINT_RE.is_match(rel_folder));
 
     let combined_ctx = if rel_folder.trim().is_empty() {
         filename.to_string()
@@ -459,6 +470,15 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
     let mut episode = None;
     let mut episode_end = None;
     let mut ep_cut_pos = None;
+    let mut episode_from_paren = false;
+
+    let detect_folder_season = || -> u32 {
+        FOLDER_SEASON_RE
+            .captures(rel_folder)
+            .and_then(|fc| fc.get(1).or_else(|| fc.get(2)).or_else(|| fc.get(3)))
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+            .unwrap_or(1)
+    };
 
     if let Some(cap) = SE_RANGE_RE.captures(&stem) {
         season = cap.get(1).and_then(|m| m.as_str().parse().ok());
@@ -472,63 +492,72 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
         season = cap.get(1).and_then(|m| m.as_str().parse().ok());
         episode = cap.get(2).and_then(|m| m.as_str().parse().ok());
         ep_cut_pos = cap.get(0).map(|m| m.start());
-    } else if let Some(cap) = EP_ONLY_RE.captures(&stem) {
-        let ep_val = cap
-            .get(1)
-            .or_else(|| cap.get(2))
-            .or_else(|| cap.get(3))
-            .and_then(|m| m.as_str().parse::<u32>().ok())
-            .filter(|&e| e > 0 && !(1900..=2099).contains(&e));
-        if let Some(ep) = ep_val {
-            let folder_s = FOLDER_SEASON_RE
-                .captures(rel_folder)
-                .and_then(|fc| fc.get(1).or_else(|| fc.get(2)).or_else(|| fc.get(3)))
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-                .unwrap_or(1);
-            season = Some(folder_s);
-            episode = Some(ep);
-            ep_cut_pos = cap.get(0).map(|m| m.start());
-        }
     } else if let Some(cap) = (!folder_is_movie)
-        .then(|| TRAILING_PAREN_EP_RE.captures(pre_tech_stem))
+        .then(|| EPISODE_WORD_RE.captures(pre_tech_stem))
         .flatten()
     {
-        // Classic HK/Asia TV naming like `爱情全保 (1).mkv` ~ `爱情全保 (20).mkv`
-        // Guard: ignore `(1)` duplicate copy suffixes when inside `/电影/` or when a 4-digit year `(2024)` already precedes it!
-        let prefix = &pre_tech_stem[..cap.get(0).map_or(0, |m| m.start())];
-        let has_year_before = YEAR_RE
-            .find_iter(prefix)
-            .any(|ym| prefix[..ym.start()].chars().any(char::is_alphanumeric));
-        if !has_year_before && prefix.chars().any(char::is_alphanumeric) {
+        let m0 = cap.get(0).unwrap();
+        let prefix = &pre_tech_stem[..m0.start()];
+        let suffix = &pre_tech_stem[m0.end()..];
+        let safe_episode_word =
+            !has_alnum(prefix) || !has_alnum(suffix) || folder_is_tv;
+        if safe_episode_word {
             if let Some(ep) = cap
                 .get(1)
                 .and_then(|m| m.as_str().parse::<u32>().ok())
-                .filter(|&e| (1..=999).contains(&e))
+                .filter(|&e| e > 0 && !(1900..=2099).contains(&e))
             {
-                let folder_s = FOLDER_SEASON_RE
-                    .captures(rel_folder)
-                    .and_then(|fc| fc.get(1).or_else(|| fc.get(2)).or_else(|| fc.get(3)))
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .unwrap_or(1);
-                season = Some(folder_s);
+                season = Some(detect_folder_season());
+                episode = Some(ep);
+                ep_cut_pos = Some(m0.start());
+            }
+        }
+    }
+    if episode.is_none() {
+        if let Some(cap) = (!folder_is_movie).then(|| EP_ONLY_RE.captures(&stem)).flatten() {
+            let ep_val = cap
+                .get(1)
+                .or_else(|| cap.get(2))
+                .or_else(|| cap.get(3))
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                .filter(|&e| e > 0 && !(1900..=2099).contains(&e));
+            if let Some(ep) = ep_val {
+                season = Some(detect_folder_season());
                 episode = Some(ep);
                 ep_cut_pos = cap.get(0).map(|m| m.start());
             }
-        }
-    } else if let Some(bare_num) = (!folder_is_movie)
-        .then(|| stem.trim().parse::<u32>().ok())
-        .flatten()
-    {
-        // Bare episode file like `01.mkv` or `1089.mkv` inside a show folder (exclude 1900+ years)
-        if (1..=1899).contains(&bare_num) && !rel_folder.trim().is_empty() {
-            let folder_s = FOLDER_SEASON_RE
-                .captures(rel_folder)
-                .and_then(|fc| fc.get(1).or_else(|| fc.get(2)).or_else(|| fc.get(3)))
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-                .unwrap_or(1);
-            season = Some(folder_s);
-            episode = Some(bare_num);
-            ep_cut_pos = Some(0);
+        } else if let Some(cap) = (!folder_is_movie)
+            .then(|| TRAILING_PAREN_EP_RE.captures(pre_tech_stem))
+            .flatten()
+        {
+            // Classic HK/Asia TV naming like `爱情全保 (17).mkv` ~ `爱情全保 (20).mkv`
+            // Guard: ignore `(1)` duplicate copy suffixes when inside `/电影/` or when a 4-digit year `(2024)` already precedes it!
+            let prefix = &pre_tech_stem[..cap.get(0).map_or(0, |m| m.start())];
+            let has_year_before = YEAR_RE
+                .find_iter(prefix)
+                .any(|ym| prefix[..ym.start()].chars().any(char::is_alphanumeric));
+            if !has_year_before && prefix.chars().any(char::is_alphanumeric) {
+                if let Some(ep) = cap
+                    .get(1)
+                    .and_then(|m| m.as_str().parse::<u32>().ok())
+                    .filter(|&e| (1..=999).contains(&e))
+                {
+                    season = Some(detect_folder_season());
+                    episode = Some(ep);
+                    ep_cut_pos = cap.get(0).map(|m| m.start());
+                    episode_from_paren = true;
+                }
+            }
+        } else if let Some(bare_num) = (!folder_is_movie)
+            .then(|| stem.trim().parse::<u32>().ok())
+            .flatten()
+        {
+            // Bare episode file like `01.mkv` or `1089.mkv` inside a show folder (exclude 1900+ years)
+            if (1..=1899).contains(&bare_num) && !rel_folder.trim().is_empty() {
+                season = Some(detect_folder_season());
+                episode = Some(bare_num);
+                ep_cut_pos = Some(0);
+            }
         }
     }
 
@@ -563,15 +592,38 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
         .min()
         .unwrap_or(stem.len());
     let mut raw_title = stem[..cut].to_string();
+    let mut folder_extracted_year: Option<u32> = None;
 
-    // If filename before `S01E01` has no title (e.g. `S01E01.2160p.mkv` inside `庆余年 (2019)/Season 01`), pull title from parent folder!
+    // If filename before `S01E01` / `Episode 26` has no title (e.g. `S01E01.mkv` or `Episode 26.mkv`
+    // inside `庆余年 (2019)/Season 01` or `[1995][僵尸道长1][全30集][MYTVSUPER][1080P]...`), pull title from parent folder!
     if clean_title_noise(&raw_title).is_empty() && !rel_folder.trim().is_empty() {
         for seg in rel_folder.split('/').rev() {
-            let seg_clean = seg.replace(['.', '_'], " ");
+            let seg_trimmed = seg.trim();
+            if seg_trimmed.is_empty()
+                || matches!(
+                    seg_trimmed.to_ascii_lowercase().as_str(),
+                    "specials" | "bdmv" | "stream" | "video" | "link"
+                )
+            {
+                continue;
+            }
+            let seg_clean = seg_trimmed.replace(['.', '_'], " ");
             if FOLDER_SEASON_RE.is_match(&seg_clean)
                 && clean_title_noise(&FOLDER_SEASON_RE.replace_all(&seg_clean, "")).is_empty()
             {
                 continue;
+            }
+            if let Some((b_title, b_year, b_season)) = extract_bracketed_folder_meta(seg_trimmed) {
+                raw_title = b_title;
+                if b_year.is_some() {
+                    folder_extracted_year = b_year;
+                }
+                if season.is_none() || season == Some(1) {
+                    if let Some(bs) = b_season {
+                        season = Some(bs);
+                    }
+                }
+                break;
             }
             let folder_cut = TECH_CUT_RE
                 .find(&seg_clean)
@@ -591,6 +643,7 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
         .find(|m| raw_title[..m.start()].chars().any(char::is_alphanumeric));
     let year = year_match
         .and_then(|m| m.as_str().parse::<u32>().ok())
+        .or(folder_extracted_year)
         .or_else(|| {
             YEAR_RE
                 .find_iter(rel_folder)
@@ -616,7 +669,133 @@ pub fn parse_media_name(filename: &str, rel_folder: &str) -> ParsedFilename {
         explicit_tmdb,
         web_source,
         inferred_type,
+        episode_from_paren,
     }
+}
+
+/// Parses bracket-heavy release folder names like
+/// `[1995][僵尸道长1][全30集][MYTVSUPER][1080P][H.265][38.51G][MKV][国粤双语][内封简繁双字][YingWEB]`
+/// or `[1995] 僵尸道长1 [全30集]`.
+fn extract_bracketed_folder_meta(seg: &str) -> Option<(String, Option<u32>, Option<u32>)> {
+    static MULTI_BRACKET_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"[\[【]([^\]】]+)[\]】]").unwrap());
+    static PURE_YEAR_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^(19\d{2}|20\d{2})$").unwrap());
+    static SIZE_TAG_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)^\d+(?:\.\d+)?\s*[KMGT]i?B?$").unwrap());
+    static EP_COUNT_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)^(?:全\s*\d+\s*[集话話期]?|共\s*\d+\s*[集话話期]?|\d+\s*[集话話期]全|更新至\s*\d+.*|complete|s\d{1,2}\s*[-~]\s*s?\d{1,2})$").unwrap()
+    });
+    static SEASON_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)^(?:Season\s*(\d{1,2})|S(\d{1,2})|第\s*(\d{1,2})\s*季)$").unwrap()
+    });
+    static TECH_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)^(?:4320p|2160p|1440p|1080[pi]|720p|576p|480p|4k|8k|uhd|hdr\d*\+?|hdrvivid|dv|dovi|sdr|hlg|h\.?26[45]|x26[45]|hevc|avc|av1|vp9|10bit|8bit|hi10p|mkv|mp4|ts|m2ts|iso|bdmv|remux|bdremux|bluray|blu-ray|bdrip|web-?dl|webrip|hdtv|dvdrip|dvd|aac|ddp[\s._0-9]*|ac3|eac3|dts[\w.-]*|truehd|atmos|flac|pcm|mp3|\d{2,3}fps)$").unwrap()
+    });
+    static LANG_SUB_NOISE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:双语|多音轨|国语|粤语|日语|英语|韩语|台配|中字|简繁|双字|内封|内嵌|外挂|字幕|特效字|无水印|高码|修复版?|原盘|精校|官译|tmdbid|tmdb)").unwrap()
+    });
+
+    let caps: Vec<String> = MULTI_BRACKET_RE
+        .captures_iter(seg)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if caps.is_empty() {
+        return None;
+    }
+    let outside = MULTI_BRACKET_RE.replace_all(seg, " ");
+    let outside_clean = clean_title_noise(&outside.replace(['.', '_'], " "));
+
+    let mut year_found: Option<u32> = None;
+    let mut season_found: Option<u32> = None;
+    let mut candidate_title: Option<String> = None;
+
+    for tok in &caps {
+        if PURE_YEAR_RE.is_match(tok) {
+            if year_found.is_none() {
+                year_found = tok.parse::<u32>().ok();
+            }
+            continue;
+        }
+        if let Some(sc) = SEASON_TAG_RE.captures(tok) {
+            if season_found.is_none() {
+                season_found = sc
+                    .get(1)
+                    .or_else(|| sc.get(2))
+                    .or_else(|| sc.get(3))
+                    .and_then(|m| m.as_str().parse::<u32>().ok());
+            }
+            continue;
+        }
+        if EP_COUNT_TAG_RE.is_match(tok)
+            || SIZE_TAG_RE.is_match(tok)
+            || TECH_TOKEN_RE.is_match(tok)
+            || LANG_SUB_NOISE_RE.is_match(tok)
+            || match_web_source_token_exact(tok, true).is_some()
+        {
+            continue;
+        }
+        if candidate_title.is_none() {
+            let cleaned = clean_title_noise(tok);
+            if !cleaned.is_empty() {
+                candidate_title = Some(cleaned);
+            }
+        }
+    }
+
+    // Prefer non-bracket text when meaningful (e.g. `[1995] 僵尸道长1 [全30集]`),
+    // otherwise use the extracted title bracket (e.g. `[1995][僵尸道长1][全30集]...`).
+    let final_title = if !outside_clean.is_empty() && outside_clean.chars().any(char::is_alphanumeric) {
+        outside_clean
+    } else if caps.len() >= 2 {
+        candidate_title?
+    } else {
+        return None;
+    };
+    Some((final_title, year_found, season_found))
+}
+
+fn strip_trailing_season_suffix(title: &str) -> Option<(String, Option<u32>)> {
+    static CN_SEASON_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\s*(?:第\s*([0-9]{1,2}|[一二三四五六七八九十])\s*[季部]|Season\s*([0-9]{1,2}))\s*$").unwrap()
+    });
+    static DIGIT_SUFFIX_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^(.{2,}?)[\s._-]*([1-9])$").unwrap());
+
+    let trimmed = title.trim();
+    if let Some(cap) = CN_SEASON_SUFFIX_RE.captures(trimmed) {
+        let base = trimmed[..cap.get(0).unwrap().start()].trim();
+        if has_alnum(base) {
+            let s_num = cap
+                .get(1)
+                .or_else(|| cap.get(2))
+                .and_then(|m| match m.as_str() {
+                    "一" => Some(1),
+                    "二" => Some(2),
+                    "三" => Some(3),
+                    "四" => Some(4),
+                    "五" => Some(5),
+                    "六" => Some(6),
+                    "七" => Some(7),
+                    "八" => Some(8),
+                    "九" => Some(9),
+                    "十" => Some(10),
+                    other => other.parse::<u32>().ok(),
+                });
+            return Some((base.to_string(), s_num));
+        }
+    }
+    if let Some(cap) = DIGIT_SUFFIX_RE.captures(trimmed) {
+        let base = cap.get(1).unwrap().as_str().trim();
+        let digit = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok());
+        // Only strip trailing `1..9` for CJK TV titles like `僵尸道长1`, `庆余年2` (avoid damaging English titles like `F1`)
+        if base.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c)) && base.chars().count() >= 2
+        {
+            return Some((base.to_string(), digit));
+        }
+    }
+    None
 }
 
 fn clean_title_noise(s: &str) -> String {
@@ -862,6 +1041,7 @@ impl RecognitionEngine {
             ));
         }
 
+        let mut parsed = parsed;
         let (mut tmdb_num, mut matched_by) = if let Some((tid, _, source_desc)) = bound {
             (tid, source_desc)
         } else {
@@ -901,18 +1081,53 @@ impl RecognitionEngine {
                         )));
                     }
                 }
-                None if preferred_type == "auto" && media_type == "tv" => {
-                    // Fallback: if a filename like `电影名 (1).mkv` was a duplicate copy suffix rather than Episode 1, try movie!
-                    if let Some(raw_id) = host.resolve_tmdb(&parsed.title, parsed.year, "movie")? {
-                        if let Ok(tid) = raw_id.parse::<u32>() {
-                            media_type = "movie".to_string();
-                            (tid, "Mediary TMDB 识别（电影重名副本兜底）".to_string())
+                None if media_type == "tv" => {
+                    // TV fallback 1: strip trailing season/part suffix (`僵尸道长1` -> `僵尸道长`, `第一部`/`第一季`)
+                    let mut tv_hit: Option<(u32, String)> = None;
+                    if let Some((base_title, suffix_season)) = strip_trailing_season_suffix(&parsed.title) {
+                        if let Some(raw_id) = host
+                            .resolve_tmdb(&base_title, parsed.year, "tv")?
+                            .or(host.resolve_tmdb(&base_title, None, "tv")?)
+                        {
+                            if let Ok(tid) = raw_id.parse::<u32>() {
+                                if let Some(ss) = suffix_season {
+                                    if parsed.season.is_none() || parsed.season == Some(1) {
+                                        parsed.season = Some(ss);
+                                    }
+                                }
+                                parsed.title = base_title;
+                                tv_hit = Some((tid, "Mediary TMDB 识别（去季号后缀）".to_string()));
+                            }
+                        }
+                    }
+                    // TV fallback 2: ignore year on TV lookup before ever considering movie
+                    if tv_hit.is_none() && parsed.year.is_some() {
+                        if let Some(raw_id) = host.resolve_tmdb(&parsed.title, None, "tv")? {
+                            if let Ok(tid) = raw_id.parse::<u32>() {
+                                tv_hit = Some((tid, "Mediary TMDB 识别（剧集忽略年份兜底）".to_string()));
+                            }
+                        }
+                    }
+                    if let Some(hit) = tv_hit {
+                        hit
+                    } else if preferred_type == "auto" && parsed.episode_from_paren {
+                        // ONLY fall back to movie when the episode number came from an ambiguous trailing `(1)` copy suffix!
+                        if let Some(raw_id) = host.resolve_tmdb(&parsed.title, parsed.year, "movie")? {
+                            if let Ok(tid) = raw_id.parse::<u32>() {
+                                media_type = "movie".to_string();
+                                (tid, "Mediary TMDB 识别（电影重名副本兜底）".to_string())
+                            } else {
+                                return Ok(ResolveOutcome::Unresolved("Mediary 未匹配到 TMDB 条目".to_string()));
+                            }
                         } else {
-                            return Ok(ResolveOutcome::Unresolved("Mediary 未匹配到 TMDB 条目".to_string()));
+                            return Ok(ResolveOutcome::Unresolved(format!(
+                                "Mediary 未匹配到《{}》的 TMDB 条目，可点击「指定 TMDB」绑定",
+                                parsed.title
+                            )));
                         }
                     } else {
                         return Ok(ResolveOutcome::Unresolved(format!(
-                            "Mediary 未匹配到《{}》的 TMDB 条目，可点击「指定 TMDB」绑定",
+                            "Mediary 未匹配到剧集《{}》的 TMDB 条目，可点击「指定 TMDB」绑定",
                             parsed.title
                         )));
                     }
@@ -1095,5 +1310,41 @@ mod tests {
             assert_eq!(p.web_source, "", "unexpected web_source false match for {fname}");
             assert_eq!(p.title, want_title, "title damaged for {fname}");
         }
+    }
+
+    #[test]
+    fn bracketed_folder_and_episode_word_parsing_works() {
+        let folder = "[1995][僵尸道长1][全30集][MYTVSUPER][1080P][H.265][38.51G][MKV][国粤双语][内封简繁双字][YingWEB]";
+        let p = parse_media_name("Episode 26.mkv", folder);
+        assert_eq!(p.inferred_type, "tv");
+        assert_eq!(p.title, "僵尸道长1");
+        assert_eq!(p.year, Some(1995));
+        assert_eq!(p.season, Some(1));
+        assert_eq!(p.episode, Some(26));
+        assert_eq!(p.web_source, "MYTV");
+        assert!(!p.episode_from_paren);
+
+        let stripped = strip_trailing_season_suffix(&p.title);
+        assert_eq!(stripped, Some(("僵尸道长".to_string(), Some(1))));
+
+        // Mixed bracket + plain title folder
+        let p2 = parse_media_name("Episode.05.mkv", "[1995] 僵尸道长 第一季 [全30集]");
+        assert_eq!(p2.inferred_type, "tv");
+        assert_eq!(p2.title, "僵尸道长 第一季");
+        assert_eq!(p2.year, Some(1995));
+        assert_eq!(p2.season, Some(1));
+        assert_eq!(p2.episode, Some(5));
+        assert_eq!(
+            strip_trailing_season_suffix(&p2.title),
+            Some(("僵尸道长".to_string(), Some(1)))
+        );
+
+        // Guard: Star Wars Episode 1 movie must NOT be misparsed as TV!
+        let p_sw = parse_media_name(
+            "Star.Wars.Episode.1.The.Phantom.Menace.1999.2160p.UHD.BluRay.mkv",
+            "",
+        );
+        assert_eq!(p_sw.inferred_type, "movie");
+        assert_eq!(p_sw.episode, None);
     }
 }

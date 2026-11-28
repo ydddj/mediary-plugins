@@ -740,7 +740,7 @@ function renderStagingTab(root) {
   document.getElementById('btn-run-tick').onclick = async () => {
     showToast('正在执行目录扫描分流、就绪探测复检与删旧核验...', 'info');
     let lastNotice = '';
-    for (let round = 1; round <= 24; round++) {
+    for (let round = 1; round <= 60; round++) {
       const res = await callAction('tick', { manual: true, ui_slice: true, reset_cursor: round === 1 });
       lastNotice = res.notice || '巡检完成';
       if (res.counts && state.boot) {
@@ -803,7 +803,7 @@ function renderStagingTab(root) {
     let lastNotice = res.scan?.notice || '监控目录与洗版设置已保存';
     if (runScan && res.scan?.has_more && res.scan?.pipeline_id) {
       const pid = res.scan.pipeline_id;
-      for (let round = 2; round <= 8; round++) {
+      for (let round = 2; round <= 50; round++) {
         showToast(`第 ${round - 1} 批已完成，正在继续处理剩余文件（第 ${round} 批）...`, 'info');
         const stepRes = await callAction('ui_scan_pipeline', { id: pid, reset_cursor: false });
         state.stagingItems = stepRes.items || state.stagingItems;
@@ -827,11 +827,23 @@ function renderStagingTab(root) {
   root.querySelectorAll('.js-scan-pipe').forEach((btn) => {
     btn.onclick = async () => {
       const pid = Number(btn.dataset.id);
-      showToast('正在扫描 115 中转目录并比对媒体库...', 'info');
-      const res = await callAction('ui_scan_pipeline', { id: pid, reset_cursor: true });
-      showToast(res.scan?.notice || '扫描完成', 'success');
+      showToast('正在高速扫描 115 待洗版目录并比对媒体库...', 'info');
+      let lastNotice = '扫描完成';
+      for (let round = 1; round <= 50; round++) {
+        const res = await callAction('ui_scan_pipeline', { id: pid, reset_cursor: round === 1 });
+        state.stagingItems = res.items || state.stagingItems;
+        if (res.counts && state.boot) {
+          state.boot.counts = res.counts;
+          syncSidebarBadges();
+        }
+        lastNotice = res.scan?.notice || lastNotice;
+        render();
+        if (!res.scan?.has_more) break;
+        showToast(`第 ${round} 批扫描完成，继续处理剩余文件（${lastNotice}）...`, 'info');
+      }
       await loadCurrentTabData();
       render();
+      showToast(lastNotice, 'success');
     };
   });
   root.querySelectorAll('.js-edit-pipe').forEach((btn) => {
@@ -3672,8 +3684,8 @@ function renderHistoryTab(root) {
         <div class="mw-actions">
           ${
             isMedia
-              ? `<button type="button" class="mw-btn sm" id="btn-hist-repair-tmdbid" data-tip="自动扫描历史记录中所有缺失 [tmdbid-...] 的已归档条目，按同目录合并批量重新整理并清理空壳旧目录">
-                   补齐缺 tmdbid 项
+              ? `<button type="button" class="mw-btn sm" id="btn-hist-custom-selected" data-tip="按自定义媒体类型、TMDB ID、季/集号、片名或目标目录重新整理勾选的记录">
+                   自定义重整 (${state.histSelected.size})
                  </button>`
               : ''
           }
@@ -3751,7 +3763,7 @@ function renderHistoryTab(root) {
                   <col style="width: 78px" />
                   <col style="width: ${isMedia ? '21%' : '31%'}" />
                   <col style="width: 74px" />
-                  <col style="width: 92px" />
+                  <col style="width: ${isMedia ? '138px' : '92px'}" />
                 </colgroup>
                 <thead>
                   <tr>
@@ -3836,6 +3848,7 @@ function renderHistoryTab(root) {
                           <td>
                             <div class="mw-hist-ops">
                               <button type="button" class="mw-btn sm primary js-hist-retry-one" data-id="${it.id}" data-tip="${esc(retryTip)}">${retryLabel}</button>
+                              ${isMedia ? `<button type="button" class="mw-btn sm js-hist-custom-one" data-id="${it.id}" data-tip="自定义媒体类型、TMDB ID、季/集号、片名或目标目录重新整理">自定义</button>` : ''}
                               <button type="button" class="mw-btn sm danger js-hist-del-one" data-id="${it.id}">删除</button>
                             </div>
                           </td>
@@ -4023,32 +4036,298 @@ function renderHistoryTab(root) {
     doRetry(ids);
   };
 
-  const repairBtn = document.getElementById('btn-hist-repair-tmdbid');
-  if (repairBtn) {
-    repairBtn.onclick = async () => {
-      await runBusy('正在按目录分组批量补齐 [tmdbid-...] 标签...', async () => {
-        let totalRepaired = 0;
-        let lastNotice = '';
-        for (let round = 1; round <= 20; round++) {
-          const res = await bridge.runAction('ui_history_repair_tmdbid', {
-            record_type: state.histType,
-            kind: state.histKind,
-            action_group: state.histAction,
-            status: state.histStatus,
-            keyword: state.histKeyword,
-            limit: 200,
-          });
-          state.histData = res;
-          if (res.counts && state.boot) state.boot.counts = res.counts;
-          const rep = res.repair || {};
-          totalRepaired += Number(rep.repaired || 0);
-          if (rep.notice) lastNotice = rep.notice;
-          render();
-          if (!rep.has_more) break;
-          setBusyText(`正在分批重整缺 [tmdbid] 条目（已完成 ${totalRepaired} 条，剩余 ${rep.remaining || 0} 条）...`);
+  const guessCustomDefaults = (targetItems) => {
+    const first = targetItems[0] || {};
+    const src = String(first.source_path || '');
+    const sub = String(first.sub_title || first.title || '');
+    const dst = String(first.target_path || '');
+    const combined = `${src} ${sub}`;
+    const hasTvHint =
+      /\bS\d{1,2}\s*[._-]?E\d{1,4}\b/i.test(combined) ||
+      /\b(?:Episode|Epi|EP)\s*[._#-]?\s*\d{1,4}\b/i.test(combined) ||
+      /第\s*\d{1,4}\s*[集话話期]|全\s*\d+\s*集|Season\s*\d+/i.test(combined) ||
+      /\/电视剧\/|\/动漫\/|\/综艺\//.test(dst);
+    let season = '';
+    let episode = '';
+    const seM = combined.match(/\bS(\d{1,2})\s*[._-]?E(\d{1,4})\b/i);
+    if (seM) {
+      season = String(Number(seM[1]) || 1);
+      episode = String(Number(seM[2]) || '');
+    } else {
+      const epM =
+        combined.match(/\b(?:Episode|Epi|EP)\s*[._#-]?\s*(\d{1,4})\b/i) ||
+        combined.match(/第\s*(\d{1,4})\s*[集话話期]/);
+      if (epM) {
+        const fsM = src.match(/(?:Season\s*(\d{1,2})|第\s*(\d{1,2})\s*季|\bS(\d{1,2})\b)/i);
+        season = String(Number(fsM?.[1] || fsM?.[2] || fsM?.[3] || 1));
+        episode = String(Number(epM[1]) || '');
+      }
+    }
+    let guessedYear = '';
+    let guessedTitle = '';
+    const parts = src.replace(/^115:\/\//, '').split('/').filter(Boolean);
+    const parentSeg = parts.length >= 2 ? parts[parts.length - 2] : '';
+    const bracketTokens = [...parentSeg.matchAll(/[\[【]([^\]】]+)[\]】]/g)].map((m) => m[1].trim());
+    if (bracketTokens.length >= 2) {
+      for (const tok of bracketTokens) {
+        if (!guessedYear && /^(19\d{2}|20\d{2})$/.test(tok)) {
+          guessedYear = tok;
+          continue;
         }
-        showToast(lastNotice || `已完成 ${totalRepaired} 条记录的 [tmdbid] 模板重整`, 'success');
-      });
+        if (
+          /^(?:全\d+集|共\d+集|\d+集全|complete|\d+(?:\.\d+)?[kmgt]i?b?|\d{3,4}[pi]|4k|uhd|h\.?26[45]|x26[45]|hevc|av1|mkv|mp4|sdr|hdr.*|dv|mytv.*|nf|iq|yk|tx|bili|mgtv|web-?dl|bluray|remux)$/i.test(
+            tok
+          ) ||
+          /(?:双语|国语|粤语|中字|简繁|双字|内封|外挂|字幕|无水印|高码|修复)/i.test(tok)
+        ) {
+          continue;
+        }
+        if (!guessedTitle) {
+          guessedTitle = tok.replace(/[1-9]$/, '').trim() || tok;
+        }
+      }
+    }
+    if (!guessedYear) {
+      const ym = `${parentSeg} ${sub}`.match(/\b(19\d{2}|20\d{2})\b/);
+      if (ym) guessedYear = ym[1];
+    }
+    if (!guessedTitle) {
+      guessedTitle = String(first.title || '')
+        .replace(/\s+S\d{1,2}E\d{1,4}.*$/i, '')
+        .replace(/^Episode\s*\d+$/i, '')
+        .trim();
+    }
+    const curTmdbM = dst.match(/\[tmdbid-(\d+)\]/i);
+    return {
+      mediaType: hasTvHint ? 'tv' : 'movie',
+      season: hasTvHint ? season || '1' : '',
+      episode: hasTvHint && targetItems.length === 1 ? episode : '',
+      title: guessedTitle,
+      year: guessedYear,
+      curTmdbHint: curTmdbM ? curTmdbM[1] : '',
+    };
+  };
+
+  const openCustomReorganizeModal = (targetItems) => {
+    if (!targetItems.length) return showToast('请先选择要自定义重整的记录', 'error');
+    const isBatch = targetItems.length > 1;
+    const def = guessCustomDefaults(targetItems);
+    const first = targetItems[0];
+    openModal(
+      isBatch ? `自定义批量重整（已选 ${targetItems.length} 条）` : `自定义重整 · ${first.title || first.sub_title || ''}`,
+      `
+        <div class="mw-muted" style="font-size:12px;margin-bottom:10px;line-height:1.55;">
+          ${
+            isBatch
+              ? `将按下方自定义参数重新整理选中的 <strong>${targetItems.length}</strong> 条记录；剧集批量重整会自动从每条源文件名提取各集号（如 <code>Episode 01..30</code>）并清理搬移后的空旧目录。`
+              : `<div>源：<code>${esc(first.source_path || first.sub_title || '-')}</code></div>
+                 <div>现：<code>${esc(first.target_path || '-')}</code>${def.curTmdbHint ? `（当前识别 tmdbid-${esc(def.curTmdbHint)}）` : ''}</div>`
+          }
+        </div>
+        <div class="mw-grid-2" style="margin-bottom:10px;">
+          <div class="mw-field">
+            <label>媒体类型</label>
+            <select class="mw-select" id="cr-mt">
+              <option value="tv" ${def.mediaType === 'tv' ? 'selected' : ''}>剧集 (tv)</option>
+              <option value="movie" ${def.mediaType === 'movie' ? 'selected' : ''}>电影 (movie)</option>
+            </select>
+          </div>
+          <div class="mw-field">
+            <label>TMDB ID（必填，或下方搜索一键填入）</label>
+            <input class="mw-input" id="cr-tmdb" value="" placeholder="纯数字，例如 69620" inputmode="numeric" />
+          </div>
+        </div>
+        <div class="mw-field" style="margin-bottom:10px;">
+          <label>快捷检索 TMDB（输入片名或 ID 点击搜索后点选结果）</label>
+          <div style="display:flex;gap:8px;">
+            <input class="mw-input" id="cr-search-q" value="${esc(def.title)}" placeholder="输入正确片名（如 僵尸道长）或 TMDB ID" style="flex:1;" />
+            <button type="button" class="mw-btn sm" id="cr-btn-search">搜索 TMDB</button>
+          </div>
+          <div id="cr-search-results" style="margin-top:6px;display:grid;gap:6px;max-height:160px;overflow-y:auto;"></div>
+        </div>
+        <div class="mw-grid-2" style="margin-bottom:10px;">
+          <div class="mw-field">
+            <label>片名（可选，留空按 TMDB 自动取名）</label>
+            <input class="mw-input" id="cr-title" value="${esc(def.title)}" placeholder="例如 僵尸道长" />
+          </div>
+          <div class="mw-field">
+            <label>年份（可选）</label>
+            <input class="mw-input" id="cr-year" value="${esc(def.year)}" placeholder="例如 1995" inputmode="numeric" />
+          </div>
+        </div>
+        <div id="cr-tv-fields" class="mw-grid-2" style="margin-bottom:10px;${def.mediaType === 'tv' ? '' : 'display:none;'}">
+          <div class="mw-field">
+            <label>季号 Season（剧集可选，默认 1）</label>
+            <input class="mw-input" id="cr-season" value="${esc(def.season)}" placeholder="1" inputmode="numeric" />
+          </div>
+          ${
+            isBatch
+              ? `<div class="mw-field">
+                   <label>批量集号偏移（默认 0，自动提取各集号）</label>
+                   <input class="mw-input" id="cr-ep-offset" value="0" placeholder="0（如 +30 或 -1）" />
+                 </div>`
+              : `<div class="mw-field">
+                   <label>集号 Episode（剧集必填/自动解析）</label>
+                   <input class="mw-input" id="cr-episode" value="${esc(def.episode)}" placeholder="例如 26" inputmode="numeric" />
+                 </div>`
+          }
+        </div>
+        <details style="margin-bottom:10px;font-size:12px;">
+          <summary style="cursor:pointer;color:var(--mw-muted);user-select:none;">高级选项（自定义目标目录 CID / 整理任务名）</summary>
+          <div class="mw-grid-2" style="margin-top:8px;">
+            <div class="mw-field">
+              <label>自定义 115 目标根目录 CID（可选）</label>
+              <input class="mw-input" id="cr-target-cid" value="" placeholder="留空跟随主程序媒体库" />
+            </div>
+            <div class="mw-field">
+              <label>自定义整理任务名（可选）</label>
+              <input class="mw-input" id="cr-task-name" value="" placeholder="留空跟随同步任务" />
+            </div>
+          </div>
+        </details>
+        <label class="mw-check" style="margin-bottom:14px;">
+          <input type="checkbox" id="cr-save-binding" checked />
+          <span>同时保存为人工绑定规则（同目录/同片名后续新文件自动命中此 TMDB ID）</span>
+        </label>
+        <div class="mw-actions" style="justify-content:flex-end;">
+          <button type="button" class="mw-btn sm" id="cr-cancel">取消</button>
+          <button type="button" class="mw-btn sm primary" id="cr-submit">开始自定义重整</button>
+        </div>
+      `,
+      (body) => {
+        const mtEl = body.querySelector('#cr-mt');
+        const tvBox = body.querySelector('#cr-tv-fields');
+        const tmdbEl = body.querySelector('#cr-tmdb');
+        const titleEl = body.querySelector('#cr-title');
+        const yearEl = body.querySelector('#cr-year');
+        const qEl = body.querySelector('#cr-search-q');
+        const resBox = body.querySelector('#cr-search-results');
+
+        mtEl.onchange = () => {
+          tvBox.style.display = mtEl.value === 'tv' ? '' : 'none';
+        };
+
+        const doSearch = async () => {
+          const q = qEl.value.trim();
+          if (!q) return showToast('请输入片名或 TMDB ID', 'error');
+          resBox.innerHTML = `<div class="mw-muted" style="font-size:12px;">正在检索 TMDB...</div>`;
+          try {
+            const sr = await callAction('ui_search_tmdb', { query: q, media_type: mtEl.value });
+            const hits = sr.items || [];
+            if (!hits.length) {
+              resBox.innerHTML = `<div class="mw-muted" style="font-size:12px;">未找到匹配条目，可切换媒体类型或更换关键词重试</div>`;
+              return;
+            }
+            resBox.innerHTML = hits
+              .map(
+                (h, idx) => `
+                  <button type="button" class="mw-btn sm js-cr-pick" data-idx="${idx}" style="justify-content:flex-start;text-align:left;width:100%;gap:6px;">
+                    <span class="mw-tag ${h.media_type === 'tv' ? 'primary' : ''}">${esc(h.media_type === 'tv' ? '剧集' : '电影')}</span>
+                    <strong>${esc(h.title || '')}</strong>
+                    <span class="mw-muted">${h.year ? `(${esc(h.year)})` : ''} · tmdbid-${esc(h.tmdb_id)}</span>
+                  </button>`
+              )
+              .join('');
+            resBox.querySelectorAll('.js-cr-pick').forEach((b) => {
+              b.onclick = () => {
+                const hit = hits[Number(b.dataset.idx)];
+                if (!hit) return;
+                mtEl.value = hit.media_type === 'tv' ? 'tv' : 'movie';
+                tvBox.style.display = mtEl.value === 'tv' ? '' : 'none';
+                tmdbEl.value = String(hit.tmdb_id || '');
+                if (hit.title) titleEl.value = hit.title;
+                if (hit.year) yearEl.value = String(hit.year);
+                showToast(`已选用 ${hit.title} (${hit.media_type}:${hit.tmdb_id})`, 'success');
+              };
+            });
+          } catch (err) {
+            resBox.innerHTML = `<div class="mw-muted" style="font-size:12px;color:var(--mw-danger);">检索失败：${esc(err?.message || err)}</div>`;
+          }
+        };
+
+        body.querySelector('#cr-btn-search').onclick = doSearch;
+        qEl.onkeydown = (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            doSearch();
+          }
+        };
+        body.querySelector('#cr-cancel').onclick = closeModal;
+
+        body.querySelector('#cr-submit').onclick = async () => {
+          const media_type = mtEl.value;
+          const tmdb_id = tmdbEl.value.trim();
+          const title = titleEl.value.trim();
+          const year = yearEl.value.trim();
+          const season = (body.querySelector('#cr-season')?.value || '').trim();
+          const episode = (body.querySelector('#cr-episode')?.value || '').trim();
+          const episode_offset = Number((body.querySelector('#cr-ep-offset')?.value || '0').trim()) || 0;
+          const target_cid = (body.querySelector('#cr-target-cid')?.value || '').trim();
+          const task_name = (body.querySelector('#cr-task-name')?.value || '').trim();
+          const save_binding = Boolean(body.querySelector('#cr-save-binding')?.checked);
+          if (!tmdb_id && !title) {
+            return showToast('请至少填写 TMDB ID 或准确片名', 'error');
+          }
+          if (tmdb_id && !/^\d+$/.test(tmdb_id)) {
+            return showToast('TMDB ID 必须为纯数字', 'error');
+          }
+          closeModal();
+
+          let pendingIds = targetItems.map((x) => x.id);
+          let lastNotice = '';
+          for (let round = 1; round <= 40 && pendingIds.length > 0; round++) {
+            showToast(
+              round === 1
+                ? `正在按自定义参数重新整理（共 ${pendingIds.length} 条）...`
+                : `第 ${round - 1} 批已完成，继续自定义重整剩余 ${pendingIds.length} 条...`,
+              'info'
+            );
+            const res = await callAction('ui_history_custom_reorganize', {
+              ids: pendingIds,
+              media_type,
+              tmdb_id,
+              title,
+              year: year ? Number(year) : null,
+              season: season ? Number(season) : null,
+              episode: episode ? Number(episode) : null,
+              episode_offset,
+              target_cid,
+              task_name,
+              save_binding: round === 1 && save_binding,
+              record_type: state.histType,
+              kind: state.histKind,
+              action_group: isMedia ? state.histAction : 'all',
+              status: state.histStatus,
+              keyword: state.histKeyword,
+              limit: 250,
+            });
+            state.histData = res;
+            state.boot.counts = res.counts || state.boot.counts;
+            syncSidebarBadges();
+            lastNotice = res.custom_reorganize?.notice || '自定义重整完成';
+            pendingIds = res.custom_reorganize?.remaining_ids || [];
+            if (!pendingIds.length) state.histSelected.clear();
+            render();
+          }
+          showToast(lastNotice || '自定义重整完成', 'success');
+        };
+      }
+    );
+  };
+
+  root.querySelectorAll('.js-hist-custom-one').forEach((btn) => {
+    btn.onclick = () => {
+      const it = items.find((x) => x.id === Number(btn.dataset.id));
+      if (it) openCustomReorganizeModal([it]);
+    };
+  });
+
+  const customSelBtn = document.getElementById('btn-hist-custom-selected');
+  if (customSelBtn) {
+    customSelBtn.onclick = () => {
+      const chosen = items.filter((x) => state.histSelected.has(x.id));
+      if (!chosen.length) return showToast('请先勾选要自定义重整的历史记录', 'error');
+      openCustomReorganizeModal(chosen);
     };
   }
 
