@@ -4185,6 +4185,10 @@ function renderHistoryTab(root) {
             </div>
           </div>
         </details>
+        <label class="mw-check" style="margin-bottom:8px;">
+          <input type="checkbox" id="cr-wash-enabled" checked />
+          <span>执行权重洗版判优（若目标库同槽位已有更高分版本则淘汰移入 115 回收站，胜出则进入删旧闭环）</span>
+        </label>
         <label class="mw-check" style="margin-bottom:14px;">
           <input type="checkbox" id="cr-save-binding" checked />
           <span>同时保存为人工绑定规则（同目录/同片名后续新文件自动命中此 TMDB ID）</span>
@@ -4264,6 +4268,7 @@ function renderHistoryTab(root) {
           const episode_offset = Number((body.querySelector('#cr-ep-offset')?.value || '0').trim()) || 0;
           const target_cid = (body.querySelector('#cr-target-cid')?.value || '').trim();
           const task_name = (body.querySelector('#cr-task-name')?.value || '').trim();
+          const wash_enabled = Boolean(body.querySelector('#cr-wash-enabled')?.checked);
           const save_binding = Boolean(body.querySelector('#cr-save-binding')?.checked);
           if (!tmdb_id && !title) {
             return showToast('请至少填写 TMDB ID 或准确片名', 'error');
@@ -4293,6 +4298,7 @@ function renderHistoryTab(root) {
               episode_offset,
               target_cid,
               task_name,
+              wash_enabled,
               save_binding: round === 1 && save_binding,
               record_type: state.histType,
               kind: state.histKind,

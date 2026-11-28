@@ -1195,6 +1195,7 @@ fn dispatch(
                 target_cid: input["target_cid"].as_str().unwrap_or_default().to_string(),
                 task_name: input["task_name"].as_str().unwrap_or_default().to_string(),
                 save_binding: input["save_binding"].as_bool().unwrap_or(false),
+                wash_enabled: input["wash_enabled"].as_bool().unwrap_or(true),
             };
             let host = HostClient::from_env()?;
             let _ = host.sync_unified_rules_if_stale(conn, 180);

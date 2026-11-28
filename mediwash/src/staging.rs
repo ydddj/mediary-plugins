@@ -1,7 +1,7 @@
 use crate::category;
 use crate::db;
 use crate::host::{Cloud115File, HostClient, LibrarySource, MediaStream, OrganizeFileItem};
-use crate::identity::{norm_title_key, RecognitionEngine, ResolveOutcome};
+use crate::identity::{norm_title_key, RecognitionEngine, RecognizedMedia, ResolveOutcome};
 use crate::models::{
     format_ts_cn, now_ts, AppConfig, ManualBinding, PluginSettings, StagingPipeline,
 };
@@ -914,6 +914,36 @@ fn evaluate_staging_file(
         }
     };
 
+    evaluate_staging_with_identity(host, cfg, pipeline, file, rel_dir, wait_probe, rec, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_staging_with_identity(
+    host: &HostClient,
+    cfg: &AppConfig,
+    pipeline: &StagingPipeline,
+    file: &Cloud115File,
+    rel_dir: &str,
+    wait_probe: bool,
+    rec: RecognizedMedia,
+    ignore_self_in_lib: bool,
+) -> StagingEval {
+    let mut out = StagingEval {
+        media_type: String::new(),
+        tmdb_id: String::new(),
+        title: file.name.clone(),
+        year: 0,
+        season: 0,
+        episode: 0,
+        category: String::new(),
+        slot: String::new(),
+        cand_score: 0.0,
+        lib_score: None,
+        verdict: "review".to_string(),
+        reason: String::new(),
+        detail: json!({}),
+    };
+
     out.media_type = rec.media_type.clone();
     out.tmdb_id = rec.tmdb_id.clone();
     out.title = rec.title.clone();
@@ -990,6 +1020,11 @@ fn evaluate_staging_file(
                 && src.size > 0.0
                 && (src.size.round() as u64) == file.size;
             if same_id_or_sha || same_exact_bytes {
+                if ignore_self_in_lib {
+                    // When re-evaluating an already-archived file against other library peers
+                    // in the target TMDB slot, skip its own LibrarySource so it still competes fairly!
+                    continue;
+                }
                 let existing_path = [
                     src.strm_path.as_str(),
                     src.cloud_path.as_str(),
@@ -2642,7 +2677,7 @@ fn resolve_organized_target_path(
     let mut resp_candidate = String::new();
     let scopes = [resp, &resp["data"]];
     for scope in scopes {
-        for arr_key in ["items", "files", "results", "moved", "organized"] {
+        for arr_key in ["moved_files", "items", "files", "results", "moved", "organized"] {
             if let Some(items) = scope[arr_key].as_array() {
                 let matched = items
                     .iter()
@@ -2811,7 +2846,11 @@ fn resolve_organized_target_path(
 
     // Map `媒体库/.../xxx.mkv` directly to `/strm/cloud/媒体库/.../xxx.strm`!
     if !resp_candidate.is_empty() {
-        if let Some(rel_after_lib) = resp_candidate.strip_prefix("媒体库/") {
+        let norm = resp_candidate
+            .trim()
+            .trim_start_matches("115://")
+            .trim_start_matches('/');
+        if let Some(rel_after_lib) = norm.strip_prefix("媒体库/") {
             let strm_rel = match rel_after_lib.rsplit_once('.') {
                 Some((stem, _)) => format!("{stem}.strm"),
                 None => format!("{rel_after_lib}.strm"),
@@ -5032,11 +5071,140 @@ pub fn retry_history_items(
                         )
                     })
                 {
-                    if !live_file.pick_code.is_empty() {
+                    let v_stem = stem_prefix(&live_file.name);
+                    let mut companion_subs: Vec<Cloud115File> = Vec::new();
+                    if !v_stem.is_empty() {
+                        for sub in dir_files {
+                            if sub.file_id != live_file.file_id
+                                && is_subtitle_name(&sub.name)
+                                && sub.name.to_lowercase().starts_with(&v_stem)
+                            {
+                                companion_subs.push(sub);
+                            }
+                        }
+                    }
+
+                    // When re-identification switched to a different TMDB/media identity, run full weight-wash
+                    // scoring against existing same-slot versions in the target library!
+                    let mut wash_eval_opt: Option<StagingEval> = None;
+                    if identity_corrected {
+                        let mut eff_pipe = pipeline_opt
+                            .clone()
+                            .or_else(|| cfg.pipelines.first().cloned())
+                            .unwrap_or_default();
+                        if eff_pipe.wash_enabled {
+                            let rec_for_eval = RecognizedMedia {
+                                media_type: eff_media_type.clone(),
+                                tmdb_id: eff_tmdb_id.clone(),
+                                title: if eff_canon_title.is_empty() {
+                                    eff_title.clone()
+                                } else {
+                                    eff_canon_title.clone()
+                                },
+                                year: None,
+                                episode: (eff_media_type == "tv" && eff_episode > 0)
+                                    .then_some((eff_season.max(1), eff_episode)),
+                                episode_end: None,
+                                matched_by: "历史重整自动纠偏".to_string(),
+                            };
+                            let ev = evaluate_staging_with_identity(
+                                host,
+                                cfg,
+                                &eff_pipe,
+                                &live_file,
+                                eff_rel,
+                                true,
+                                rec_for_eval,
+                                true,
+                            );
+                            wash_eval_opt = Some(ev);
+                        }
+                    }
+
+                    if let Some(ref ev) = wash_eval_opt {
+                        if matches!(ev.verdict.as_str(), "reject" | "already_in_lib") {
+                            let mut del_ids = vec![live_file.file_id.clone()];
+                            for sub in &companion_subs {
+                                del_ids.push(sub.file_id.clone());
+                            }
+                            if let Err(err) = host.open115_delete_files(&target_dir_cid, &del_ids) {
+                                if notices.len() < 5 {
+                                    notices.push(format!("《{eff_title}》洗版淘汰移入回收站失败：{err:#}"));
+                                }
+                                continue;
+                            }
+                            prune_vacated_library_folder(
+                                host,
+                                cfg,
+                                archive_target_cid.as_deref(),
+                                &cur_target_path,
+                                "",
+                                &s_media_type,
+                                true,
+                            );
+                            let exist_p = ev.detail["existing_path"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .trim();
+                            let recycle_target = if !exist_p.is_empty() {
+                                format!("115 官方回收站（库内已有：{exist_p}）")
+                            } else {
+                                "115 官方回收站".to_string()
+                            };
+                            let eff_slot_label = match (!ev.category.is_empty(), !ev.slot.is_empty()) {
+                                (true, true) => format!("{} · {}", ev.category, ev.slot),
+                                (true, false) => ev.category.clone(),
+                                (false, true) => ev.slot.clone(),
+                                (false, false) => slot.clone(),
+                            };
+                            let now = now_ts();
+                            let _ = db.execute(
+                                "UPDATE staging_items
+                                    SET media_type = ?1, tmdb_id = ?2, title = ?3, season = ?4, episode = ?5,
+                                        category = ?6, slot = ?7, cand_score = ?8, lib_score = ?9,
+                                        verdict = ?10, state = 'recycled_115', reason = ?11,
+                                        detail_json = ?12, updated_at = ?13
+                                  WHERE id = ?14",
+                                params![
+                                    eff_media_type,
+                                    eff_tmdb_id,
+                                    if eff_canon_title.is_empty() { &eff_title } else { &eff_canon_title },
+                                    eff_season,
+                                    eff_episode,
+                                    ev.category,
+                                    ev.slot,
+                                    ev.cand_score,
+                                    ev.lib_score,
+                                    ev.verdict,
+                                    ev.reason,
+                                    ev.detail.to_string(),
+                                    now,
+                                    s_id
+                                ],
+                            );
+                            let updated_detail = format!(
+                                "重整纠偏经权重洗版淘汰移入 115 回收站（{eff_media_type} · tmdbid={eff_tmdb_id}） · {}",
+                                ev.reason
+                            );
+                            db.execute(
+                                "UPDATE activity_logs
+                                    SET title = ?, target_path = ?, slot = ?, action = 'recycled_115',
+                                        detail = ?, status = 'done', created_at = ?
+                                  WHERE id = ?",
+                                params![eff_title, recycle_target, eff_slot_label, updated_detail, now, aid],
+                            )?;
+                            retried += 1;
+                            if notices.len() < 4 {
+                                notices.push(format!("《{eff_title}》纠正后经洗版判负已移入 115 回收站并清理旧空目录"));
+                            }
+                            continue;
+                        }
+                    }
+
+                    if wash_eval_opt.is_none() && !live_file.pick_code.is_empty() {
                         // Fast non-blocking cache check (2.5s max) so we don't burn 15s of the 45s UI budget!
                         let _ = host.open115_probe_media_info(&live_file, true, false, false, 2_500);
                     }
-                    let v_stem = stem_prefix(&live_file.name);
                     let mut org_batch = vec![OrganizeFileItem {
                         file_id: live_file.file_id.clone(),
                         parent_id: target_dir_cid.clone(),
@@ -5047,24 +5215,17 @@ pub fn retry_history_items(
                         season: eff_season,
                         episode: eff_episode,
                     }];
-                    if !v_stem.is_empty() {
-                        for sub in dir_files {
-                            if sub.file_id != live_file.file_id
-                                && is_subtitle_name(&sub.name)
-                                && sub.name.to_lowercase().starts_with(&v_stem)
-                            {
-                                org_batch.push(OrganizeFileItem {
-                                    file_id: sub.file_id,
-                                    parent_id: target_dir_cid.clone(),
-                                    name: sub.name,
-                                    size: sub.size,
-                                    sha1: sub.sha1,
-                                    pick_code: sub.pick_code,
-                                    season: eff_season,
-                                    episode: eff_episode,
-                                });
-                            }
-                        }
+                    for sub in companion_subs {
+                        org_batch.push(OrganizeFileItem {
+                            file_id: sub.file_id,
+                            parent_id: target_dir_cid.clone(),
+                            name: sub.name,
+                            size: sub.size,
+                            sha1: sub.sha1,
+                            pick_code: sub.pick_code,
+                            season: eff_season,
+                            episode: eff_episode,
+                        });
                     }
 
                     let resp = match host.open115_organize_files_with_timeout(
@@ -5111,71 +5272,35 @@ pub fn retry_history_items(
                     } else {
                         cur_target_path.clone()
                     };
-                    // Clean up now-empty old show/season folders on 115 if template rename moved the file to a new `[tmdbid-...]` folder!
-                    if let Some(root_cid) = archive_target_cid.as_deref() {
-                        let old_segs = extract_target_rel_segments(
-                            &cur_target_path,
-                            &cfg.host_sync.transfer_target_folder,
-                        );
-                        let new_segs = extract_target_rel_segments(
-                            &final_target,
-                            &cfg.host_sync.transfer_target_folder,
-                        );
-                        if !old_segs.is_empty() && old_segs != new_segs {
-                            let cat_depth = category::locate(
-                                &cfg.host_sync.categories,
-                                &s_media_type,
-                                &[&cur_target_path],
-                            )
-                            .or_else(|| {
-                                category::locate(&cfg.host_sync.categories, "movie", &[&cur_target_path])
-                            })
-                            .or_else(|| {
-                                category::locate(&cfg.host_sync.categories, "tv", &[&cur_target_path])
-                            })
-                            .map(|c| c.split('/').filter(|s| !s.is_empty()).count())
-                            .unwrap_or(0);
-                            if cat_depth > 0 && old_segs.len() > cat_depth {
-                                // Prune leaf-up (e.g. `Season 1`, then `天声一对 (2025)`) only when 100% empty!
-                                for depth in ((cat_depth + 1)..=old_segs.len()).rev() {
-                                    let parent_refs: Vec<&str> =
-                                        old_segs[..depth - 1].iter().map(String::as_str).collect();
-                                    let leaf_refs: Vec<&str> =
-                                        old_segs[..depth].iter().map(String::as_str).collect();
-                                    if let (Ok(Some(p_cid)), Ok(Some(l_cid))) = (
-                                        host.open115_resolve_subpath_cid(root_cid, &parent_refs),
-                                        host.open115_resolve_subpath_cid(root_cid, &leaf_refs),
-                                    ) {
-                                        if !cfg.host_sync.protected_cids.contains(&l_cid) {
-                                            if let Ok(pg) =
-                                                host.open115_list_page(&l_cid, 0, 5, true)
-                                            {
-                                                if pg.count == 0 && pg.items.is_empty() {
-                                                    let _ =
-                                                        host.open115_delete_files(&p_cid, &[l_cid]);
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    prune_vacated_library_folder(
+                        host,
+                        cfg,
+                        archive_target_cid.as_deref(),
+                        &cur_target_path,
+                        &final_target,
+                        &s_media_type,
+                        identity_corrected,
+                    );
                     let mut eff_slot_label = slot.clone();
+                    let slot_tail = wash_eval_opt
+                        .as_ref()
+                        .map(|ev| ev.slot.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| s_slot.trim().to_string());
                     if let Some(cat) = category::locate(
                         &cfg.host_sync.categories,
                         &eff_media_type,
                         &[&final_target],
                     ) {
-                        eff_slot_label = if !s_slot.trim().is_empty() {
-                            format!("{cat} · {}", s_slot.trim())
+                        eff_slot_label = if !slot_tail.is_empty() {
+                            format!("{cat} · {slot_tail}")
                         } else {
                             cat
                         };
                     }
-                    let preserved_reason = if !s_reason.trim().is_empty() {
+                    let preserved_reason = if let Some(ref ev) = wash_eval_opt {
+                        ev.reason.clone()
+                    } else if !s_reason.trim().is_empty() {
                         s_reason.trim().to_string()
                     } else if let Some((_, tail)) = cur_detail.split_once(" · ") {
                         tail.trim().to_string()
@@ -5195,6 +5320,18 @@ pub fn retry_history_items(
                         format!("{lead_msg} · {preserved_reason}")
                     };
                     let now = now_ts();
+                    if let Some(ref ev) = wash_eval_opt {
+                        if ev.verdict == "admit_upgrade" {
+                            let _ = insert_upgrade_ledger_from_eval(
+                                db,
+                                ev,
+                                &live_file,
+                                &eff_title,
+                                now,
+                            );
+                            let _ = reconcile_ledger(db, host, cfg, settings);
+                        }
+                    }
                     if identity_corrected {
                         let _ = db.execute(
                             "UPDATE staging_items
@@ -5344,6 +5481,10 @@ pub fn retry_history_items(
     }))
 }
 
+fn default_true_bool() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct CustomReorganizeRequest {
@@ -5358,6 +5499,8 @@ pub struct CustomReorganizeRequest {
     pub target_cid: String,
     pub task_name: String,
     pub save_binding: bool,
+    #[serde(default = "default_true_bool")]
+    pub wash_enabled: bool,
 }
 
 fn split_source_rel_and_name(source_path: &str, fallback_sub: &str) -> (String, String) {
@@ -5453,10 +5596,172 @@ fn locate_by_target_stem_fallback(
     None
 }
 
+fn is_protected_category_segment(seg: &str) -> bool {
+    let s = seg.trim();
+    matches!(
+        s,
+        "电影" | "电视剧" | "动漫" | "综艺" | "演唱会" | "纪录片" | "学习" | "其他"
+            | "华语电影" | "外语电影" | "日韩电影" | "动画电影" | "国产剧" | "欧美剧"
+            | "日韩剧" | "香港剧" | "港台剧" | "日番" | "国漫" | "未分类-电影"
+            | "未分类-电视剧" | "未分类-演唱会" | "1990年前" | "1990-1999" | "2000-2009"
+            | "2010-2019" | "2020-2030"
+    )
+}
+
+/// Prunes vacated old library folders leaf-up on 115 (e.g. `Season 01` then `Show (Year) [tmdbid-...]`)
+/// whenever a video moved to a different folder or into 115 Recycle Bin.
+/// When `allow_clutter_only` is true (vacated wrong-identity directory), also removes directories
+/// that contain zero videos and zero subdirectories (only auto-downloaded `.nfo`/`.jpg` metadata clutter).
+fn prune_vacated_library_folder(
+    host: &HostClient,
+    cfg: &AppConfig,
+    root_cid_opt: Option<&str>,
+    old_target_path: &str,
+    new_target_path: &str,
+    old_media_type: &str,
+    allow_clutter_only: bool,
+) -> usize {
+    let Some(root_cid) = root_cid_opt.map(str::trim).filter(|s| !s.is_empty() && *s != "0") else {
+        return 0;
+    };
+    let old_segs = extract_target_rel_segments(
+        old_target_path,
+        &cfg.host_sync.transfer_target_folder,
+    );
+    if old_segs.is_empty() {
+        return 0;
+    }
+    if !new_target_path.trim().is_empty() {
+        let new_segs = extract_target_rel_segments(
+            new_target_path,
+            &cfg.host_sync.transfer_target_folder,
+        );
+        if old_segs == new_segs {
+            return 0;
+        }
+    }
+    let mut cat_depth = category::locate(
+        &cfg.host_sync.categories,
+        if old_media_type.is_empty() {
+            "movie"
+        } else {
+            old_media_type
+        },
+        &[old_target_path],
+    )
+    .or_else(|| category::locate(&cfg.host_sync.categories, "movie", &[old_target_path]))
+    .or_else(|| category::locate(&cfg.host_sync.categories, "tv", &[old_target_path]))
+    .map(|c| c.split('/').filter(|s| !s.is_empty()).count())
+    .unwrap_or(0);
+
+    // Safe fallback if category.yaml didn't match: never touch top-level category/year folders
+    if cat_depth == 0 {
+        let mut idx = 0usize;
+        while idx < old_segs.len() && is_protected_category_segment(&old_segs[idx]) {
+            idx += 1;
+        }
+        cat_depth = idx.max(1);
+    }
+    if old_segs.len() <= cat_depth {
+        return 0;
+    }
+
+    let mut pruned = 0usize;
+    for depth in ((cat_depth + 1)..=old_segs.len()).rev() {
+        if is_protected_category_segment(&old_segs[depth - 1]) {
+            break;
+        }
+        let parent_refs: Vec<&str> = old_segs[..depth - 1].iter().map(String::as_str).collect();
+        let leaf_refs: Vec<&str> = old_segs[..depth].iter().map(String::as_str).collect();
+        let (Ok(Some(p_cid)), Ok(Some(l_cid))) = (
+            host.open115_resolve_subpath_cid(root_cid, &parent_refs),
+            host.open115_resolve_subpath_cid(root_cid, &leaf_refs),
+        ) else {
+            break;
+        };
+        if cfg.host_sync.protected_cids.contains(&l_cid) {
+            break;
+        }
+        let Ok(pg) = host.open115_list_page(&l_cid, 0, 50, true) else {
+            break;
+        };
+        let is_truly_empty = pg.count == 0 && pg.items.is_empty();
+        let is_clutter_only = allow_clutter_only
+            && pg.count <= pg.items.len()
+            && !pg.items.is_empty()
+            && pg.items.iter().all(|f| {
+                !f.is_dir
+                    && !is_video_name(&f.name)
+                    && (is_leftover_clutter(f) || is_subtitle_name(&f.name))
+            });
+        if is_truly_empty || is_clutter_only {
+            if host.open115_delete_files(&p_cid, &[l_cid]).is_ok() {
+                pruned += 1;
+                continue;
+            }
+        }
+        break;
+    }
+    pruned
+}
+
+fn insert_upgrade_ledger_from_eval(
+    db: &Connection,
+    eval: &StagingEval,
+    live_file: &Cloud115File,
+    display_title: &str,
+    now: u64,
+) -> Result<()> {
+    let old_ids = &eval.detail["old_source_ids"];
+    if !old_ids.as_array().is_some_and(|a| !a.is_empty()) {
+        return Ok(());
+    }
+    let lkey = format!(
+        "115:{}:{}:{}:{}:{}",
+        eval.media_type, eval.tmdb_id, eval.season, eval.episode, live_file.file_id
+    );
+    db.execute(
+        "INSERT INTO wash_ledger (
+            ledger_key, source_kind, media_type, tmdb_id, season, episode, item_id,
+            title, category, slot, rule_id, expected_file_id, expected_sha1,
+            old_source_ids_json, cand_score, old_score, state, message, created_at, updated_at
+         ) VALUES (?,'cloud115',?,?,?,?,?,?,?,?,?,?,?, ?, ?,?,'awaiting_ingest',?,?,?)
+         ON CONFLICT(ledger_key) DO UPDATE SET
+            old_source_ids_json=excluded.old_source_ids_json,
+            cand_score=excluded.cand_score,
+            old_score=excluded.old_score,
+            state='awaiting_ingest',
+            updated_at=excluded.updated_at",
+        params![
+            lkey,
+            eval.media_type,
+            eval.tmdb_id,
+            eval.season,
+            eval.episode,
+            eval.detail["item_id"].as_str().unwrap_or_default(),
+            display_title,
+            eval.category,
+            eval.slot,
+            eval.detail["rule_id"].as_str().unwrap_or_default(),
+            live_file.file_id,
+            live_file.sha1,
+            serde_json::to_string(old_ids).unwrap_or_else(|_| "[]".into()),
+            eval.cand_score,
+            eval.lib_score.unwrap_or(0.0),
+            "自定义重整洗版胜出，等待媒体库增量入库确认后自动清理旧低分源",
+            now,
+            now,
+        ],
+    )?;
+    Ok(())
+}
+
 /// Custom-reorganizes selected Media History rows with user-specified `media_type`, `tmdb_id`
 /// (or title/year lookup), optional `season` / `episode` / `episode_offset`, custom target CID /
-/// transfer task, and optional persistent `ManualBinding` save. Works whether the file is already
-/// mis-archived in the target library or still sitting in `待洗版`, and prunes emptied old folders.
+/// transfer task, optional full weight-wash scoring (`wash_enabled`, default true), and optional
+/// persistent `ManualBinding` save. Properly updates `target_path` from Mediary `moved_files`,
+/// recycles wash-defeated files to 115 Recycle Bin, enters `wash_ledger` on upgrades, and prunes
+/// emptied / metadata-only vacated old folders.
 pub fn custom_reorganize_history_items(
     db: &mut Connection,
     host: &HostClient,
@@ -5514,6 +5819,9 @@ pub fn custom_reorganize_history_items(
     let soft_budget_secs: u64 = 22;
     let mut staging_dir_cache: BTreeMap<String, Vec<Cloud115File>> = BTreeMap::new();
     let mut reorganized = 0usize;
+    let mut recycled = 0usize;
+    let mut upgraded = 0usize;
+    let mut pruned_dirs_total = 0usize;
     let mut failed = 0usize;
     let mut remaining_ids: Vec<i64> = Vec::new();
     let mut notices: Vec<String> = Vec::new();
@@ -5699,7 +6007,10 @@ pub fn custom_reorganize_history_items(
         let eff_prefer_task_dir =
             custom_target_cid.is_empty() && custom_task_name.is_empty() && default_prefer_task_dir;
 
-        // 1. Locate live 115 file in target library (current mis-archived location) or still in `待洗版`
+        // 1. Locate live 115 file in:
+        //    (a) old mis-archived library path,
+        //    (b) new target library path (in case a prior custom run already moved it),
+        //    (c) staging directory `待洗版`
         let mut located = locate_archived_in_target_library(
             host,
             cfg,
@@ -5718,6 +6029,20 @@ pub fn custom_reorganize_history_items(
                 cfg,
                 default_target_cid.as_deref(),
                 &cur_target_path,
+            )
+        })
+        .or_else(|| {
+            locate_archived_in_target_library(
+                host,
+                cfg,
+                eff_target_cid.as_deref(),
+                &file_id,
+                &pick_code,
+                &media_type,
+                &tmdb_id,
+                eff_season,
+                eff_episode,
+                "",
             )
         });
 
@@ -5771,6 +6096,16 @@ pub fn custom_reorganize_history_items(
         }
 
         let Some((live_parent_cid, live_file, dir_files)) = located else {
+            // Even if file was already moved out earlier, still try cleaning any leftover empty old directory!
+            pruned_dirs_total += prune_vacated_library_folder(
+                host,
+                cfg,
+                default_target_cid.as_deref(),
+                &cur_target_path,
+                "",
+                &old_mt,
+                true,
+            );
             failed += 1;
             if notices.len() < 5 {
                 notices.push(format!(
@@ -5785,7 +6120,159 @@ pub fn custom_reorganize_history_items(
             continue;
         };
 
+        let display_title = if media_type == "tv" && eff_episode > 0 {
+            format!("{canon_title} S{eff_season:02}E{eff_episode:02}")
+        } else {
+            canon_title.clone()
+        };
+
         let v_stem = stem_prefix(&live_file.name);
+        let mut companion_subs: Vec<Cloud115File> = Vec::new();
+        if !v_stem.is_empty() {
+            for sub in dir_files {
+                if sub.file_id != live_file.file_id
+                    && is_subtitle_name(&sub.name)
+                    && sub.name.to_lowercase().starts_with(&v_stem)
+                {
+                    companion_subs.push(sub);
+                }
+            }
+        }
+
+        // 2. Run weight-wash evaluation against target `(media_type, tmdb_id, season, episode)` when enabled!
+        let wash_eval_opt: Option<StagingEval> = if req.wash_enabled {
+            let mut eff_pipe = cfg
+                .pipelines
+                .iter()
+                .find(|p| p.id == pid)
+                .or_else(|| cfg.pipelines.first())
+                .cloned()
+                .unwrap_or_default();
+            eff_pipe.wash_enabled = true;
+            let rec = RecognizedMedia {
+                media_type: media_type.clone(),
+                tmdb_id: tmdb_id.clone(),
+                title: canon_title.clone(),
+                year: req.year.or(parsed_src.year),
+                episode: (media_type == "tv" && eff_episode > 0)
+                    .then_some((eff_season.max(1), eff_episode)),
+                episode_end: None,
+                matched_by: "自定义指定 TMDB".to_string(),
+            };
+            Some(evaluate_staging_with_identity(
+                host,
+                cfg,
+                &eff_pipe,
+                &live_file,
+                &src_rel_folder,
+                true,
+                rec,
+                true,
+            ))
+        } else {
+            None
+        };
+
+        let custom_tag = if media_type == "tv" && eff_episode > 0 {
+            format!("tv · tmdbid={tmdb_id} · S{eff_season:02}E{eff_episode:02}")
+        } else {
+            format!("{media_type} · tmdbid={tmdb_id}")
+        };
+        let now = now_ts();
+
+        // 2a. Defeated by existing higher/equal-score peer in target slot -> Recycle to 115 Recycle Bin & prune old folder!
+        if let Some(ref ev) = wash_eval_opt {
+            if matches!(ev.verdict.as_str(), "reject" | "already_in_lib") {
+                let mut del_ids = vec![live_file.file_id.clone()];
+                for sub in &companion_subs {
+                    del_ids.push(sub.file_id.clone());
+                }
+                if let Err(err) = host.open115_delete_files(&live_parent_cid, &del_ids) {
+                    failed += 1;
+                    if notices.len() < 5 {
+                        notices.push(format!("《{display_title}》洗版淘汰移入回收站失败：{err:#}"));
+                    }
+                    continue;
+                }
+                if located_from_target {
+                    pruned_dirs_total += prune_vacated_library_folder(
+                        host,
+                        cfg,
+                        default_target_cid.as_deref(),
+                        &cur_target_path,
+                        "",
+                        &old_mt,
+                        true,
+                    );
+                }
+                let exist_p = ev.detail["existing_path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .trim();
+                let recycle_target = if !exist_p.is_empty() {
+                    format!("115 官方回收站（库内已有：{exist_p}）")
+                } else {
+                    "115 官方回收站".to_string()
+                };
+                let eff_slot = match (!ev.category.is_empty(), !ev.slot.is_empty()) {
+                    (true, true) => format!("{} · {}", ev.category, ev.slot),
+                    (true, false) => ev.category.clone(),
+                    (false, true) => ev.slot.clone(),
+                    (false, false) => old_slot.clone(),
+                };
+                let new_detail = format!(
+                    "自定义重整经权重洗版淘汰移入 115 回收站（{custom_tag}） · {}",
+                    ev.reason
+                );
+                if let Some(sid) = s_id_opt {
+                    let _ = db.execute(
+                        "UPDATE staging_items
+                            SET media_type = ?1, tmdb_id = ?2, title = ?3, season = ?4, episode = ?5,
+                                category = ?6, slot = ?7, cand_score = ?8, lib_score = ?9,
+                                verdict = ?10, state = 'recycled_115', reason = ?11,
+                                detail_json = ?12, updated_at = ?13
+                          WHERE id = ?14",
+                        params![
+                            media_type,
+                            tmdb_id,
+                            canon_title,
+                            eff_season,
+                            eff_episode,
+                            ev.category,
+                            ev.slot,
+                            ev.cand_score,
+                            ev.lib_score,
+                            ev.verdict,
+                            ev.reason,
+                            ev.detail.to_string(),
+                            now,
+                            sid
+                        ],
+                    );
+                }
+                db.execute(
+                    "UPDATE activity_logs
+                        SET title = ?1, target_path = ?2, slot = ?3, action = 'recycled_115',
+                            status = 'done', detail = ?4, created_at = ?5
+                      WHERE id = ?6",
+                    params![display_title, recycle_target, eff_slot, new_detail, now, aid],
+                )?;
+                if !sub_title.trim().is_empty() {
+                    let _ = db.execute(
+                        "DELETE FROM activity_logs
+                          WHERE record_type = 'media'
+                            AND status = 'warning'
+                            AND sub_title = ?1
+                            AND id != ?2",
+                        params![sub_title.trim(), aid],
+                    );
+                }
+                recycled += 1;
+                continue;
+            }
+        }
+
+        // 2b. Winner (`admit_new` / `admit_upgrade`) or wash disabled -> Move & rename via Mediary native organize!
         let mut org_batch = vec![OrganizeFileItem {
             file_id: live_file.file_id.clone(),
             parent_id: live_parent_cid.clone(),
@@ -5796,24 +6283,17 @@ pub fn custom_reorganize_history_items(
             season: eff_season,
             episode: eff_episode,
         }];
-        if !v_stem.is_empty() {
-            for sub in dir_files {
-                if sub.file_id != live_file.file_id
-                    && is_subtitle_name(&sub.name)
-                    && sub.name.to_lowercase().starts_with(&v_stem)
-                {
-                    org_batch.push(OrganizeFileItem {
-                        file_id: sub.file_id,
-                        parent_id: live_parent_cid.clone(),
-                        name: sub.name,
-                        size: sub.size,
-                        sha1: sub.sha1,
-                        pick_code: sub.pick_code,
-                        season: eff_season,
-                        episode: eff_episode,
-                    });
-                }
-            }
+        for sub in companion_subs {
+            org_batch.push(OrganizeFileItem {
+                file_id: sub.file_id,
+                parent_id: live_parent_cid.clone(),
+                name: sub.name,
+                size: sub.size,
+                sha1: sub.sha1,
+                pick_code: sub.pick_code,
+                season: eff_season,
+                episode: eff_episode,
+            });
         }
 
         let resp = match host.open115_organize_files_with_timeout(
@@ -5854,97 +6334,93 @@ pub fn custom_reorganize_history_items(
             cur_target_path.clone()
         };
 
-        // Prune now-empty old mis-archived folders leaf-up on 115 (e.g. empty wrong movie directory)
+        // Prune now-empty / metadata-only vacated old folders leaf-up on 115!
         if located_from_target {
-            if let Some(root_cid) = default_target_cid.as_deref() {
-                let old_segs = extract_target_rel_segments(
-                    &cur_target_path,
-                    &cfg.host_sync.transfer_target_folder,
-                );
-                let new_segs = extract_target_rel_segments(
-                    &final_target,
-                    &cfg.host_sync.transfer_target_folder,
-                );
-                if !old_segs.is_empty() && old_segs != new_segs {
-                    let old_cat_depth = category::locate(
-                        &cfg.host_sync.categories,
-                        if old_mt.is_empty() { "movie" } else { &old_mt },
-                        &[&cur_target_path],
-                    )
-                    .or_else(|| category::locate(&cfg.host_sync.categories, "tv", &[&cur_target_path]))
-                    .or_else(|| {
-                        category::locate(&cfg.host_sync.categories, "movie", &[&cur_target_path])
-                    })
-                    .map(|c| c.split('/').filter(|s| !s.is_empty()).count())
-                    .unwrap_or(0);
-                    if old_cat_depth > 0 && old_segs.len() > old_cat_depth {
-                        for depth in ((old_cat_depth + 1)..=old_segs.len()).rev() {
-                            let parent_refs: Vec<&str> =
-                                old_segs[..depth - 1].iter().map(String::as_str).collect();
-                            let leaf_refs: Vec<&str> =
-                                old_segs[..depth].iter().map(String::as_str).collect();
-                            if let (Ok(Some(p_cid)), Ok(Some(l_cid))) = (
-                                host.open115_resolve_subpath_cid(root_cid, &parent_refs),
-                                host.open115_resolve_subpath_cid(root_cid, &leaf_refs),
-                            ) {
-                                if !cfg.host_sync.protected_cids.contains(&l_cid) {
-                                    if let Ok(pg) = host.open115_list_page(&l_cid, 0, 5, true) {
-                                        if pg.count == 0 && pg.items.is_empty() {
-                                            let _ = host.open115_delete_files(&p_cid, &[l_cid]);
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            pruned_dirs_total += prune_vacated_library_folder(
+                host,
+                cfg,
+                default_target_cid.as_deref(),
+                &cur_target_path,
+                &final_target,
+                &old_mt,
+                true,
+            );
         }
 
-        let display_title = if media_type == "tv" && eff_episode > 0 {
-            format!("{canon_title} S{eff_season:02}E{eff_episode:02}")
-        } else {
-            canon_title.clone()
-        };
-        let slot_tail = if !s_slot.trim().is_empty() {
-            s_slot.trim().to_string()
-        } else if let Some((_, tail)) = old_slot.split_once(" · ") {
-            tail.trim().to_string()
-        } else {
-            String::new()
-        };
+        let slot_tail = wash_eval_opt
+            .as_ref()
+            .map(|ev| ev.slot.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| (!s_slot.trim().is_empty()).then(|| s_slot.trim().to_string()))
+            .or_else(|| old_slot.split_once(" · ").map(|(_, t)| t.trim().to_string()))
+            .unwrap_or_default();
         let eff_slot = match category::locate(&cfg.host_sync.categories, &media_type, &[&final_target])
         {
             Some(cat) if !slot_tail.is_empty() => format!("{cat} · {slot_tail}"),
             Some(cat) => cat,
             None => old_slot.clone(),
         };
-        let custom_tag = if media_type == "tv" && eff_episode > 0 {
-            format!("tv · tmdbid={tmdb_id} · S{eff_season:02}E{eff_episode:02}")
+        let preserved_tail = if let Some(ref ev) = wash_eval_opt {
+            ev.reason.clone()
         } else {
-            format!("{media_type} · tmdbid={tmdb_id}")
+            cur_detail
+                .split_once(" · ")
+                .map(|(_, t)| t.trim().to_string())
+                .unwrap_or_default()
         };
-        let preserved_tail = cur_detail
-            .split_once(" · ")
-            .map(|(_, t)| t.trim())
-            .unwrap_or("");
-        let new_detail = if preserved_tail.is_empty() {
+        let is_upgrade = wash_eval_opt
+            .as_ref()
+            .is_some_and(|ev| ev.verdict == "admit_upgrade");
+        let new_detail = if is_upgrade {
+            format!("自定义重整洗版胜出并入库刷新 STRM（{custom_tag}） · {preserved_tail}")
+        } else if preserved_tail.is_empty() {
             format!("已按自定义参数重新整理并刷新 STRM（{custom_tag}）")
         } else {
             format!("已按自定义参数重新整理并刷新 STRM（{custom_tag}） · {preserved_tail}")
         };
 
-        let now = now_ts();
+        if let Some(ref ev) = wash_eval_opt {
+            if is_upgrade {
+                let _ = insert_upgrade_ledger_from_eval(db, ev, &live_file, &display_title, now);
+                upgraded += 1;
+            }
+        }
+
         if let Some(sid) = s_id_opt {
-            let _ = db.execute(
-                "UPDATE staging_items
-                    SET media_type = ?1, tmdb_id = ?2, title = ?3, season = ?4, episode = ?5,
-                        state = 'organized', updated_at = ?6
-                  WHERE id = ?7",
-                params![media_type, tmdb_id, canon_title, eff_season, eff_episode, now, sid],
-            );
+            if let Some(ref ev) = wash_eval_opt {
+                let _ = db.execute(
+                    "UPDATE staging_items
+                        SET media_type = ?1, tmdb_id = ?2, title = ?3, season = ?4, episode = ?5,
+                            category = ?6, slot = ?7, cand_score = ?8, lib_score = ?9,
+                            verdict = ?10, state = 'organized', reason = ?11,
+                            detail_json = ?12, updated_at = ?13
+                      WHERE id = ?14",
+                    params![
+                        media_type,
+                        tmdb_id,
+                        canon_title,
+                        eff_season,
+                        eff_episode,
+                        ev.category,
+                        ev.slot,
+                        ev.cand_score,
+                        ev.lib_score,
+                        ev.verdict,
+                        ev.reason,
+                        ev.detail.to_string(),
+                        now,
+                        sid
+                    ],
+                );
+            } else {
+                let _ = db.execute(
+                    "UPDATE staging_items
+                        SET media_type = ?1, tmdb_id = ?2, title = ?3, season = ?4, episode = ?5,
+                            state = 'organized', updated_at = ?6
+                      WHERE id = ?7",
+                    params![media_type, tmdb_id, canon_title, eff_season, eff_episode, now, sid],
+                );
+            }
         }
         db.execute(
             "UPDATE activity_logs
@@ -5964,6 +6440,10 @@ pub fn custom_reorganize_history_items(
             );
         }
         reorganized += 1;
+    }
+
+    if upgraded > 0 {
+        let _ = reconcile_ledger(db, host, cfg, settings);
     }
 
     if req.save_binding && !binding_keys.is_empty() {
@@ -5996,12 +6476,23 @@ pub fn custom_reorganize_history_items(
         });
     }
 
-    let mut summary = format!(
-        "自定义重整完成：成功 {reorganized} 条（{canon_title} · {media_type}:{tmdb_id}）"
-    );
-    if failed > 0 {
-        summary.push_str(&format!("，失败/跳过 {failed} 条"));
+    let mut parts = vec![format!("归档入库 {reorganized} 条")];
+    if upgraded > 0 {
+        parts.push(format!("洗版胜出入账 {upgraded} 条"));
     }
+    if recycled > 0 {
+        parts.push(format!("洗版淘汰进回收站 {recycled} 条"));
+    }
+    if pruned_dirs_total > 0 {
+        parts.push(format!("清理旧空目录 {pruned_dirs_total} 个"));
+    }
+    if failed > 0 {
+        parts.push(format!("失败/跳过 {failed} 条"));
+    }
+    let mut summary = format!(
+        "自定义重整完成（{canon_title} · {media_type}:{tmdb_id}）：{}",
+        parts.join(" · ")
+    );
     if req.save_binding && !binding_keys.is_empty() {
         summary.push_str("，已写入人工绑定规则");
     }
@@ -6011,6 +6502,9 @@ pub fn custom_reorganize_history_items(
 
     Ok(json!({
         "reorganized": reorganized,
+        "recycled": recycled,
+        "upgraded": upgraded,
+        "pruned_dirs": pruned_dirs_total,
         "failed": failed,
         "remaining_ids": remaining_ids,
         "notice": summary,
