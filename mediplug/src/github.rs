@@ -1264,7 +1264,9 @@ impl GithubClient {
 
             for cand in cand_list {
                 let cache_key = format!("{}|{}|{}", cand.url, cand.size, cand.updated_at);
-                if let Some((cached_sha, cached_manifest)) = db::get_cached_asset(conn, &cache_key) {
+                if let Some((cached_sha, cached_size, cached_manifest)) =
+                    db::get_cached_asset(conn, &cache_key)
+                {
                     if resolved_manifest.is_none() && cached_manifest.is_some() {
                         resolved_manifest = cached_manifest;
                     }
@@ -1273,7 +1275,7 @@ impl GithubClient {
                         CatalogArtifact {
                             url: apply_github_mirror(&cand.url, &engine.github_mirror),
                             sha256: cached_sha,
-                            size: cand.size,
+                            size: if cand.size > 0 { cand.size } else { cached_size },
                         },
                     );
                     continue;
@@ -1295,6 +1297,11 @@ impl GithubClient {
                     ensure!(
                         inspected.has_plugin_json && inspected.has_plugin_bin,
                         "Release 资产 {} 根目录缺少 plugin.json 或可执行文件 plugin",
+                        cand.name
+                    );
+                    ensure!(
+                        inspected.plugin_bin_executable,
+                        "Release 资产 {} 内 plugin 缺少可执行权限（要求 chmod 0755）",
                         cand.name
                     );
                     if let Some(ref known) = cand.known_sha256 {

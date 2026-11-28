@@ -11,6 +11,9 @@ const state = {
   logQuery: '',
   lastInspection: null,
   builderItems: [],
+  builderDlUrl: '',
+  builderLocalPath: '',
+  builderAddHosted: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -113,6 +116,10 @@ function resetOuterViewportScroll() {
 }
 
 async function runAction(name, payload = {}, okMsg = '') {
+  if (state.busy) {
+    toast('当前有操作正在执行，请稍候...', 'info');
+    return null;
+  }
   const mainEl = document.querySelector('.mp-main');
   const prevScrollTop = mainEl ? mainEl.scrollTop : 0;
   state.busy = true;
@@ -174,7 +181,7 @@ function updateChrome() {
   }
 
   const bridgePill = el('mp-bridge-pill');
-  const bridgedCount = (d.unified_catalog?.plugins || []).length;
+  const bridgedCount = d.bridged_plugins_count ?? (d.unified_catalog?.plugins || []).length;
   if (hs.bridge_registered) {
     bridgePill.textContent = `已接入插件中心 (${bridgedCount} 款转换插件)`;
     bridgePill.className = 'mp-status-pill ok';
@@ -242,7 +249,7 @@ function renderSourcesTab(view) {
   const hs = d.host_status || {};
   const sources = d.host_sources || [];
   const store = d.store || {};
-  const bridgedCount = (d.unified_catalog?.plugins || []).length;
+  const bridgedCount = d.bridged_plugins_count ?? (d.unified_catalog?.plugins || []).length;
 
   view.innerHTML = `
     <div class="mp-header">
@@ -748,15 +755,9 @@ async function previewCatalogModal(repoId) {
 }
 
 // ==================== 3. Merged Plugin Store Explorer ====================
-function renderStoreTab(view) {
-  const d = state.data;
-  const hs = d.host_status || {};
-  const store = d.store || {};
-  const allPlugins = store.plugins || [];
-  const conflicts = store.conflicts || [];
+function filterStorePlugins(allPlugins) {
   const q = state.storeQuery.trim().toLowerCase();
-
-  const filtered = allPlugins.filter((p) => {
+  return allPlugins.filter((p) => {
     if (state.storeFilter === 'updates' && !p.update_available) return false;
     if (state.storeFilter === 'third_party' && p.official) return false;
     if (state.storeFilter === 'official' && !p.official) return false;
@@ -764,6 +765,81 @@ function renderStoreTab(view) {
     if (!q) return true;
     return `${p.id} ${p.name} ${p.description} ${p.author} ${p.source_name}`.toLowerCase().includes(q);
   });
+}
+
+function renderStoreCardsHtml(filtered, hs) {
+  if (filtered.length === 0) {
+    return `
+      <div class="mp-card" style="text-align:center;padding:32px;color:var(--mp-muted)">
+        ${hs.store_auth_ready ? '当前筛选条件下暂无匹配的插件' : '配置管理员 API Token 后即可预览聚合插件商店'}
+      </div>
+    `;
+  }
+  return `
+    <div class="mp-store-grid">
+      ${filtered.map((p) => `
+        <div class="mp-plugin-card">
+          <div>
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+              <div>
+                <div style="font-weight:700;font-size:14.5px">${esc(p.name)}</div>
+                <div style="font-size:11.5px;color:var(--mp-muted)">
+                  <code>${esc(p.id)}</code> · v${esc(p.version)}
+                  ${p.installed ? ` · 已装 v${esc(p.installed_version || p.version)}` : ''}
+                </div>
+              </div>
+              ${p.official
+                ? '<span class="mp-tag primary">官方</span>'
+                : `<span class="mp-tag ok">${esc(p.source_name || '第三方')}</span>`}
+            </div>
+            <div class="mp-plugin-desc" style="margin-top:8px">${esc(p.description || '暂无简介')}</div>
+            ${renderCapBadges(p.capabilities || [])}
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--mp-border)">
+            <div style="font-size:11.5px;color:var(--mp-muted)">
+              ${p.permissions?.length || 0} 项权限${p.min_mediary_version ? ` · 兼容 v${esc(p.min_mediary_version)} ~ v3.4.8+` : ' · 兼容 v3.4.6 ~ v3.4.8+'}
+              ${p.compatible === false ? ' <span class="mp-tag danger">宿主不兼容</span>' : ''}
+              ${p.installed && (p.capabilities || []).some((c) => c.id === 'playback_hook') && p.playback_hook_approved === false ? ' <span class="mp-tag warn">待批准播放钩子</span>' : ''}
+            </div>
+            <div class="mp-actions">
+              ${p.update_available ? `
+                <button type="button" class="mp-btn sm primary" data-act="install-plug" data-id="${esc(p.id)}">⬆️ 热升级至 v${esc(p.version)}</button>
+              ` : p.installed ? `
+                <span class="mp-tag ok">${p.enabled ? '已安装·启用' : '已安装·停用'}</span>
+              ` : `
+                <button type="button" class="mp-btn sm primary" data-act="install-plug" data-id="${esc(p.id)}">一键安装</button>
+              `}
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function bindStoreInstallButtons(container) {
+  container.querySelectorAll('[data-act="install-plug"]').forEach((btn) => {
+    btn.onclick = () => {
+      const pid = btn.dataset.id;
+      confirmModal(
+        '调用宿主安装 / 热升级插件',
+        `确定调用宿主原生安装器下载校验 SHA256 并热安装插件 <code>${esc(pid)}</code> 吗？（首次安装默认保持停用状态，安装后可在宿主「已安装」页确认权限启用）`,
+        '立即安装',
+        false,
+        () => runAction('ui_install_store_plugin', { plugin_id: pid })
+      );
+    };
+  });
+}
+
+function renderStoreTab(view) {
+  const d = state.data;
+  const hs = d.host_status || {};
+  const store = d.store || {};
+  const allPlugins = store.plugins || [];
+  const conflicts = store.conflicts || [];
+  const filtered = filterStorePlugins(allPlugins);
 
   view.innerHTML = `
     <div class="mp-header">
@@ -799,88 +875,67 @@ function renderStoreTab(view) {
       </div>
     </div>
 
-    ${filtered.length === 0 ? `
-      <div class="mp-card" style="text-align:center;padding:32px;color:var(--mp-muted)">
-        ${hs.store_auth_ready ? '当前筛选条件下暂无匹配的插件' : '配置管理员 API Token 后即可预览聚合插件商店'}
-      </div>
-    ` : `
-      <div class="mp-store-grid">
-        ${filtered.map((p) => `
-          <div class="mp-plugin-card">
-            <div>
-              <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-                <div>
-                  <div style="font-weight:700;font-size:14.5px">${esc(p.name)}</div>
-                  <div style="font-size:11.5px;color:var(--mp-muted)">
-                    <code>${esc(p.id)}</code> · v${esc(p.version)}
-                    ${p.installed ? ` · 已装 v${esc(p.installed_version || p.version)}` : ''}
-                  </div>
-                </div>
-                ${p.official
-                  ? '<span class="mp-tag primary">官方</span>'
-                  : `<span class="mp-tag ok">${esc(p.source_name || '第三方')}</span>`}
-              </div>
-              <div class="mp-plugin-desc" style="margin-top:8px">${esc(p.description || '暂无简介')}</div>
-              ${renderCapBadges(p.capabilities || [])}
-            </div>
-
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--mp-border)">
-              <div style="font-size:11.5px;color:var(--mp-muted)">
-                ${p.permissions?.length || 0} 项权限${p.min_mediary_version ? ` · 兼容 v${esc(p.min_mediary_version)} ~ v3.4.8+` : ' · 兼容 v3.4.6 ~ v3.4.8+'}
-                ${p.compatible === false ? ' <span class="mp-tag danger">宿主不兼容</span>' : ''}
-                ${p.installed && (p.capabilities || []).some((c) => c.id === 'playback_hook') && p.playback_hook_approved === false ? ' <span class="mp-tag warn">待批准播放钩子</span>' : ''}
-              </div>
-              <div class="mp-actions">
-                ${p.update_available ? `
-                  <button type="button" class="mp-btn sm primary" data-act="install-plug" data-id="${esc(p.id)}">⬆️ 热升级至 v${esc(p.version)}</button>
-                ` : p.installed ? `
-                  <span class="mp-tag ok">${p.enabled ? '已安装·启用' : '已安装·停用'}</span>
-                ` : `
-                  <button type="button" class="mp-btn sm primary" data-act="install-plug" data-id="${esc(p.id)}">一键安装</button>
-                `}
-              </div>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `}
+    <div id="store-results">${renderStoreCardsHtml(filtered, hs)}</div>
   `;
 
   bindQuickTokenSave(view);
-  view.querySelector('#btn-refresh-store').onclick = () => runAction('ui_bootstrap', {}, '已刷新插件中心聚合数据');
-  view.querySelector('#store-search').oninput = (e) => {
-    state.storeQuery = e.target.value;
-    renderStoreTab(view);
-    const input = view.querySelector('#store-search');
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+  const resultsBox = view.querySelector('#store-results');
+  bindStoreInstallButtons(resultsBox);
+
+  const refreshStoreResults = () => {
+    resultsBox.innerHTML = renderStoreCardsHtml(filterStorePlugins(allPlugins), hs);
+    bindStoreInstallButtons(resultsBox);
   };
+
+  view.querySelector('#btn-refresh-store').onclick = () => runAction('ui_bootstrap', {}, '已刷新插件中心聚合数据');
+  const searchInput = view.querySelector('#store-search');
+  let storeComposing = false;
+  searchInput.addEventListener('compositionstart', () => { storeComposing = true; });
+  searchInput.addEventListener('compositionend', (e) => {
+    storeComposing = false;
+    state.storeQuery = e.target.value;
+    refreshStoreResults();
+  });
+  searchInput.addEventListener('input', (e) => {
+    if (storeComposing || e.isComposing) return;
+    state.storeQuery = e.target.value;
+    refreshStoreResults();
+  });
   view.querySelector('#store-filter').onchange = (e) => {
     state.storeFilter = e.target.value;
-    renderStoreTab(view);
+    refreshStoreResults();
   };
-  view.querySelectorAll('[data-act="install-plug"]').forEach((btn) => {
-    btn.onclick = () => {
-      const pid = btn.dataset.id;
-      confirmModal(
-        '调用宿主安装 / 热升级插件',
-        `确定调用宿主原生安装器下载校验 SHA256 并热安装插件 <code>${esc(pid)}</code> 吗？（首次安装默认保持停用状态，安装后可在宿主「已安装」页确认权限启用）`,
-        '立即安装',
-        false,
-        () => runAction('ui_install_store_plugin', { plugin_id: pid })
-      );
-    };
-  });
 }
 
 // ==================== 4. Package Validator & Publisher catalog.json Builder ====================
+function buildMergedBuilderPlugins(hosted) {
+  const map = new Map();
+  for (const item of hosted || []) {
+    if (item && item.id) map.set(item.id, item);
+  }
+  for (const item of state.builderItems || []) {
+    if (!item || !item.id) continue;
+    const prev = map.get(item.id);
+    if (prev) {
+      map.set(item.id, {
+        ...prev,
+        ...item,
+        artifacts: { ...(prev.artifacts || {}), ...(item.artifacts || {}) },
+      });
+    } else {
+      map.set(item.id, item);
+    }
+  }
+  return Array.from(map.values());
+}
+
 function renderBuilderTab(view) {
   const d = state.data;
   const hosted = d.hosted_entries || [];
   const ins = state.lastInspection;
   const builderDoc = {
     schema_version: 1,
-    plugins: state.builderItems.length > 0 ? state.builderItems : hosted,
+    plugins: buildMergedBuilderPlugins(hosted),
   };
   const builderJson = JSON.stringify(builderDoc, null, 2);
 
@@ -905,19 +960,19 @@ function renderBuilderTab(view) {
       <div class="mp-grid-2">
         <div class="mp-field">
           <label>GitHub Release 资产下载 URL（选填）</label>
-          <input type="text" class="mp-input" id="builder-dl-url" placeholder="https://github.com/yourname/mediwash/releases/download/v3.1.3/mediwash-3.1.3-linux-amd64.tar.gz" />
+          <input type="text" class="mp-input" id="builder-dl-url" value="${esc(state.builderDlUrl)}" placeholder="https://github.com/yourname/mediwash/releases/download/v3.1.3/mediwash-3.1.3-linux-amd64.tar.gz" />
         </div>
         <div class="mp-field">
           <label>或输入容器可访问的本地 .tar.gz 路径校验（选填）</label>
           <div class="mp-inline-bar">
-            <input type="text" class="mp-input" id="builder-local-path" style="flex:1" placeholder="/path/to/plugin-1.0.0-linux-amd64.tar.gz" />
+            <input type="text" class="mp-input" id="builder-local-path" style="flex:1" value="${esc(state.builderLocalPath)}" placeholder="/path/to/plugin-1.0.0-linux-amd64.tar.gz" />
             <button type="button" class="mp-btn" id="btn-inspect-path">路径校验</button>
           </div>
         </div>
       </div>
       <div style="margin-top:10px">
         <label class="mp-check">
-          <input type="checkbox" id="builder-host-check" />
+          <input type="checkbox" id="builder-host-check" ${state.builderAddHosted ? 'checked' : ''} />
           <span>校验通过后同时挂载至 MediPlug 本地 <code>/catalog.json</code> 聚合源</span>
         </label>
       </div>
@@ -997,14 +1052,18 @@ function renderBuilderTab(view) {
     }
   };
 
+  view.querySelector('#builder-dl-url').oninput = (e) => { state.builderDlUrl = e.target.value; };
+  view.querySelector('#builder-local-path').oninput = (e) => { state.builderLocalPath = e.target.value; };
+  view.querySelector('#builder-host-check').onchange = (e) => { state.builderAddHosted = e.target.checked; };
+
   view.querySelector('#btn-pick-tgz').onclick = () => {
     const fileInput = el('mp-hidden-archive');
     fileInput.value = '';
     fileInput.onchange = async () => {
       const file = fileInput.files?.[0];
       if (!file) return;
-      const dlUrl = view.querySelector('#builder-dl-url').value.trim();
-      const addHosted = view.querySelector('#builder-host-check').checked;
+      state.builderDlUrl = view.querySelector('#builder-dl-url').value.trim();
+      state.builderAddHosted = view.querySelector('#builder-host-check').checked;
       const b64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ''));
@@ -1014,9 +1073,10 @@ function renderBuilderTab(view) {
       const res = await runAction('ui_inspect_archive', {
         filename: file.name,
         file_base64: b64,
-        download_url: dlUrl,
-        add_to_hosted: addHosted,
+        download_url: state.builderDlUrl,
+        add_to_hosted: state.builderAddHosted,
       });
+      if (!res) return;
       state.lastInspection = res.inspection;
       if ((res.inspection?.valid_for_mediary_348 ?? res.inspection?.valid_for_mediary_346) && res.inspection.catalog_entry) {
         mergeBuilderEntry(res.inspection.catalog_entry);
@@ -1031,24 +1091,27 @@ function renderBuilderTab(view) {
   };
 
   view.querySelector('#btn-inspect-path').onclick = async () => {
-    const localPath = view.querySelector('#builder-local-path').value.trim();
-    if (!localPath) {
+    state.builderLocalPath = view.querySelector('#builder-local-path').value.trim();
+    if (!state.builderLocalPath) {
       toast('请输入 .tar.gz 本地路径', 'error');
       return;
     }
-    const dlUrl = view.querySelector('#builder-dl-url').value.trim();
-    const addHosted = view.querySelector('#builder-host-check').checked;
-    const fname = localPath.split('/').pop() || 'plugin-linux-amd64.tar.gz';
+    state.builderDlUrl = view.querySelector('#builder-dl-url').value.trim();
+    state.builderAddHosted = view.querySelector('#builder-host-check').checked;
+    const fname = state.builderLocalPath.split('/').pop() || 'plugin-linux-amd64.tar.gz';
     const res = await runAction('ui_inspect_archive', {
       filename: fname,
-      local_path: localPath,
-      download_url: dlUrl,
-      add_to_hosted: addHosted,
+      local_path: state.builderLocalPath,
+      download_url: state.builderDlUrl,
+      add_to_hosted: state.builderAddHosted,
     });
+    if (!res) return;
     state.lastInspection = res.inspection;
     if ((res.inspection?.valid_for_mediary_348 ?? res.inspection?.valid_for_mediary_346) && res.inspection.catalog_entry) {
       mergeBuilderEntry(res.inspection.catalog_entry);
       toast(`校验通过：已加入 ${res.inspection.catalog_entry.id}`, 'success');
+    } else {
+      toast('压缩包存在规范问题，请查看校验报告', 'error');
     }
     updateChrome();
     renderBuilderTab(view);
@@ -1074,14 +1137,45 @@ function renderBuilderTab(view) {
 }
 
 // ==================== 5. Global Settings, Backup & Activity Logs ====================
-function renderSettingsTab(view) {
-  const d = state.data;
-  const eng = d.engine || {};
-  const logs = (d.logs || []).filter((l) => {
-    const q = state.logQuery.trim().toLowerCase();
+function filterLogs(allLogs) {
+  const q = state.logQuery.trim().toLowerCase();
+  return (allLogs || []).filter((l) => {
     if (!q) return true;
     return `${l.title} ${l.source} ${l.version} ${l.action} ${l.detail}`.toLowerCase().includes(q);
   });
+}
+
+function renderLogRowsHtml(logs) {
+  if (logs.length === 0) {
+    return `<tr class="mp-empty-row"><td colspan="6" style="text-align:center;padding:20px;color:var(--mp-muted)">暂无记录</td></tr>`;
+  }
+  return logs
+    .map(
+      (l) => `
+      <tr>
+        <td class="mp-td-primary" data-label="目标 / 仓库">
+          <div class="mp-cell-val" style="font-weight:600">${esc(l.title)}</div>
+        </td>
+        <td data-label="分类"><div class="mp-cell-val">${esc(l.source)}</div></td>
+        <td data-label="版本 / 标识"><div class="mp-cell-val"><code>${esc(l.version)}</code></div></td>
+        <td data-label="状态">
+          <div class="mp-cell-val">
+            <span class="mp-tag ${l.status === 'success' ? 'ok' : 'danger'}">${esc(l.status)}</span>
+          </div>
+        </td>
+        <td data-label="详情说明"><div class="mp-cell-val" style="word-break:break-all">${esc(l.detail)}</div></td>
+        <td data-label="时间" style="white-space:nowrap;color:var(--mp-muted)"><div class="mp-cell-val">${esc(l.updated_at)}</div></td>
+      </tr>
+    `
+    )
+    .join('');
+}
+
+function renderSettingsTab(view) {
+  const d = state.data;
+  const eng = d.engine || {};
+  const allLogs = d.logs || [];
+  const logs = filterLogs(allLogs);
 
   view.innerHTML = `
     <div class="mp-header">
@@ -1157,7 +1251,7 @@ function renderSettingsTab(view) {
     <div class="mp-card">
       <div class="mp-card-head">
         <div>
-          <h3 class="mp-card-title">同步与操作历史记录 (${logs.length})</h3>
+          <h3 class="mp-card-title">同步与操作历史记录 (<span id="log-count">${logs.length}</span>)</h3>
         </div>
         <div class="mp-actions">
           <input type="text" class="mp-input mp-search-input" id="log-search" value="${esc(state.logQuery)}" placeholder="过滤日志..." />
@@ -1178,37 +1272,22 @@ function renderSettingsTab(view) {
               <th>时间</th>
             </tr>
           </thead>
-          <tbody>
-            ${logs.length === 0 ? `
-              <tr class="mp-empty-row"><td colspan="6" style="text-align:center;padding:20px;color:var(--mp-muted)">暂无记录</td></tr>
-            ` : logs.map((l) => `
-              <tr>
-                <td class="mp-td-primary" data-label="目标 / 仓库">
-                  <div class="mp-cell-val" style="font-weight:600">${esc(l.title)}</div>
-                </td>
-                <td data-label="分类"><div class="mp-cell-val">${esc(l.source)}</div></td>
-                <td data-label="版本 / 标识"><div class="mp-cell-val"><code>${esc(l.version)}</code></div></td>
-                <td data-label="状态">
-                  <div class="mp-cell-val">
-                    <span class="mp-tag ${l.status === 'success' ? 'ok' : 'danger'}">${esc(l.status)}</span>
-                  </div>
-                </td>
-                <td data-label="详情说明"><div class="mp-cell-val" style="word-break:break-all">${esc(l.detail)}</div></td>
-                <td data-label="时间" style="white-space:nowrap;color:var(--mp-muted)"><div class="mp-cell-val">${esc(l.updated_at)}</div></td>
-              </tr>
-            `).join('')}
-          </tbody>
+          <tbody id="log-tbody">${renderLogRowsHtml(logs)}</tbody>
         </table>
       </div>
     </div>
   `;
 
   view.querySelector('#btn-save-eng').onclick = () => {
+    const rawPort = Number(view.querySelector('#eng-port').value || 18119);
+    const listen_port = Number.isFinite(rawPort)
+      ? Math.max(1024, Math.min(65535, Math.trunc(rawPort)))
+      : 18119;
     const next = {
       admin_api_token: view.querySelector('#eng-admin-token').value.trim(),
       github_token: view.querySelector('#eng-gh-token').value.trim(),
       listen_host: view.querySelector('#eng-host').value,
-      listen_port: Number(view.querySelector('#eng-port').value || 18119),
+      listen_port,
       unified_source_id: view.querySelector('#eng-src-id').value.trim(),
       unified_source_name: view.querySelector('#eng-src-name').value.trim(),
       public_base_url: view.querySelector('#eng-pub-url').value.trim(),
@@ -1237,13 +1316,26 @@ function renderSettingsTab(view) {
     inp.click();
   };
 
-  view.querySelector('#log-search').oninput = (e) => {
-    state.logQuery = e.target.value;
-    renderSettingsTab(view);
-    const input = view.querySelector('#log-search');
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+  const logSearch = view.querySelector('#log-search');
+  const logTbody = view.querySelector('#log-tbody');
+  const logCount = view.querySelector('#log-count');
+  const refreshLogRows = () => {
+    const filtered = filterLogs(allLogs);
+    logTbody.innerHTML = renderLogRowsHtml(filtered);
+    logCount.textContent = String(filtered.length);
   };
+  let logComposing = false;
+  logSearch.addEventListener('compositionstart', () => { logComposing = true; });
+  logSearch.addEventListener('compositionend', (e) => {
+    logComposing = false;
+    state.logQuery = e.target.value;
+    refreshLogRows();
+  });
+  logSearch.addEventListener('input', (e) => {
+    if (logComposing || e.isComposing) return;
+    state.logQuery = e.target.value;
+    refreshLogRows();
+  });
   view.querySelector('#btn-clear-logs').onclick = () => runAction('ui_clear_logs', { clear_cache: false });
   view.querySelector('#btn-clear-cache').onclick = () => runAction('ui_clear_logs', { clear_cache: true });
 }

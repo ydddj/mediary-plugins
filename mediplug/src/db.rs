@@ -126,12 +126,12 @@ where
 pub fn get_cached_asset(
     conn: &Connection,
     cache_key: &str,
-) -> Option<(String, Option<crate::models::ParsedPluginManifest>)> {
-    let (sha256, manifest_raw): (String, String) = conn
+) -> Option<(String, u64, Option<crate::models::ParsedPluginManifest>)> {
+    let (sha256, asset_size, manifest_raw): (String, i64, String) = conn
         .query_row(
-            "SELECT sha256, manifest_json FROM release_asset_cache WHERE cache_key = ?1",
+            "SELECT sha256, asset_size, manifest_json FROM release_asset_cache WHERE cache_key = ?1",
             params![cache_key],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
         .ok()??;
@@ -139,7 +139,7 @@ pub fn get_cached_asset(
         return None;
     }
     let manifest = serde_json::from_str(&manifest_raw).ok();
-    Some((sha256, manifest))
+    Some((sha256, asset_size.max(0) as u64, manifest))
 }
 
 pub fn load_cached_manifests_by_plugin_id(conn: &Connection) -> HashMap<String, ParsedPluginManifest> {
@@ -354,8 +354,14 @@ pub fn write_daemon_state(data_dir: &Path, st: &DaemonRuntimeState) {
     }
 }
 
-pub fn remove_daemon_state(data_dir: &Path) {
-    let _ = fs::remove_file(data_dir.join("daemon_state.json"));
+pub fn remove_daemon_state_if_matches(data_dir: &Path, expected_pid: u32, expected_token: &str) {
+    if let Some(st) = read_daemon_state(data_dir) {
+        if st.pid == expected_pid
+            && (expected_token.is_empty() || st.shutdown_token == expected_token)
+        {
+            let _ = fs::remove_file(data_dir.join("daemon_state.json"));
+        }
+    }
 }
 
 pub fn total_bridged_plugins(cfg: &AppConfig) -> usize {

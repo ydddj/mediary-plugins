@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::Notify;
 use url::Url;
 
 const MAX_REQ_HEADER_BYTES: usize = 32 * 1024;
@@ -30,6 +31,13 @@ pub fn run_daemon(data_dir: PathBuf) -> Result<()> {
         let mut sigterm = signal(SignalKind::terminate()).context("监听 SIGTERM 失败")?;
         let mut sigint = signal(SignalKind::interrupt()).context("监听 SIGINT 失败")?;
         let shared_dir = Arc::new(data_dir.clone());
+        let my_pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let shutdown_token = Arc::new(format!("{my_pid}-{}-{nanos}", now_ts()));
+        let shutdown_notify = Arc::new(Notify::new());
 
         loop {
             let desired = read_desired_bind(&shared_dir);
@@ -38,11 +46,12 @@ pub fn run_daemon(data_dir: PathBuf) -> Result<()> {
             db::write_daemon_state(
                 &shared_dir,
                 &DaemonRuntimeState {
-                    pid: std::process::id(),
+                    pid: my_pid,
                     listen_host: bound_host.clone(),
                     port: bound_port,
                     started_at: now_ts(),
                     version: env!("CARGO_PKG_VERSION").to_string(),
+                    shutdown_token: (*shutdown_token).clone(),
                 },
             );
             eprintln!(
@@ -57,19 +66,24 @@ pub fn run_daemon(data_dir: PathBuf) -> Result<()> {
                 tokio::select! {
                     _ = sigterm.recv() => {
                         eprintln!("[mediplug] 收到 SIGTERM，正在停止本地 catalog.json 服务...");
-                        db::remove_daemon_state(&shared_dir);
+                        db::remove_daemon_state_if_matches(&shared_dir, my_pid, &shutdown_token);
                         return Ok(());
                     }
                     _ = sigint.recv() => {
                         eprintln!("[mediplug] 收到 SIGINT，正在停止本地 catalog.json 服务...");
-                        db::remove_daemon_state(&shared_dir);
+                        db::remove_daemon_state_if_matches(&shared_dir, my_pid, &shutdown_token);
+                        return Ok(());
+                    }
+                    _ = shutdown_notify.notified() => {
+                        eprintln!("[mediplug] 收到版本热升级平滑退出指令，正在释放端口 :{bound_port}...");
+                        db::remove_daemon_state_if_matches(&shared_dir, my_pid, &shutdown_token);
                         return Ok(());
                     }
                     _ = reload_tick.tick() => {
                         let (plugin_enabled, _, _, _) = crate::host::inspect_local_plugin_state(&shared_dir);
                         if !plugin_enabled {
                             eprintln!("[mediplug] 检测到插件已停用，正在退出本地 catalog.json 服务...");
-                            db::remove_daemon_state(&shared_dir);
+                            db::remove_daemon_state_if_matches(&shared_dir, my_pid, &shutdown_token);
                             return Ok(());
                         }
                         let next_bind = read_desired_bind(&shared_dir);
@@ -88,8 +102,10 @@ pub fn run_daemon(data_dir: PathBuf) -> Result<()> {
                         match accepted {
                             Ok((stream, _)) => {
                                 let dir = Arc::clone(&shared_dir);
+                                let tok = Arc::clone(&shutdown_token);
+                                let notify = Arc::clone(&shutdown_notify);
                                 tokio::spawn(async move {
-                                    let _ = handle_http_conn(stream, &dir, bound_port).await;
+                                    let _ = handle_http_conn(stream, &dir, bound_port, &tok, &notify).await;
                                 });
                             }
                             Err(err) => {
@@ -175,10 +191,16 @@ async fn send_json(
     Ok(())
 }
 
-async fn handle_http_conn(mut stream: TcpStream, data_dir: &Path, active_port: u16) -> Result<()> {
+async fn handle_http_conn(
+    mut stream: TcpStream,
+    data_dir: &Path,
+    active_port: u16,
+    shutdown_token: &str,
+    shutdown_notify: &Notify,
+) -> Result<()> {
     let mut buf = Vec::with_capacity(2048);
     let mut tmp = [0u8; 2048];
-    let (method, target, _headers) = loop {
+    let (method, target, headers) = loop {
         let n = tokio::time::timeout(
             std::time::Duration::from_millis(2000),
             stream.read(&mut tmp),
@@ -197,12 +219,6 @@ async fn handle_http_conn(mut stream: TcpStream, data_dir: &Path, active_port: u
         }
     };
 
-    let head_only = method == "HEAD";
-    if method != "GET" && method != "HEAD" {
-        let err = serde_json::to_vec(&json!({"error": "method not allowed"}))?;
-        return send_json(&mut stream, "405 Method Not Allowed", &err, head_only).await;
-    }
-
     let parsed_url = if target.starts_with("http://") || target.starts_with("https://") {
         Url::parse(&target).unwrap_or_else(|_| Url::parse("http://localhost/").unwrap())
     } else {
@@ -210,6 +226,27 @@ async fn handle_http_conn(mut stream: TcpStream, data_dir: &Path, active_port: u
             .unwrap_or_else(|_| Url::parse("http://localhost/").unwrap())
     };
     let path = parsed_url.path();
+
+    if method == "POST" && path == "/__mediplug/shutdown" {
+        let provided = headers
+            .get("x-mediplug-token")
+            .map(String::as_str)
+            .unwrap_or_default();
+        if !shutdown_token.is_empty() && provided == shutdown_token {
+            let ok_body = serde_json::to_vec(&json!({"ok": true, "stopping": true}))?;
+            let _ = send_json(&mut stream, "200 OK", &ok_body, false).await;
+            shutdown_notify.notify_one();
+            return Ok(());
+        }
+        let err = serde_json::to_vec(&json!({"error": "forbidden"}))?;
+        return send_json(&mut stream, "403 Forbidden", &err, false).await;
+    }
+
+    let head_only = method == "HEAD";
+    if method != "GET" && method != "HEAD" {
+        let err = serde_json::to_vec(&json!({"error": "method not allowed"}))?;
+        return send_json(&mut stream, "405 Method Not Allowed", &err, head_only).await;
+    }
 
     if path == "/health" || path == "/__mediplug/health" {
         let body = serde_json::to_vec(&json!({

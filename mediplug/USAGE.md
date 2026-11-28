@@ -1,8 +1,8 @@
-# MediPlug 使用说明 (v1.0.3)
+# MediPlug 使用说明 (v1.0.4)
 
 ## 1. 安装与首次配置（兼容 Mediary v3.4.6 ~ v3.4.8+）
 
-1. 将打包产物 `dist/mediplug-1.0.3-linux-amd64.tar.gz` 在 Mediary「**插件 → 插件中心**」上传安装（或通过 `ydddj/mediary-plugins` 索引源一键安装与热更新）。
+1. 将打包产物 `dist/mediplug-1.0.4-linux-amd64.tar.gz` 在 Mediary「**插件 → 插件中心**」上传安装（或通过 `ydddj/mediary-plugins` 索引源一键安装与热更新）。
 2. 在「**已安装**」页点击 **MediPlug** 卡片的「**配置**」：
    - 勾选授予 `plugins:read`、`settings:read`、`notifications:send` 权限；
    - 开启「**启用插件**」（自动拉起本地 `http://127.0.0.1:18119/catalog.json` 常驻转换服务，停用时 3 秒内自动回收退出）并保存。

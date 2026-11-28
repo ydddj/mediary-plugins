@@ -221,7 +221,7 @@ fn dispatch(
             ensure!(!id.is_empty(), "缺少插件源 ID");
             ensure!(id != "official", "官方内置源不可停用或修改");
 
-            let (_, active_port) = host::probe_daemon_health(data_dir, &cfg.engine);
+            let (_, active_port) = host::ensure_daemon_running(data_dir, &cfg.engine);
             let base_bridge = cfg.engine.effective_bridge_base_url(active_port);
             let list = host.list_store_sources(&base_bridge, &cfg.engine.unified_source_id)?;
             let existing = list
@@ -272,7 +272,7 @@ fn dispatch(
             let cfg = db::load_config(&conn)?;
             let host = HostClient::from_env_with_admin(data_dir, &cfg.engine.admin_api_token)
                 .context("未检测到宿主 API 环境")?;
-            let (_, active_port) = host::probe_daemon_health(data_dir, &cfg.engine);
+            let (_, active_port) = host::ensure_daemon_running(data_dir, &cfg.engine);
             let base_bridge = cfg.engine.effective_bridge_base_url(active_port);
 
             let repo_id = input["repo_id"].as_str().unwrap_or_default().trim();
@@ -696,6 +696,21 @@ fn register_bridge_source_smart(
     gist_filename: &str,
     doc: &models::CatalogDocument,
 ) -> Result<String> {
+    let has_existing_gist = db::get_kv(conn, gist_kv_key)
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if has_existing_gist && preferred_url.starts_with("http://127.0.0.1") {
+        let gist_url = gh.publish_gist_catalog(
+            conn,
+            gist_kv_key,
+            gist_filename,
+            &format!("MediPlug Auto-Converted Catalog ({src_name})"),
+            doc,
+        )?;
+        host.upsert_store_source(src_id, src_name, &gist_url, true)?;
+        return Ok(gist_url);
+    }
+
     match host.upsert_store_source(src_id, src_name, preferred_url, true) {
         Ok(_) => Ok(preferred_url.to_string()),
         Err(local_err) => {
@@ -859,7 +874,7 @@ fn sync_repos_workflow(
     let mut registered_sources = 0usize;
     if settings.auto_register_bridge && synced > 0 {
         if let Some(ref h) = host {
-            let (_, active_port) = host::probe_daemon_health(data_dir, &updated_cfg.engine);
+            let (_, active_port) = host::ensure_daemon_running(data_dir, &updated_cfg.engine);
             let base_bridge = updated_cfg.engine.effective_bridge_base_url(active_port);
 
             let has_unified = updated_cfg
@@ -1040,6 +1055,7 @@ fn build_full_bootstrap(
         "host_sources": host_sources,
         "github_repos": cfg.github_repos,
         "hosted_entries": cfg.hosted_entries,
+        "bridged_plugins_count": db::total_bridged_plugins(cfg),
         "plugin_capabilities": plugin_capabilities,
         "unified_catalog": unified_doc,
         "store": store_snapshot,

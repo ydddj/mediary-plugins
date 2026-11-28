@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from urllib.parse import unquote, urlsplit
 
@@ -551,6 +552,8 @@ def main():
                     return self.reply(400, {"error": "invalid or protected source id"})
                 if not (url.startswith("http://") or url.startswith("https://")):
                     return self.reply(400, {"error": "url must use http or https"})
+                if "reject-by-host" in url:
+                    return self.reply(400, {"error": "插件源地址必须使用不含凭据的公网 HTTPS 地址"})
                 # Simulate strict INSERT-only POST returning 409 on duplicate ID!
                 if any(s["id"] == sid for s in host_state["sources"]):
                     return self.reply(409, {"error": "source id already exists"})
@@ -655,9 +658,14 @@ def main():
             else:
                 raise RuntimeError("MediPlug HTTP daemon did not become ready in time")
 
-            # 1. Verify bootstrap BEFORE Admin API Token is configured + SQLite WAL mode + dashboard.json
+            # 1. Verify bootstrap BEFORE Admin API Token is configured + SQLite WAL mode + dashboard.json + plugin.json <= 50 chars
+            pjson_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin.json")
+            with open(pjson_path, "r", encoding="utf-8") as pf:
+                pjson_meta = json.load(pf)
+            assert len(pjson_meta["description"]) <= 50, f"plugin.json description too long ({len(pjson_meta['description'])}): {pjson_meta['description']}"
+
             boot0 = run_action(binary, data_dir, "ui_bootstrap", {}, api_url, f"{gh_base}/api", f"{gh_base}/raw")
-            assert boot0["version"] == "1.0.3"
+            assert boot0["version"] == "1.0.4"
             assert boot0["host_status"]["plugin_enabled"] is True
             assert boot0["host_status"]["daemon_ready"] is True
             assert boot0["host_status"]["active_port"] == daemon_port
@@ -720,6 +728,30 @@ def main():
                 f"{gh_base}/raw",
             )["bootstrap"]
             assert any(p["id"] == "demo-direct" for p in add_direct["store"]["plugins"]), add_direct["store"]
+
+            # Guardrail: updating an existing source with a host-rejected URL MUST NOT delete the existing source!
+            run_action(
+                binary,
+                data_dir,
+                "ui_save_host_source",
+                {
+                    "source": {
+                        "id": "demo-direct-store",
+                        "name": "非法更新",
+                        "url": "http://reject-by-host.local/bad.json",
+                        "enabled": True,
+                    }
+                },
+                api_url,
+                f"{gh_base}/api",
+                f"{gh_base}/raw",
+                expect_err=True,
+            )
+            after_bad_edit = run_action(binary, data_dir, "ui_bootstrap", {}, api_url, f"{gh_base}/api", f"{gh_base}/raw")
+            assert any(
+                s["id"] == "demo-direct-store" and "direct-store" in s["url"]
+                for s in after_bad_edit["host_sources"]
+            ), f"Existing source was lost on failed update: {after_bad_edit['host_sources']}"
 
             toggled = run_action(
                 binary,
@@ -938,12 +970,40 @@ def main():
             nt = run_action(binary, data_dir, "ui_test_notify", {}, api_url, f"{gh_base}/api", f"{gh_base}/raw")
             assert nt["ok"] is True
 
-        finally:
-            daemon.terminate()
+            # Verify token-authenticated graceful HTTP shutdown (prevents port drift on hot-upgrade)
+            with open(os.path.join(data_dir, "daemon_state.json"), "r", encoding="utf-8") as sf:
+                dstate = json.load(sf)
+            assert dstate.get("shutdown_token"), dstate
+            # Wrong token must be rejected with 403
+            bad_req = urllib.request.Request(
+                f"http://127.0.0.1:{daemon_port}/__mediplug/shutdown",
+                method="POST",
+                headers={"X-MediPlug-Token": "wrong-token"},
+            )
+            try:
+                urllib.request.urlopen(bad_req, timeout=3)
+                raise AssertionError("Expected 403 on wrong shutdown token")
+            except urllib.error.HTTPError as he:
+                assert he.code == 403, he.code
+
+            # Right token cleanly shuts down daemon and removes daemon_state.json
+            ok_req = urllib.request.Request(
+                f"http://127.0.0.1:{daemon_port}/__mediplug/shutdown",
+                method="POST",
+                headers={"X-MediPlug-Token": dstate["shutdown_token"]},
+            )
+            with urllib.request.urlopen(ok_req, timeout=3) as r:
+                assert r.status == 200
             daemon.wait(timeout=5)
+            assert not os.path.exists(os.path.join(data_dir, "daemon_state.json")), "daemon_state.json must be cleaned up on graceful shutdown"
+
+        finally:
+            if daemon.poll() is None:
+                daemon.terminate()
+                daemon.wait(timeout=5)
             assert not os.path.exists(os.path.join(data_dir, "daemon_state.json")), "daemon_state.json must be cleaned up on SIGTERM"
 
-        print("ALL MEDIPLUG v1.0.3 WORKFLOW TESTS PASSED!")
+        print("ALL MEDIPLUG v1.0.4 WORKFLOW TESTS PASSED!")
     finally:
         gh_httpd.shutdown()
         host_httpd.shutdown()

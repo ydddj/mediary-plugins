@@ -1,4 +1,4 @@
-# MediPlug 插件源管理与 GitHub 桥接引擎 (v1.0.3)
+# MediPlug 插件源管理与 GitHub 桥接引擎 (v1.0.4)
 
 面向 **Mediary v3.4.6 ~ v3.4.8+** 的原生 Rust 第三方插件源可视化管理与 GitHub Releases 自动转换桥接插件（`rusqlite` WAL 持久化存储 + 轻量回环 HTTP `catalog.json` 常驻服务 + GitHub Gist 公网 HTTPS 自动托管）。
 

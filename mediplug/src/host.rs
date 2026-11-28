@@ -104,6 +104,21 @@ pub fn probe_daemon_health(data_dir: &Path, engine: &EngineSettings) -> (bool, u
     (ok, port)
 }
 
+fn probe_port_health(port: u16) -> Option<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_millis(450))
+        .redirects(0)
+        .build();
+    let url = format!("http://127.0.0.1:{port}/health");
+    let resp = agent.get(&url).call().ok()?;
+    let raw = resp.into_string().ok()?;
+    let v: Value = serde_json::from_str(&raw).ok()?;
+    if v["ok"].as_bool() == Some(true) && v["service"].as_str() == Some("mediplug") {
+        return Some(v["version"].as_str().unwrap_or_default().to_string());
+    }
+    None
+}
+
 fn probe_daemon_health_with_version(data_dir: &Path, engine: &EngineSettings) -> (bool, u16, String) {
     let mut ports = Vec::new();
     if let Some(st) = db::read_daemon_state(data_dir) {
@@ -115,24 +130,9 @@ fn probe_daemon_health_with_version(data_dir: &Path, engine: &EngineSettings) ->
         ports.push(engine.listen_port);
     }
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_millis(450))
-        .redirects(0)
-        .build();
-
     for port in ports {
-        let url = format!("http://127.0.0.1:{port}/health");
-        if let Ok(resp) = agent.get(&url).call() {
-            if let Ok(raw) = resp.into_string() {
-                if let Ok(v) = serde_json::from_str::<Value>(&raw) {
-                    if v["ok"].as_bool() == Some(true)
-                        && v["service"].as_str() == Some("mediplug")
-                    {
-                        let ver = v["version"].as_str().unwrap_or_default().to_string();
-                        return (true, port, ver);
-                    }
-                }
-            }
+        if let Some(ver) = probe_port_health(port) {
+            return (true, port, ver);
         }
     }
 
@@ -140,7 +140,7 @@ fn probe_daemon_health_with_version(data_dir: &Path, engine: &EngineSettings) ->
 }
 
 /// Ensures the background local `catalog.json` HTTP daemon is running whenever the plugin is enabled.
-/// Mediary v3.4.6 only auto-spawns `runtime` processes for `playback_hook` plugins; self-healing here
+/// Mediary v3.4.6+ only auto-spawns `runtime` processes for `playback_hook` plugins; self-healing here
 /// guarantees zero-configuration startup without blocking `action_runtime` pipes.
 pub fn ensure_daemon_running(data_dir: &Path, engine: &EngineSettings) -> (bool, u16) {
     use std::os::unix::process::CommandExt;
@@ -159,18 +159,40 @@ pub fn ensure_daemon_running(data_dir: &Path, engine: &EngineSettings) -> (bool,
         return (ok, port);
     }
 
-    // If an older version daemon is running after a hot-upgrade, stop it gracefully first
+    // If an older version daemon is running after a hot-upgrade, stop it gracefully and wait for port release
     if ok && running_ver != env!("CARGO_PKG_VERSION") {
+        let mut stopped_via_http = false;
         if let Some(st) = db::read_daemon_state(data_dir) {
-            if st.pid > 1 {
+            if !st.shutdown_token.is_empty() {
+                let agent = ureq::AgentBuilder::new()
+                    .timeout(Duration::from_millis(800))
+                    .redirects(0)
+                    .build();
+                let url = format!("http://127.0.0.1:{port}/__mediplug/shutdown");
+                if agent
+                    .post(&url)
+                    .set("X-MediPlug-Token", &st.shutdown_token)
+                    .call()
+                    .is_ok()
+                {
+                    stopped_via_http = true;
+                }
+            }
+            if !stopped_via_http && st.pid > 1 {
                 let _ = Command::new("kill")
                     .args(["-TERM", &st.pid.to_string()])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status();
-                std::thread::sleep(Duration::from_millis(150));
             }
+        }
+        // Wait up to ~1.5s for the old daemon to release its listening socket so we never drift ports
+        for _ in 0..25 {
+            if probe_port_health(port).is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(60));
         }
     }
 
@@ -567,12 +589,12 @@ impl HostClient {
             .into_iter()
             .find(|s| s.id == id);
 
-        if existing.is_none() {
+        let Some(prev) = existing else {
             let (res, _) = self
                 .call_store_json("POST", "/plugin-store/sources", &[], Some(payload), 10)
                 .map_err(|(_, msg)| anyhow!("{msg}"))?;
             return Ok(res);
-        }
+        };
 
         let encoded: String = form_urlencoded::byte_serialize(id.as_bytes()).collect();
         let put_path = format!("/plugin-store/sources/{encoded}");
@@ -591,26 +613,45 @@ impl HostClient {
         }
 
         // 2. Try POST /api/plugin-store/sources (upsert style)
-        if let Ok((res, _)) =
-            self.call_store_json("POST", "/plugin-store/sources", &[], Some(payload.clone()), 10)
-        {
-            if let Ok(after) = self.list_store_sources("", "") {
-                if after.iter().any(|s| {
-                    s.id == id && s.url == clean_url && s.name == clean_name && s.enabled == enabled
-                }) {
-                    return Ok(res);
+        match self.call_store_json("POST", "/plugin-store/sources", &[], Some(payload.clone()), 10) {
+            Ok((res, _)) => {
+                if let Ok(after) = self.list_store_sources("", "") {
+                    if after.iter().any(|s| {
+                        s.id == id
+                            && s.url == clean_url
+                            && s.name == clean_name
+                            && s.enabled == enabled
+                    }) {
+                        return Ok(res);
+                    }
                 }
             }
+            Err((code, msg)) if code != 409 && code != 405 => {
+                // Non-conflict validation error (e.g. 400 invalid URL / HTTPS policy / source limit):
+                // abort BEFORE deleting the existing working source!
+                bail!("{msg}");
+            }
+            Err(_) => {}
         }
 
-        // 3. Fallback for strict INSERT-only POST + DELETE hosts: DELETE then POST
+        // 3. Fallback for strict INSERT-only POST + DELETE hosts: DELETE then POST with rollback!
         let _ = self
             .call_store_json("DELETE", &put_path, &[], None, 8)
             .map_err(|(_, msg)| anyhow!("{msg}"))?;
-        let (res, _) = self
-            .call_store_json("POST", "/plugin-store/sources", &[], Some(payload), 10)
-            .map_err(|(_, msg)| anyhow!("{msg}"))?;
-        Ok(res)
+        match self.call_store_json("POST", "/plugin-store/sources", &[], Some(payload), 10) {
+            Ok((res, _)) => Ok(res),
+            Err((_code, msg)) => {
+                // Roll back the deleted previous source so user configuration is never lost!
+                let restore = json!({
+                    "id": prev.id,
+                    "name": prev.name,
+                    "url": prev.url,
+                    "enabled": prev.enabled,
+                });
+                let _ = self.call_store_json("POST", "/plugin-store/sources", &[], Some(restore), 10);
+                bail!("{msg}");
+            }
+        }
     }
 
     pub fn delete_store_source(&self, raw_id: &str) -> Result<Value> {
@@ -873,17 +914,7 @@ fn extract_capabilities_from_value(row: &Value) -> Vec<PluginCapability> {
     if let Some(arr) = row.get("scheduled_actions").and_then(Value::as_array) {
         manifest.scheduled_actions = arr.clone();
     }
-    let mut caps = manifest.capabilities();
-    if row.get("managed_runtime").and_then(Value::as_bool) == Some(true)
-        && !caps.iter().any(|c| c.id == "runtime")
-    {
-        caps.push(PluginCapability {
-            id: "runtime".to_string(),
-            label: "runtime".to_string(),
-            detail: "宿主托管常驻进程".to_string(),
-        });
-    }
-    caps
+    manifest.capabilities()
 }
 
 pub fn fast_host_status(data_dir: &Path, engine: &EngineSettings) -> HostStatus {

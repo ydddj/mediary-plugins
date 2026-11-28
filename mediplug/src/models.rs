@@ -569,6 +569,8 @@ pub struct DaemonRuntimeState {
     pub port: u16,
     pub started_at: i64,
     pub version: String,
+    #[serde(deserialize_with = "null_default")]
+    pub shutdown_token: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
