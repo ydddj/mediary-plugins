@@ -989,6 +989,160 @@ pub fn parse_video_encode(text: &str) -> String {
     }
 }
 
+/// Maps片源类型 aliases to Mediary v3.4.13 canonical `resource_type` display labels (14 items).
+pub fn resource_type_canonical(raw: &str) -> Option<&'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let norm: String = trimmed
+        .to_lowercase()
+        .replace(['.', '_', '-'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact = norm.replace(' ', "");
+    match compact.as_str() {
+        "bdremux" | "blurayremux" => Some("BDRemux"),
+        "remux" => Some("REMUX"),
+        "uhdbluray" => Some("UHD BluRay"),
+        "bluray" | "蓝光" => Some("BluRay"),
+        "webdl" => Some("WEB-DL"),
+        "webrip" => Some("WEBRip"),
+        "bdrip" | "brrip" => Some("BDRip"),
+        "bdiso" | "原盘iso" | "蓝光iso" => Some("BDISO"),
+        "bdmv" | "蓝光原盘" | "原盘目录" => Some("BDMV"),
+        "minibd" => Some("MiniBD"),
+        "hdtv" | "hdtvrip" | "pdtv" => Some("HDTV"),
+        "hdrip" => Some("HDRip"),
+        "dvdrip" => Some("DVDRip"),
+        "dvd" | "dvd5" | "dvd9" | "dvdr" => Some("DVD"),
+        _ => None,
+    }
+}
+
+/// Boundary-safe 14-item `resource_type` detector aligned with Mediary v3.4.13.
+/// Priority: BDRemux > REMUX > BDISO > BDMV > UHD BluRay > BluRay > BDRip > MiniBD > WEB-DL > WEBRip > HDTV > HDRip > DVDRip > DVD.
+pub fn parse_resource_type(text: &str) -> String {
+    if text.trim().is_empty() {
+        return String::new();
+    }
+    let low = format!(" {} ", text.to_lowercase());
+    let has_bluray = contains_token(&low, "bluray")
+        || contains_token(&low, "blu-ray")
+        || contains_token(&low, "blu ray");
+    let has_uhd = contains_token(&low, "uhd");
+    let has_remux = contains_token(&low, "remux");
+    let has_iso = contains_token(&low, "iso");
+
+    if contains_token(&low, "bdremux")
+        || contains_token(&low, "bd-remux")
+        || contains_token(&low, "bd.remux")
+        || contains_token(&low, "bd remux")
+        || (has_bluray && has_remux)
+    {
+        return "BDRemux".into();
+    }
+    if has_remux {
+        return "REMUX".into();
+    }
+    if contains_token(&low, "bdiso")
+        || contains_token(&low, "bd-iso")
+        || contains_token(&low, "bd.iso")
+        || contains_token(&low, "bd iso")
+        || low.contains("原盘iso")
+        || low.contains("蓝光iso")
+        || ((has_bluray || low.contains("蓝光原盘")) && has_iso)
+    {
+        return "BDISO".into();
+    }
+    if contains_token(&low, "bdmv") || low.contains("蓝光原盘") || low.contains("原盘目录") {
+        return "BDMV".into();
+    }
+    if contains_token(&low, "uhdbluray") || (has_uhd && has_bluray) {
+        return "UHD BluRay".into();
+    }
+    if has_bluray || low.contains("蓝光") {
+        return "BluRay".into();
+    }
+    if contains_token(&low, "bdrip")
+        || contains_token(&low, "bd-rip")
+        || contains_token(&low, "bd.rip")
+        || contains_token(&low, "brrip")
+        || contains_token(&low, "br-rip")
+    {
+        return "BDRip".into();
+    }
+    if contains_token(&low, "minibd")
+        || contains_token(&low, "mini-bd")
+        || contains_token(&low, "mini.bd")
+        || contains_token(&low, "mini bd")
+    {
+        return "MiniBD".into();
+    }
+    if contains_token(&low, "web-dl")
+        || contains_token(&low, "webdl")
+        || contains_token(&low, "web.dl")
+        || contains_token(&low, "web dl")
+    {
+        return "WEB-DL".into();
+    }
+    if contains_token(&low, "webrip")
+        || contains_token(&low, "web-rip")
+        || contains_token(&low, "web.rip")
+        || contains_token(&low, "web rip")
+    {
+        return "WEBRip".into();
+    }
+    if contains_token(&low, "hdtv")
+        || contains_token(&low, "hdtvrip")
+        || contains_token(&low, "pdtv")
+    {
+        return "HDTV".into();
+    }
+    if contains_token(&low, "hdrip")
+        || contains_token(&low, "hd-rip")
+        || contains_token(&low, "hd.rip")
+    {
+        return "HDRip".into();
+    }
+    if contains_token(&low, "dvdrip")
+        || contains_token(&low, "dvd-rip")
+        || contains_token(&low, "dvd.rip")
+    {
+        return "DVDRip".into();
+    }
+    if contains_token(&low, "dvd")
+        || contains_token(&low, "dvd5")
+        || contains_token(&low, "dvd9")
+        || contains_token(&low, "dvdr")
+    {
+        return "DVD".into();
+    }
+    String::new()
+}
+
+/// Checks if a rule/filter keyword matches an item's standardized `resource_type`,
+/// preserving backward compatibility for legacy broad rules (`REMUX` -> `BDRemux`, `BluRay` -> `UHD BluRay`, `DVD` -> `DVDRip`).
+pub fn resource_type_matches_rule(rule_tag: &str, item_rt: &str) -> bool {
+    let Some(rule_canon) = resource_type_canonical(rule_tag) else {
+        return false;
+    };
+    let item_canon = resource_type_canonical(item_rt).unwrap_or(item_rt.trim());
+    if item_canon.is_empty() {
+        return false;
+    }
+    if rule_canon.eq_ignore_ascii_case(item_canon) {
+        return true;
+    }
+    match rule_canon {
+        "REMUX" => item_canon == "BDRemux",
+        "BluRay" => item_canon == "UHD BluRay",
+        "DVD" => item_canon == "DVDRip",
+        _ => false,
+    }
+}
+
 pub fn parse_movie_attributes(text: &str) -> MovieAttributes {
     let low = format!(" {} ", text.to_lowercase());
     let mut a = MovieAttributes::default();
@@ -1001,13 +1155,7 @@ pub fn parse_movie_attributes(text: &str) -> MovieAttributes {
         a.resolution = "720P".into();
     }
 
-    if low.contains("remux") {
-        a.remux = "REMUX".into();
-    } else if low.contains("bluray") || low.contains("blu-ray") {
-        a.remux = "BluRay".into();
-    } else if low.contains("web-dl") || low.contains("webdl") || low.contains("webrip") {
-        a.remux = "WEB-DL".into();
-    }
+    a.remux = parse_resource_type(text);
 
     a.web_source = parse_web_source(text);
 
@@ -1099,6 +1247,17 @@ pub fn parse_movie_attributes(text: &str) -> MovieAttributes {
                 | "web-dl"
                 | "webdl"
                 | "webrip"
+                | "bdremux"
+                | "remux"
+                | "bluray"
+                | "bdrip"
+                | "bdiso"
+                | "bdmv"
+                | "minibd"
+                | "hdtv"
+                | "hdrip"
+                | "dvdrip"
+                | "dvd"
                 | "2160p"
                 | "1080p"
                 | "720p"
@@ -1147,6 +1306,13 @@ pub fn merge_movie_attributes(outer: &MovieAttributes, inner: &MovieAttributes) 
     }
     if m.remux.is_empty() {
         m.remux = outer.remux.clone();
+    } else if (m.remux == "REMUX" && outer.remux == "BDRemux")
+        || (m.remux == "BluRay" && matches!(outer.remux.as_str(), "UHD BluRay" | "BDRemux" | "BDISO" | "BDMV"))
+    {
+        m.remux = outer.remux.clone();
+    }
+    if let Some(canon) = resource_type_canonical(&m.remux) {
+        m.remux = canon.to_string();
     }
     if m.web_source.is_empty() {
         m.web_source = outer.web_source.clone();
@@ -1515,10 +1681,16 @@ pub fn score_resource(
     let clean_raw = strip_ignored_texts(&item.raw_title, &eff.ignored_texts);
     let clean_remark = strip_ignored_texts(&item.remark, &eff.ignored_texts);
 
-    if !eff.ignored_texts.is_empty() || item.movie_attributes.web_source.is_empty() {
+    if !eff.ignored_texts.is_empty()
+        || item.movie_attributes.web_source.is_empty()
+        || item.movie_attributes.remux.is_empty()
+    {
         let reparsed = parse_movie_attributes(&format!("{}\n{}\n{}", clean_title, clean_raw, clean_remark));
         if item.movie_attributes.resolution.is_empty() {
             item.movie_attributes.resolution = reparsed.resolution;
+        }
+        if item.movie_attributes.remux.is_empty() {
+            item.movie_attributes.remux = reparsed.remux;
         }
         if item.movie_attributes.web_source.is_empty() {
             item.movie_attributes.web_source = reparsed.web_source;
@@ -1802,19 +1974,43 @@ pub fn score_resource(
     }
     item.custom_keywords = kw_hits;
 
-    // 6. Remux & Subtitle quality bonus
+    // 6. Resource Type (14-item Mediary v3.4.13 vocabulary) & Subtitle quality bonus
     match item.movie_attributes.remux.as_str() {
-        "REMUX" => {
+        "BDRemux" | "REMUX" => {
             score += 14.0;
-            reasons.push("REMUX".into());
+            reasons.push(item.movie_attributes.remux.clone());
+        }
+        "BDISO" | "BDMV" => {
+            score += 13.0;
+            reasons.push(item.movie_attributes.remux.clone());
+        }
+        "UHD BluRay" => {
+            score += 12.0;
+            reasons.push("UHD BluRay".into());
         }
         "BluRay" => {
             score += 10.0;
             reasons.push("BluRay".into());
         }
+        "BDRip" | "MiniBD" => {
+            score += 8.0;
+            reasons.push(item.movie_attributes.remux.clone());
+        }
         "WEB-DL" => {
             score += 6.0;
             reasons.push("WEB-DL".into());
+        }
+        "WEBRip" => {
+            score += 5.0;
+            reasons.push("WEBRip".into());
+        }
+        "HDTV" | "HDRip" => {
+            score += 3.0;
+            reasons.push(item.movie_attributes.remux.clone());
+        }
+        "DVDRip" | "DVD" => {
+            score += 1.0;
+            reasons.push(item.movie_attributes.remux.clone());
         }
         _ => {}
     }
@@ -1953,6 +2149,9 @@ fn matches_group_keyword(item: &ResourceItem, blob: &str, word: &str) -> bool {
     if let Some(canon) = web_source_canonical(w) {
         return item.movie_attributes.web_source.eq_ignore_ascii_case(canon);
     }
+    if resource_type_canonical(w).is_some() {
+        return resource_type_matches_rule(w, &item.movie_attributes.remux);
+    }
     matches_keyword_in_blob(blob, w)
 }
 
@@ -1963,6 +2162,9 @@ fn matches_filter_tag(tag: &str, pan_label: &str, item: &ResourceItem, blob: &st
     }
     if let Some(canon) = web_source_canonical(t) {
         return item.movie_attributes.web_source.eq_ignore_ascii_case(canon);
+    }
+    if resource_type_canonical(t).is_some() {
+        return resource_type_matches_rule(t, &item.movie_attributes.remux);
     }
     let up = t.to_ascii_uppercase();
     match up.as_str() {
@@ -2439,5 +2641,76 @@ mod tests {
             parse_movie_attributes("Movie.2025.2160p.WEB-DL.H265.AAC-ADWeb.mkv").group,
             "ADWeb"
         );
+    }
+
+    #[test]
+    fn test_mediary_3413_resource_type_14_vocabulary_and_compat() {
+        // All 14 canonical resource_type items with strict priority & word boundaries
+        let cases = [
+            ("Dune.Part.Two.2024.2160p.UHD.BluRay.REMUX.DV.TrueHD.mkv", "BDRemux"),
+            ("Movie.2024.1080p.BD-REMUX.DTS-HD.MA.mkv", "BDRemux"),
+            ("沙丘2 4K REMUX 杜比视界", "REMUX"),
+            ("Avatar.2022.2160p.UHD.BluRay.ISO", "BDISO"),
+            ("Titanic.1997.BDISO.原盘ISO", "BDISO"),
+            ("Interstellar.2014.2160p.UHD.BluRay.BDMV", "BDMV"),
+            ("霸王别姬 4K 蓝光原盘", "BDMV"),
+            ("Oppenheimer.2023.2160p.UHD.BluRay.x265.10bit-GROUP.mkv", "UHD BluRay"),
+            ("Inception.2010.1080p.BluRay.x264.mkv", "BluRay"),
+            ("Matrix.1999.1080p.BDRip.x265.mkv", "BDRip"),
+            ("Anime.2024.1080p.MiniBD.x265.mkv", "MiniBD"),
+            ("Show.S01E01.2160p.NF.WEB-DL.DV.H265.mkv", "WEB-DL"),
+            ("Show.S01E01.1080p.WEBRip.x264.mkv", "WEBRip"),
+            ("Documentary.2024.1080i.HDTV.H264.ts", "HDTV"),
+            ("Action.2024.1080p.HDRip.x264.mkv", "HDRip"),
+            ("Classic.1995.480p.DVDRip.x264.avi", "DVDRip"),
+            ("Concert.2001.DVD9.ISO", "DVD"),
+        ];
+        for (input, expected) in cases {
+            let attrs = parse_movie_attributes(input);
+            assert_eq!(attrs.remux, expected, "resource_type mismatch for: {}", input);
+        }
+
+        // Strict boundary safety: substrings inside ordinary words must NOT false-match
+        assert!(parse_movie_attributes("The.Remixed.Song.2024.1080p.mkv").remux.is_empty());
+        assert!(parse_movie_attributes("MyDVDPlayer.2024.1080p.mkv").remux.is_empty());
+        assert!(parse_movie_attributes("Subdivision.2024.1080p.mkv").remux.is_empty());
+        assert!(parse_movie_attributes("Movie.2024.1080p-WEBRip.mkv").group.is_empty());
+
+        // Legacy broad rule compatibility: `REMUX` matches `BDRemux`, `BluRay` matches `UHD BluRay`, `WEB-DL` stays distinct from `WEBRip`
+        assert!(resource_type_matches_rule("REMUX", "BDRemux"));
+        assert!(resource_type_matches_rule("BluRay", "UHD BluRay"));
+        assert!(!resource_type_matches_rule("WEB-DL", "WEBRip"));
+        assert!(resource_type_matches_rule("WEBRip", "WEBRip"));
+
+        let mut cfg = RuleConfig::default();
+        cfg.ensure_weights_initialized();
+        cfg.group_items.push(RuleChipItem::simple("REMUX", true));
+        cfg.block_filters.push(crate::models::BlockFilterGroup {
+            id: "bf-webrip".into(),
+            tags: vec!["WEBRip".into()],
+        });
+
+        let mut bdremux_item = ResourceItem {
+            title: "Dune.2024.2160p.UHD.BluRay.REMUX.DV.mkv".into(),
+            share_size: "68GB".into(),
+            is_unlocked: true,
+            movie_attributes: parse_movie_attributes("Dune.2024.2160p.UHD.BluRay.REMUX.DV.mkv"),
+            ..Default::default()
+        };
+        let r1 = score_resource(&mut bdremux_item, &cfg, "Dune", "");
+        assert!(r1.accepted);
+        assert!(bdremux_item.custom_keywords.iter().any(|k| k == "REMUX"));
+        assert!(r1.reasons.iter().any(|x| x == "BDRemux"));
+
+        let mut webrip_item = ResourceItem {
+            title: "Show.S01E01.1080p.WEBRip.x264.mkv".into(),
+            share_size: "1.8GB".into(),
+            is_unlocked: true,
+            movie_attributes: parse_movie_attributes("Show.S01E01.1080p.WEBRip.x264.mkv"),
+            ..Default::default()
+        };
+        let r2 = score_resource(&mut webrip_item, &cfg, "Show", "");
+        assert!(!r2.accepted);
+        assert!(r2.reasons[0].contains("WEBRip"));
     }
 }

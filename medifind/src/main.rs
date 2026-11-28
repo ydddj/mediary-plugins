@@ -1694,5 +1694,20 @@ mod tests {
         assert_eq!(p2["resource_type"], "WEB-DL");
         assert_eq!(p2["video_encode"], "H.264");
         assert_eq!(p2["audio_encode"], "AAC");
+
+        // Mediary v3.4.13 14-item resource_type output in `parsed.resource_type`
+        let raw3 = "Oppenheimer.2023.2160p.UHD.BluRay.x265.10bit-GROUP.mkv";
+        let item3 = ResourceItem {
+            slug: "https://115.com/s/sw77665544".into(),
+            clean_slug: "115:sw77665544".into(),
+            title: "奥本海默".into(),
+            raw_title: raw3.into(),
+            source_type: "telegram".into(),
+            pan_type: "115".into(),
+            movie_attributes: rules::parse_movie_attributes(raw3),
+            ..Default::default()
+        };
+        let res3 = build_host_resource_results(&[item3]);
+        assert_eq!(res3[0]["parsed"]["resource_type"], "UHD BluRay");
     }
 }

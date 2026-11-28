@@ -1013,6 +1013,7 @@ impl HostClient {
         let _ = self.call_raw("POST", "/plugin/flowlink/all", &[], Some(json!({})), 20);
     }
 
+    #[allow(dead_code)]
     pub fn notify(&self, title: &str, content: &str) -> Result<()> {
         self.notify_with_image(title, content, Some(MEDIARY_DEFAULT_NOTIFY_IMAGE))
     }

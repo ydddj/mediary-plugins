@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "medifind",
   "name": "MediFind 网盘聚合引擎",
-  "version": "3.2.7",
+  "version": "3.2.8",
   "min_mediary_version": "3.4.6",
   "description": "聚合TG、影巢、AYClub与RSS多源搜片，支持订阅追更、115选集转存与FindBOT联动。",
   "action_runtime": {

@@ -3387,7 +3387,8 @@ function openBlockFilterModal(rd, root) {
   modalRoot.classList.remove('hidden');
   const presetRows = [
     { label: '资源/分辨率', items: ['115', 'ED2K', 'MAGNET', '4K', '1080P', '720P及以下'] },
-    { label: '色彩/片源', items: ['DV&HDR', 'DV', 'HDR10', 'HDR', 'HLG', 'SDR', 'REMUX', 'BluRay', 'WEB-DL'] },
+    { label: '色彩规格', items: ['DV&HDR', 'DV', 'HDR10', 'HDR', 'HLG', 'SDR'] },
+    { label: '片源类型 (Mediary 3.4.13)', items: ['BDRemux', 'REMUX', 'UHD BluRay', 'BluRay', 'WEB-DL', 'WEBRip', 'BDRip', 'BDISO', 'BDMV', 'MiniBD', 'HDTV', 'HDRip', 'DVDRip', 'DVD'] },
     { label: '流媒体平台 (国际)', items: STREAM_PLATFORMS_INTL },
     { label: '流媒体平台 (国内/亚洲)', items: STREAM_PLATFORMS_ASIA },
     { label: '音轨/后缀', items: ['TRUEHD', 'DTS-HD MA', 'EAC3', 'AC3', 'AAC', 'MKV', 'MP4', 'TS', 'ISO', 'RMVB'] },
@@ -3657,6 +3658,13 @@ function renderRulesTab(root) {
                          ${STREAM_PLATFORMS_ALL.map((p) => {
                            const exists = rd.group_items.some((x) => x.name.toLowerCase() === p.toLowerCase());
                            return `<button type="button" class="nf-quick-stream-btn ${exists ? 'added' : ''}" data-quick-group-kw="${esc(p)}" ${exists ? 'disabled' : ''}>${exists ? '✓ ' : '+ '}${esc(p)}</button>`;
+                         }).join('')}
+                       </div>
+                       <div class="nf-quick-stream-bar">
+                         <span class="nf-quick-stream-label">快捷点选片源类型 (3.4.13)：</span>
+                         ${['BDRemux', 'REMUX', 'UHD BluRay', 'BluRay', 'WEB-DL', 'WEBRip', 'BDRip', 'BDISO', 'BDMV', 'MiniBD', 'HDTV', 'HDRip', 'DVDRip', 'DVD'].map((rt) => {
+                           const exists = rd.group_items.some((x) => x.name.toLowerCase() === rt.toLowerCase());
+                           return `<button type="button" class="nf-quick-stream-btn ${exists ? 'added' : ''}" data-quick-group-kw="${esc(rt)}" ${exists ? 'disabled' : ''}>${exists ? '✓ ' : '+ '}${esc(rt)}</button>`;
                          }).join('')}
                        </div>`
                     : `<button type="button" class="nf-add-chip-btn" id="btn-show-add-group">+ 添加</button>`)
