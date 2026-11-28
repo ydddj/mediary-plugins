@@ -732,6 +732,14 @@ pub fn summary_counts(db: &Connection) -> Value {
     let pt_pending = count("SELECT COUNT(*) FROM pt_candidates WHERE state = 'pending'");
     let media_history = count("SELECT COUNT(*) FROM activity_logs WHERE record_type = 'media'");
     let task_history = count("SELECT COUNT(*) FROM activity_logs WHERE record_type = 'task'");
+    let now_i = now_ts() as i64;
+    let tmdb_cache_active: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM tmdb_cache WHERE expires_at > ?1",
+            [now_i],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     let last_result = get_cursor(db, "last_result").unwrap_or_else(|| "就绪".to_string());
     let last_tick_ts = get_cursor(db, "last_tick_ts")
         .and_then(|s| s.parse::<u64>().ok())
@@ -746,9 +754,205 @@ pub fn summary_counts(db: &Connection) -> Value {
         "pt_pending": pt_pending,
         "media_history": media_history,
         "task_history": task_history,
+        "tmdb_cache_active": tmdb_cache_active,
         "last_result": last_result,
         "last_tick_at": format_ts_cn(last_tick_ts),
     })
+}
+
+pub fn query_tmdb_cache(
+    db: &Connection,
+    kind_filter: &str,
+    keyword: &str,
+    limit: usize,
+) -> Result<Value> {
+    let now = now_ts() as i64;
+    let mut stmt = db.prepare(
+        "SELECT cache_key, val_json, expires_at
+           FROM tmdb_cache
+          ORDER BY expires_at DESC",
+    )?;
+    let raw_rows: Vec<(String, String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt);
+
+    let kw_low = keyword.trim().to_ascii_lowercase();
+    let mut total = 0usize;
+    let mut active = 0usize;
+    let mut resolve_hits = 0usize;
+    let mut resolve_misses = 0usize;
+    let mut details_cnt = 0usize;
+    let mut expired_cnt = 0usize;
+    let mut items: Vec<Value> = Vec::new();
+
+    for (key, val_json, exp) in raw_rows {
+        total += 1;
+        let is_expired = exp <= now;
+        if is_expired {
+            expired_cnt += 1;
+        } else {
+            active += 1;
+        }
+
+        let val: Value = serde_json::from_str(&val_json).unwrap_or(Value::Null);
+        let parts: Vec<&str> = key.splitn(4, '|').collect();
+        let raw_kind = parts.first().copied().unwrap_or("other");
+        let media_type = parts.get(1).copied().unwrap_or("").to_string();
+
+        let (item_kind, query_text, tmdb_id, title, year, detail_summary) = if raw_kind == "resolve" {
+            let y_str = parts.get(2).copied().unwrap_or("0");
+            let q = parts.get(3).copied().unwrap_or("").to_string();
+            let tid = val["tmdb_id"].as_str().unwrap_or_default().trim().to_string();
+            let is_miss = tid.is_empty() || tid == "0";
+            if !is_expired {
+                if is_miss {
+                    resolve_misses += 1;
+                } else {
+                    resolve_hits += 1;
+                }
+            }
+            let summary = if is_miss {
+                "未命中（负缓存 30 分钟）".to_string()
+            } else if y_str != "0" && !y_str.is_empty() {
+                format!("年份 {y_str} → tmdbid-{tid}")
+            } else {
+                format!("不限年份 → tmdbid-{tid}")
+            };
+            (
+                if is_miss { "miss" } else { "resolve" },
+                q.clone(),
+                tid,
+                q,
+                if y_str == "0" { String::new() } else { y_str.to_string() },
+                summary,
+            )
+        } else if raw_kind == "details" {
+            if !is_expired {
+                details_cnt += 1;
+            }
+            let tid = parts.get(2).copied().unwrap_or("").to_string();
+            let det = val
+                .get("details")
+                .filter(|x| x.is_object())
+                .unwrap_or(&val);
+            let t = det["title"]
+                .as_str()
+                .or_else(|| det["name"].as_str())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let y: String = det["release_date"]
+                .as_str()
+                .or_else(|| det["first_air_date"].as_str())
+                .unwrap_or_default()
+                .chars()
+                .take(4)
+                .collect();
+            let mut segs: Vec<String> = Vec::new();
+            if let Some(arr) = det["seasons"].as_array() {
+                let s_parts: Vec<String> = arr
+                    .iter()
+                    .filter_map(|s| {
+                        let sn = s["season_number"].as_u64()?;
+                        let ec = s["episode_count"].as_u64()?;
+                        if sn > 0 && ec > 0 {
+                            Some(format!("S{sn}:{ec}集"))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !s_parts.is_empty() {
+                    let preview = if s_parts.len() > 6 {
+                        format!("{} 等{}季", s_parts[..6].join(" / "), s_parts.len())
+                    } else {
+                        s_parts.join(" / ")
+                    };
+                    segs.push(preview);
+                }
+            }
+            let has_img = !det["backdrop_path"].as_str().unwrap_or_default().is_empty()
+                || !det["poster_path"].as_str().unwrap_or_default().is_empty();
+            if has_img {
+                segs.push("含海报图".to_string());
+            }
+            let summary = if segs.is_empty() {
+                "TMDB 详情缓存".to_string()
+            } else {
+                segs.join(" · ")
+            };
+            ("details", format!("tmdbid-{tid}"), tid, t, y, summary)
+        } else {
+            ("other", key.clone(), String::new(), key.clone(), String::new(), val_json.chars().take(80).collect())
+        };
+
+        let kind_match = match kind_filter {
+            "resolve" => item_kind == "resolve" && !is_expired,
+            "details" => item_kind == "details" && !is_expired,
+            "miss" => item_kind == "miss" && !is_expired,
+            "expired" => is_expired,
+            _ => true,
+        };
+        if !kind_match {
+            continue;
+        }
+        if !kw_low.is_empty() {
+            let hay = format!("{key} {title} {tmdb_id} {year} {detail_summary}").to_ascii_lowercase();
+            if !hay.contains(&kw_low) {
+                continue;
+            }
+        }
+        if items.len() < limit.clamp(1, 500) {
+            let ttl_rem = (exp - now).max(0) as u64;
+            items.push(json!({
+                "cache_key": key,
+                "kind": item_kind,
+                "media_type": media_type,
+                "query_text": query_text,
+                "tmdb_id": tmdb_id,
+                "title": if title.is_empty() { format!("TMDB:{tmdb_id}") } else { title },
+                "year": year,
+                "detail_summary": detail_summary,
+                "expired": is_expired,
+                "ttl_remaining_secs": ttl_rem,
+                "expires_at_text": format_ts_cn(exp.max(0) as u64),
+            }));
+        }
+    }
+
+    Ok(json!({
+        "summary": {
+            "total": total,
+            "active": active,
+            "resolve_hits": resolve_hits,
+            "resolve_misses": resolve_misses,
+            "details": details_cnt,
+            "expired": expired_cnt,
+        },
+        "items": items,
+    }))
+}
+
+pub fn delete_tmdb_cache(db: &Connection, keys: &[String], mode: &str) -> Result<usize> {
+    let deleted = match mode {
+        "all" => db.execute("DELETE FROM tmdb_cache", [])?,
+        "expired" => {
+            let now = now_ts() as i64;
+            db.execute("DELETE FROM tmdb_cache WHERE expires_at <= ?1", [now])?
+        }
+        _ => {
+            let mut n = 0usize;
+            for k in keys {
+                if !k.is_empty() {
+                    n += db.execute("DELETE FROM tmdb_cache WHERE cache_key = ?1", [k])?;
+                }
+            }
+            n
+        }
+    };
+    Ok(deleted)
 }
 
 pub fn write_dashboard_file(data_dir: &Path, db: &Connection, cfg: &AppConfig) {

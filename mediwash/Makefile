@@ -1,5 +1,5 @@
 PLUGIN_ID := mediwash
-VERSION := 3.2.8
+VERSION := 3.2.9
 RUST_IMAGE := rust:1.86-bookworm
 CARGO_TARGET_DIR ?= /tmp/mediwash-target
 

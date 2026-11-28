@@ -1065,6 +1065,34 @@ fn dispatch(
             }))
         }
 
+        "ui_tmdb_cache_list" => {
+            let kind = input["kind"].as_str().unwrap_or("all");
+            let keyword = input["keyword"].as_str().unwrap_or_default();
+            let limit = input["limit"].as_u64().unwrap_or(250) as usize;
+            let mut res = db::query_tmdb_cache(conn, kind, keyword, limit)?;
+            res["counts"] = db::summary_counts(conn);
+            Ok(res)
+        }
+
+        "ui_tmdb_cache_delete" => {
+            let mode = input["mode"].as_str().unwrap_or("keys");
+            let keys: Vec<String> = input["keys"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+            let deleted = db::delete_tmdb_cache(conn, &keys, mode)?;
+            let kind = input["kind"].as_str().unwrap_or("all");
+            let keyword = input["keyword"].as_str().unwrap_or_default();
+            let limit = input["limit"].as_u64().unwrap_or(250) as usize;
+            let mut res = db::query_tmdb_cache(conn, kind, keyword, limit)?;
+            res["deleted"] = json!(deleted);
+            res["counts"] = db::summary_counts(conn);
+            Ok(res)
+        }
+
         // === History & Task Logs (Separated Media vs Task + Filter + Delete) ===
         "ui_history_list" => {
             let filter = db::ActivityFilter {

@@ -2185,9 +2185,123 @@ pub fn execute_staging_items_opts(
                     let now_oob = now_ts();
                     for oob_pi in unmappable_idx {
                         let oob_pa = &pending_actions[oob_pi];
+                        let eff_s = oob_pa.season.max(1);
+                        if oob_pa.episode > 0 {
+                            if let Some((season_cid, season_dir_display)) =
+                                resolve_existing_tv_season_folder(
+                                    host,
+                                    cfg,
+                                    archive_target_cid.as_deref(),
+                                    &key.2,
+                                    eff_s,
+                                )
+                            {
+                                let mut move_ids = vec![oob_pa.file_id.clone()];
+                                if oob_pa.move_subtitles {
+                                    for sc_id in &oob_pa.sidecar_ids {
+                                        if !sc_id.is_empty() && !move_ids.contains(sc_id) {
+                                            move_ids.push(sc_id.clone());
+                                        }
+                                    }
+                                }
+                                if host.open115_move_files(&move_ids, &season_cid).is_ok() {
+                                    organized_count += 1;
+                                    organized_indices.push(oob_pi);
+                                    *moved_by_cid
+                                        .entry(oob_pa.parent_cid.clone())
+                                        .or_insert(0) += move_ids.len();
+                                    let _ = db.execute(
+                                        "DELETE FROM activity_logs
+                                          WHERE record_type = 'media'
+                                            AND status = 'warning'
+                                            AND sub_title = ?",
+                                        params![oob_pa.name],
+                                    );
+                                    let _ = db.execute(
+                                        "UPDATE staging_items SET state = 'organized', updated_at = ? WHERE id = ?",
+                                        params![now_oob, oob_pa.row_id],
+                                    );
+                                    let target_path = format!(
+                                        "{}/{}",
+                                        season_dir_display.trim_end_matches('/'),
+                                        oob_pa.live_name
+                                    );
+                                    let mut eff_slot_label = oob_pa.slot_label.clone();
+                                    if oob_pa.category.trim().is_empty() {
+                                        if let Some(cat) = category::locate(
+                                            &cfg.host_sync.categories,
+                                            "tv",
+                                            &[&target_path],
+                                        ) {
+                                            eff_slot_label = if !oob_pa.slot.trim().is_empty() {
+                                                format!("{cat} · {}", oob_pa.slot.trim())
+                                            } else {
+                                                cat
+                                            };
+                                        }
+                                    }
+                                    if let Some(ref lg) = oob_pa.ledger_info {
+                                        has_upgrade_ledger = true;
+                                        let lkey = format!(
+                                            "115:{}:{}:{}:{}:{}",
+                                            lg["media_type"].as_str().unwrap_or_default(),
+                                            lg["tmdb_id"].as_str().unwrap_or_default(),
+                                            lg["season"].as_u64().unwrap_or(0),
+                                            lg["episode"].as_u64().unwrap_or(0),
+                                            lg["file_id"].as_str().unwrap_or_default()
+                                        );
+                                        let _ = db.execute(
+                                            "INSERT INTO wash_ledger (
+                                                ledger_key, source_kind, media_type, tmdb_id, season, episode, item_id,
+                                                title, category, slot, rule_id, expected_file_id, expected_sha1,
+                                                old_source_ids_json, cand_score, old_score, state, message, created_at, updated_at
+                                             ) VALUES (?,'cloud115',?,?,?,?,?,?,?,?,?,?,?, ?, ?,?,'awaiting_ingest',?,?,?)
+                                             ON CONFLICT(ledger_key) DO UPDATE SET
+                                                state='awaiting_ingest', updated_at=excluded.updated_at",
+                                            params![
+                                                lkey,
+                                                lg["media_type"].as_str().unwrap_or_default(),
+                                                lg["tmdb_id"].as_str().unwrap_or_default(),
+                                                lg["season"].as_u64().unwrap_or(0),
+                                                lg["episode"].as_u64().unwrap_or(0),
+                                                lg["item_id"].as_str().unwrap_or_default(),
+                                                lg["title"].as_str().unwrap_or(&oob_pa.name),
+                                                lg["category"].as_str().unwrap_or_default(),
+                                                lg["slot"].as_str().unwrap_or_default(),
+                                                lg["rule_id"].as_str().unwrap_or_default(),
+                                                lg["file_id"].as_str().unwrap_or_default(),
+                                                lg["sha1"].as_str().unwrap_or_default(),
+                                                serde_json::to_string(&lg["old_source_ids"]).unwrap_or_else(|_| "[]".into()),
+                                                lg["cand_score"].as_f64().unwrap_or(0.0),
+                                                lg["old_score"].as_f64().unwrap_or(0.0),
+                                                "TMDB 暂未收录该集，已直移入现有季目录，等待 115 生活事件生成 STRM 后清理旧源",
+                                                now_oob,
+                                                now_oob,
+                                            ],
+                                        );
+                                    }
+                                    let log_detail = format!(
+                                        "TMDB 暂未收录 S{eff_s:02}E{:02}，已按文件名季集直移入现有季目录（等待 115 生活事件自动生成 STRM） · {}",
+                                        oob_pa.episode, oob_pa.reason
+                                    );
+                                    db::log_media_history(
+                                        db,
+                                        "115归档",
+                                        &oob_pa.display_title,
+                                        &oob_pa.name,
+                                        &oob_pa.source_path,
+                                        &target_path,
+                                        &eff_slot_label,
+                                        "organized",
+                                        "done",
+                                        &log_detail,
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
                         let oob_reason = format!(
-                            "TMDB 各季总集数均不含第 {} 季第 {} 集（可能为特典/SP），已转入待人工核对季集",
-                            oob_pa.season.max(1),
+                            "TMDB 暂未收录第 {eff_s} 季第 {} 集，且 115 媒体库中尚未找到对应的 Season {eff_s:02} 目录，已转入待人工核对季集",
                             oob_pa.episode
                         );
                         let _ = db.execute(
@@ -5743,38 +5857,251 @@ fn is_protected_category_segment(seg: &str) -> bool {
     )
 }
 
-/// Prunes vacated old library folders leaf-up on 115 (e.g. `Season 01` then `Show (Year) [tmdbid-...]`)
-/// whenever a video moved to a different folder or into 115 Recycle Bin.
-/// When `allow_clutter_only` is true (vacated wrong-identity directory), also removes directories
-/// that contain zero videos and zero subdirectories (only auto-downloaded `.nfo`/`.jpg` metadata clutter).
-fn prune_vacated_library_folder(
+fn is_season_dir_match(seg: &str, season: u32) -> bool {
+    let low = seg.trim().to_ascii_lowercase();
+    let pad = format!("season {:02}", season);
+    let nopad = format!("season {}", season);
+    let sp = format!("s{:02}", season);
+    let sn = format!("s{}", season);
+    low == pad || low == nopad || low == sp || low == sn
+}
+
+fn is_any_season_dir(seg: &str) -> bool {
+    let low = seg.trim().to_ascii_lowercase();
+    if let Some(rest) = low.strip_prefix("season") {
+        let num = rest.trim();
+        return !num.is_empty() && num.chars().all(|c| c.is_ascii_digit());
+    }
+    if let Some(rest) = low.strip_prefix('s') {
+        return !rest.is_empty() && rest.len() <= 3 && rest.chars().all(|c| c.is_ascii_digit());
+    }
+    false
+}
+
+/// Resolves an existing `Season XX` directory CID on 115 for a TV show already in Mediary's library.
+/// Used when TMDB has not yet added a newly-aired episode (e.g. `中国唱将 S02E07`, `绝世武神 S09E19`)
+/// so the file can still be moved directly into its existing season folder for 115 life-event STRM sync.
+fn resolve_existing_tv_season_folder(
     host: &HostClient,
     cfg: &AppConfig,
-    root_cid_opt: Option<&str>,
+    archive_target_cid: Option<&str>,
+    tmdb_id: &str,
+    season: u32,
+) -> Option<(String, String)> {
+    let tid = tmdb_id.trim();
+    if tid.is_empty() || season == 0 {
+        return None;
+    }
+    let mut root_cids: Vec<&str> = Vec::new();
+    if let Some(rc) = archive_target_cid
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "0")
+    {
+        root_cids.push(rc);
+    }
+    for p in &cfg.pipelines {
+        let tc = p.target_cid.trim();
+        if !tc.is_empty() && tc != "0" && !root_cids.contains(&tc) {
+            root_cids.push(tc);
+        }
+    }
+    for c in [
+        cfg.host_sync.transfer_target_cid.trim(),
+        cfg.host_sync.open115_target_cid.trim(),
+    ] {
+        if !c.is_empty() && c != "0" && !root_cids.contains(&c) {
+            root_cids.push(c);
+        }
+    }
+    if root_cids.is_empty() {
+        return None;
+    }
+
+    let page = host.library_items_by_tmdb(tid, "tv", None).ok()?;
+    if page.items.is_empty() {
+        return None;
+    }
+
+    let anchor_label = cfg.host_sync.transfer_target_folder.trim().trim_matches('/');
+    let anchor_display = if anchor_label.is_empty() {
+        "媒体库"
+    } else {
+        anchor_label
+    };
+
+    let try_resolve_segs = |segs: &[String]| -> Option<(String, String)> {
+        let refs: Vec<&str> = segs.iter().map(String::as_str).collect();
+        for &rc in &root_cids {
+            if let Ok(Some(cid)) = host.open115_resolve_subpath_cid(rc, &refs) {
+                let display = format!("115://{anchor_display}/{}", segs.join("/"));
+                return Some((cid, display));
+            }
+        }
+        None
+    };
+
+    let mut fallback_show_dirs: Vec<Vec<String>> = Vec::new();
+    let mut seen_show_dirs: BTreeSet<String> = BTreeSet::new();
+
+    // Prioritize entries from the exact requested season first, then fall back to any season of this show.
+    let mut ordered_indices: Vec<usize> = (0..page.items.len()).collect();
+    ordered_indices.sort_by_key(|&i| usize::from(page.items[i].effective_season() != season));
+
+    for idx in ordered_indices.into_iter().take(24) {
+        let entry = &page.items[idx];
+        if entry.effective_tmdb() != tid {
+            continue;
+        }
+        let Ok(detail) = host.library_item_detail(&entry.id) else {
+            continue;
+        };
+        let mut paths: Vec<&str> = Vec::new();
+        for src in detail.effective_sources() {
+            for p in [&src.strm_path, &src.cloud_path, &src.file_path] {
+                if !p.trim().is_empty() {
+                    paths.push(p.trim());
+                }
+            }
+        }
+        if !detail.path.trim().is_empty() {
+            paths.push(detail.path.trim());
+        }
+        for p in paths {
+            let segs = extract_target_rel_segments(p, &cfg.host_sync.transfer_target_folder);
+            if segs.is_empty() {
+                continue;
+            }
+            if segs.last().is_some_and(|last| is_season_dir_match(last, season)) {
+                if let Some(hit) = try_resolve_segs(&segs) {
+                    return Some(hit);
+                }
+            }
+            let show_segs = if segs.last().is_some_and(|last| is_any_season_dir(last)) {
+                segs[..segs.len() - 1].to_vec()
+            } else {
+                segs
+            };
+            if !show_segs.is_empty() {
+                let sk = show_segs.join("/");
+                if seen_show_dirs.insert(sk) {
+                    fallback_show_dirs.push(show_segs);
+                }
+            }
+        }
+    }
+
+    for show_segs in fallback_show_dirs {
+        for cand_name in [format!("Season {season:02}"), format!("Season {season}")] {
+            let mut full = show_segs.clone();
+            full.push(cand_name);
+            if let Some(hit) = try_resolve_segs(&full) {
+                return Some(hit);
+            }
+        }
+    }
+    None
+}
+
+const LOCAL_STRM_CLUTTER_EXTS: &[&str] = &[
+    "nfo", "xml", "json", "txt", "url", "jpg", "jpeg", "png", "webp", "bmp", "gif", "tbn", "ico",
+    "svg", "bif", "ass", "ssa", "srt", "sup", "vtt", "sub", "idx",
+];
+
+fn is_safe_local_strm_clutter(file_name: &str, size: u64) -> bool {
+    let trimmed = file_name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let low_full = trimmed.to_ascii_lowercase();
+    // IRONCLAD SAFETY: NEVER delete any .strm file (Mediary webhook_watcher would delete 115 cloud files!)
+    if low_full.ends_with(".strm") || is_video_name(trimmed) {
+        return false;
+    }
+    if trimmed.starts_with('.') && size <= 10 * 1024 * 1024 {
+        return true;
+    }
+    if size > 50 * 1024 * 1024 {
+        return false;
+    }
+    trimmed.rsplit_once('.').is_some_and(|(_, ext)| {
+        let low = ext.to_ascii_lowercase();
+        if low == "json" {
+            return size <= 10 * 1024 * 1024;
+        }
+        LOCAL_STRM_CLUTTER_EXTS.contains(&low.as_str())
+    })
+}
+
+fn resolve_local_strm_root(old_target_path: &str, target_folder_name: &str) -> Option<std::path::PathBuf> {
+    let trimmed = old_target_path.trim();
+    let anchor_cfg = target_folder_name.trim().trim_matches('/');
+    if trimmed.starts_with('/') {
+        let dir_part = trimmed.rsplit_once('/').map_or(trimmed, |(d, _)| d);
+        let parts: Vec<&str> = dir_part
+            .split('/')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let pos = (!anchor_cfg.is_empty())
+            .then(|| parts.iter().position(|&seg| seg == anchor_cfg))
+            .flatten()
+            .or_else(|| parts.iter().position(|&seg| seg == "媒体库"));
+        if let Some(idx) = pos {
+            let mut pb = std::path::PathBuf::from("/");
+            for seg in &parts[..=idx] {
+                pb.push(seg);
+            }
+            if pb.is_dir() {
+                return Some(pb);
+            }
+        }
+    }
+    let anchor = if anchor_cfg.is_empty() {
+        "媒体库"
+    } else {
+        anchor_cfg
+    };
+    for base in [
+        format!("/strm/cloud/{anchor}"),
+        format!("/strm/{anchor}"),
+        "/strm/cloud/媒体库".to_string(),
+    ] {
+        let pb = std::path::PathBuf::from(&base);
+        if pb.is_dir() {
+            return Some(pb);
+        }
+    }
+    None
+}
+
+/// Safely removes vacated local `/strm/...` metadata-only ghost directories leaf-up.
+/// IRONCLAD INVARIANT: refuses any directory that contains a `.strm` file, video file,
+/// subdirectory, symlink, or unknown file — and never uses `remove_dir_all`.
+fn prune_vacated_local_strm_dir(
+    cfg: &AppConfig,
     old_target_path: &str,
     new_target_path: &str,
     old_media_type: &str,
     allow_clutter_only: bool,
 ) -> usize {
-    let Some(root_cid) = root_cid_opt.map(str::trim).filter(|s| !s.is_empty() && *s != "0") else {
-        return 0;
-    };
-    let old_segs = extract_target_rel_segments(
-        old_target_path,
-        &cfg.host_sync.transfer_target_folder,
-    );
+    let old_segs =
+        extract_target_rel_segments(old_target_path, &cfg.host_sync.transfer_target_folder);
     if old_segs.is_empty() {
         return 0;
     }
     if !new_target_path.trim().is_empty() {
-        let new_segs = extract_target_rel_segments(
-            new_target_path,
-            &cfg.host_sync.transfer_target_folder,
-        );
+        let new_segs =
+            extract_target_rel_segments(new_target_path, &cfg.host_sync.transfer_target_folder);
         if old_segs == new_segs {
             return 0;
         }
     }
+    let Some(local_root) =
+        resolve_local_strm_root(old_target_path, &cfg.host_sync.transfer_target_folder)
+    else {
+        return 0;
+    };
+
     let mut cat_depth = category::locate(
         &cfg.host_sync.categories,
         if old_media_type.is_empty() {
@@ -5788,8 +6115,6 @@ fn prune_vacated_library_folder(
     .or_else(|| category::locate(&cfg.host_sync.categories, "tv", &[old_target_path]))
     .map(|c| c.split('/').filter(|s| !s.is_empty()).count())
     .unwrap_or(0);
-
-    // Safe fallback if category.yaml didn't match: never touch top-level category/year folders
     if cat_depth == 0 {
         let mut idx = 0usize;
         while idx < old_segs.len() && is_protected_category_segment(&old_segs[idx]) {
@@ -5806,37 +6131,174 @@ fn prune_vacated_library_folder(
         if is_protected_category_segment(&old_segs[depth - 1]) {
             break;
         }
-        let parent_refs: Vec<&str> = old_segs[..depth - 1].iter().map(String::as_str).collect();
-        let leaf_refs: Vec<&str> = old_segs[..depth].iter().map(String::as_str).collect();
-        let (Ok(Some(p_cid)), Ok(Some(l_cid))) = (
-            host.open115_resolve_subpath_cid(root_cid, &parent_refs),
-            host.open115_resolve_subpath_cid(root_cid, &leaf_refs),
-        ) else {
-            break;
+        let mut dir_path = local_root.clone();
+        for seg in &old_segs[..depth] {
+            dir_path.push(seg);
+        }
+        let Ok(dir_meta) = std::fs::symlink_metadata(&dir_path) else {
+            // Leaf directory already absent: continue checking parent (e.g. show root after Season XX removed)
+            continue;
         };
-        if cfg.host_sync.protected_cids.contains(&l_cid) {
+        if !dir_meta.is_dir() || dir_meta.file_type().is_symlink() {
             break;
         }
-        let Ok(pg) = host.open115_list_page(&l_cid, 0, 50, true) else {
+        let Ok(rd) = std::fs::read_dir(&dir_path) else {
             break;
         };
-        let is_truly_empty = pg.count == 0 && pg.items.is_empty();
-        let is_clutter_only = allow_clutter_only
-            && pg.count <= pg.items.len()
-            && !pg.items.is_empty()
-            && pg.items.iter().all(|f| {
-                !f.is_dir
-                    && !is_video_name(&f.name)
-                    && (is_leftover_clutter(f) || is_subtitle_name(&f.name))
-            });
-        if is_truly_empty || is_clutter_only {
-            if host.open115_delete_files(&p_cid, &[l_cid]).is_ok() {
-                pruned += 1;
-                continue;
+        let mut clutter_files: Vec<std::path::PathBuf> = Vec::new();
+        let mut safe_to_remove = true;
+        for entry_res in rd {
+            let Ok(entry) = entry_res else {
+                safe_to_remove = false;
+                break;
+            };
+            let Ok(ft) = entry.file_type() else {
+                safe_to_remove = false;
+                break;
+            };
+            if ft.is_dir() || ft.is_symlink() {
+                safe_to_remove = false;
+                break;
             }
+            if !allow_clutter_only {
+                safe_to_remove = false;
+                break;
+            }
+            let fname = entry.file_name().to_string_lossy().to_string();
+            let fsize = entry.metadata().map(|m| m.len()).unwrap_or(u64::MAX);
+            if !is_safe_local_strm_clutter(&fname, fsize) {
+                safe_to_remove = false;
+                break;
+            }
+            clutter_files.push(entry.path());
+        }
+        if !safe_to_remove {
+            break;
+        }
+        let mut all_unlinked = true;
+        for fp in &clutter_files {
+            if fp
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.to_ascii_lowercase().ends_with(".strm"))
+            {
+                all_unlinked = false;
+                break;
+            }
+            if std::fs::remove_file(fp).is_err() {
+                all_unlinked = false;
+                break;
+            }
+        }
+        if all_unlinked && std::fs::remove_dir(&dir_path).is_ok() {
+            pruned += 1;
+            continue;
         }
         break;
     }
+    pruned
+}
+
+/// Prunes vacated old library folders leaf-up on 115 (e.g. `Season 01` then `Show (Year) [tmdbid-...]`)
+/// AND safely cleans any matching local `/strm` metadata-only ghost directories whenever a video
+/// moved to a different folder or into 115 Recycle Bin.
+/// When `allow_clutter_only` is true (vacated wrong-identity directory), also removes directories
+/// that contain zero videos / zero `.strm` files and zero subdirectories (only `.nfo`/`.jpg` metadata clutter).
+fn prune_vacated_library_folder(
+    host: &HostClient,
+    cfg: &AppConfig,
+    root_cid_opt: Option<&str>,
+    old_target_path: &str,
+    new_target_path: &str,
+    old_media_type: &str,
+    allow_clutter_only: bool,
+) -> usize {
+    let mut pruned = 0usize;
+    if let Some(root_cid) = root_cid_opt
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "0")
+    {
+        let old_segs = extract_target_rel_segments(
+            old_target_path,
+            &cfg.host_sync.transfer_target_folder,
+        );
+        let same_target = !new_target_path.trim().is_empty()
+            && old_segs
+                == extract_target_rel_segments(
+                    new_target_path,
+                    &cfg.host_sync.transfer_target_folder,
+                );
+        if !old_segs.is_empty() && !same_target {
+            let mut cat_depth = category::locate(
+                &cfg.host_sync.categories,
+                if old_media_type.is_empty() {
+                    "movie"
+                } else {
+                    old_media_type
+                },
+                &[old_target_path],
+            )
+            .or_else(|| category::locate(&cfg.host_sync.categories, "movie", &[old_target_path]))
+            .or_else(|| category::locate(&cfg.host_sync.categories, "tv", &[old_target_path]))
+            .map(|c| c.split('/').filter(|s| !s.is_empty()).count())
+            .unwrap_or(0);
+
+            // Safe fallback if category.yaml didn't match: never touch top-level category/year folders
+            if cat_depth == 0 {
+                let mut idx = 0usize;
+                while idx < old_segs.len() && is_protected_category_segment(&old_segs[idx]) {
+                    idx += 1;
+                }
+                cat_depth = idx.max(1);
+            }
+            if old_segs.len() > cat_depth {
+                for depth in ((cat_depth + 1)..=old_segs.len()).rev() {
+                    if is_protected_category_segment(&old_segs[depth - 1]) {
+                        break;
+                    }
+                    let parent_refs: Vec<&str> =
+                        old_segs[..depth - 1].iter().map(String::as_str).collect();
+                    let leaf_refs: Vec<&str> =
+                        old_segs[..depth].iter().map(String::as_str).collect();
+                    let (Ok(Some(p_cid)), Ok(Some(l_cid))) = (
+                        host.open115_resolve_subpath_cid(root_cid, &parent_refs),
+                        host.open115_resolve_subpath_cid(root_cid, &leaf_refs),
+                    ) else {
+                        break;
+                    };
+                    if cfg.host_sync.protected_cids.contains(&l_cid) {
+                        break;
+                    }
+                    let Ok(pg) = host.open115_list_page(&l_cid, 0, 50, true) else {
+                        break;
+                    };
+                    let is_truly_empty = pg.count == 0 && pg.items.is_empty();
+                    let is_clutter_only = allow_clutter_only
+                        && pg.count <= pg.items.len()
+                        && !pg.items.is_empty()
+                        && pg.items.iter().all(|f| {
+                            !f.is_dir
+                                && !is_video_name(&f.name)
+                                && (is_leftover_clutter(f) || is_subtitle_name(&f.name))
+                        });
+                    if is_truly_empty || is_clutter_only {
+                        if host.open115_delete_files(&p_cid, &[l_cid]).is_ok() {
+                            pruned += 1;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    pruned += prune_vacated_local_strm_dir(
+        cfg,
+        old_target_path,
+        new_target_path,
+        old_media_type,
+        allow_clutter_only,
+    );
     pruned
 }
 
@@ -6781,5 +7243,48 @@ mod tests {
         assert_eq!(remap_absolute_tv_episode_from_seasons(&seasons, 1, 61), None);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn local_strm_metadata_dir_prune_never_touches_strm_or_category() {
+        let base = std::env::temp_dir().join(format!("mediwash_strm_prune_{}", now_ts()));
+        let lib_root = base.join("媒体库");
+        let year_dir = lib_root.join("电影/动画电影/2010-2019");
+        let ghost_dir = year_dir.join("最终幻想15：艾汀篇 - 序章 (2019) [tmdbid-844390]");
+        let live_dir = year_dir.join("正常电影 (2019) [tmdbid-12345]");
+        std::fs::create_dir_all(&ghost_dir).unwrap();
+        std::fs::create_dir_all(&live_dir).unwrap();
+
+        std::fs::write(ghost_dir.join("movie.nfo"), "<movie/>").unwrap();
+        std::fs::write(ghost_dir.join("poster.jpg"), "fakejpg").unwrap();
+        std::fs::write(ghost_dir.join("foo-mediainfo.json"), "{}").unwrap();
+
+        std::fs::write(live_dir.join("movie.nfo"), "<movie/>").unwrap();
+        std::fs::write(live_dir.join("正常电影.2019.strm"), "http://example").unwrap();
+
+        let mut cfg = AppConfig::default();
+        cfg.host_sync.transfer_target_folder = "媒体库".to_string();
+
+        // 1. Metadata-only vacated folder is cleaned, protected year_dir stays intact
+        let ghost_file = ghost_dir
+            .join("最终幻想15：艾汀篇 - 序章.2019.strm")
+            .to_string_lossy()
+            .to_string();
+        let pruned_ghost = prune_vacated_local_strm_dir(&cfg, &ghost_file, "", "movie", true);
+        assert_eq!(pruned_ghost, 1);
+        assert!(!ghost_dir.exists());
+        assert!(year_dir.exists());
+
+        // 2. Folder still containing ANY .strm file is NEVER touched
+        let live_file = live_dir
+            .join("正常电影.2019.strm")
+            .to_string_lossy()
+            .to_string();
+        let pruned_live = prune_vacated_local_strm_dir(&cfg, &live_file, "", "movie", true);
+        assert_eq!(pruned_live, 0);
+        assert!(live_dir.join("正常电影.2019.strm").exists());
+        assert!(live_dir.join("movie.nfo").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

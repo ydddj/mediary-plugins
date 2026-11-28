@@ -102,6 +102,15 @@ const state = {
   histKeyword: '',
   histData: { items: [], media_total: 0, task_total: 0, filtered_total: 0 },
   histSelected: new Set(),
+
+  // Tab 6: TMDB Persistent Cache Manager
+  tmdbCacheKind: 'all', // 'all' | 'resolve' | 'details' | 'miss' | 'expired'
+  tmdbCacheKeyword: '',
+  tmdbCacheData: {
+    summary: { total: 0, active: 0, resolve_hits: 0, resolve_misses: 0, details: 0, expired: 0 },
+    items: [],
+  },
+  tmdbCacheSelected: new Set(),
 };
 
 const esc = (v) =>
@@ -180,6 +189,8 @@ function syncSidebarBadges() {
   document.getElementById('badge-rules').textContent = (b.rules || []).length;
   const badgeHist = document.getElementById('badge-history');
   if (badgeHist) badgeHist.textContent = Number(c.media_history || 0);
+  const badgeTmdb = document.getElementById('badge-tmdb-cache');
+  if (badgeTmdb) badgeTmdb.textContent = Number(c.tmdb_cache_active || 0);
 
   const modePill = document.getElementById('mw-mode-pill');
   const modePillM = document.getElementById('mw-mode-pill-m');
@@ -344,6 +355,21 @@ async function loadCurrentTabData() {
     );
     state.histData = res || { items: [], media_total: 0, task_total: 0, filtered_total: 0 };
     state.boot.counts = res.counts || state.boot.counts;
+  } else if (state.tab === 'tmdb_cache') {
+    const res = await callAction(
+      'ui_tmdb_cache_list',
+      {
+        kind: state.tmdbCacheKind,
+        keyword: state.tmdbCacheKeyword,
+        limit: 300,
+      },
+      true
+    );
+    state.tmdbCacheData = res || {
+      summary: { total: 0, active: 0, resolve_hits: 0, resolve_misses: 0, details: 0, expired: 0 },
+      items: [],
+    };
+    state.boot.counts = res.counts || state.boot.counts;
   }
   syncSidebarBadges();
 }
@@ -406,6 +432,7 @@ function render() {
   else if (state.tab === 'pt') renderPtTab(root);
   else if (state.tab === 'rules') renderRulesTab(root);
   else if (state.tab === 'history') renderHistoryTab(root);
+  else if (state.tab === 'tmdb_cache') renderTmdbCacheTab(root);
 
   if (sameTab) {
     const restoreScroll = () => {
@@ -4529,6 +4556,288 @@ function renderHistoryTab(root) {
       }
     );
   };
+}
+
+// ============================================================================
+// Tab 6: TMDB Persistent Cache Manager
+// ============================================================================
+function fmtTtlRemaining(secs, expired) {
+  if (expired || !secs || secs <= 0) return '已过期';
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}天${h}时`;
+  if (h > 0) return `${h}时${m}分`;
+  return `${Math.max(1, m)}分`;
+}
+
+function tmdbCacheKindBadge(it) {
+  if (it.expired) return '<span class="mw-tag">已过期</span>';
+  if (it.kind === 'resolve') return '<span class="mw-tag ok">识别映射</span>';
+  if (it.kind === 'details') return '<span class="mw-tag primary">详情/季集</span>';
+  if (it.kind === 'miss') return '<span class="mw-tag warn">未命中负缓存</span>';
+  return '<span class="mw-tag">其他</span>';
+}
+
+function renderTmdbCacheTab(root) {
+  const data = state.tmdbCacheData || {
+    summary: { total: 0, active: 0, resolve_hits: 0, resolve_misses: 0, details: 0, expired: 0 },
+    items: [],
+  };
+  const sm = data.summary || {};
+  const items = data.items || [];
+  const validKeys = new Set(items.map((it) => it.cache_key));
+  for (const k of Array.from(state.tmdbCacheSelected)) {
+    if (!validKeys.has(k)) state.tmdbCacheSelected.delete(k);
+  }
+  const selCount = state.tmdbCacheSelected.size;
+  const allChecked = items.length > 0 && items.every((it) => state.tmdbCacheSelected.has(it.cache_key));
+
+  root.innerHTML = `
+    <div class="mw-header">
+      <div>
+        <h2>TMDB 本地持久化缓存</h2>
+        <p>所有片名→TMDB 识别结果（7天）、剧集详情与季集列表（24小时）及未命中负缓存（30分钟）均持久化在 <code>mediwash.db</code>；如 TMDB 刚补录新剧集或修改过绑定，可在此按条目精准清理使其立即重新拉取。</p>
+      </div>
+      <div class="mw-actions">
+        <button type="button" class="mw-btn" id="btn-tc-refresh">刷新</button>
+        <button type="button" class="mw-btn" id="btn-tc-prune-expired" ${Number(sm.expired || 0) === 0 ? 'disabled' : ''}>清理已过期 (${Number(sm.expired || 0)})</button>
+        <button type="button" class="mw-btn danger" id="btn-tc-clear-all" ${Number(sm.total || 0) === 0 ? 'disabled' : ''}>清空全部缓存</button>
+      </div>
+    </div>
+
+    <div class="mw-kpis">
+      <div class="mw-kpi">
+        <div class="mw-kpi-label">有效缓存</div>
+        <div class="mw-kpi-val">${Number(sm.active || 0)}</div>
+      </div>
+      <div class="mw-kpi">
+        <div class="mw-kpi-label">识别映射 (7天)</div>
+        <div class="mw-kpi-val" style="color:var(--mw-success);">${Number(sm.resolve_hits || 0)}</div>
+      </div>
+      <div class="mw-kpi">
+        <div class="mw-kpi-label">详情与季集 (24h)</div>
+        <div class="mw-kpi-val" style="color:var(--mw-primary);">${Number(sm.details || 0)}</div>
+      </div>
+      <div class="mw-kpi">
+        <div class="mw-kpi-label">未命中负缓存 (30m)</div>
+        <div class="mw-kpi-val" style="color:var(--mw-warning);">${Number(sm.resolve_misses || 0)}</div>
+      </div>
+      <div class="mw-kpi">
+        <div class="mw-kpi-label">已过期</div>
+        <div class="mw-kpi-val">${Number(sm.expired || 0)}</div>
+      </div>
+    </div>
+
+    <div class="mw-card">
+      <div class="mw-card-head">
+        <div class="mw-pills">
+          <button type="button" class="mw-pill ${state.tmdbCacheKind === 'all' ? 'active' : ''}" data-tckind="all">全部 (${Number(sm.total || 0)})</button>
+          <button type="button" class="mw-pill ${state.tmdbCacheKind === 'resolve' ? 'active' : ''}" data-tckind="resolve">识别映射 (${Number(sm.resolve_hits || 0)})</button>
+          <button type="button" class="mw-pill ${state.tmdbCacheKind === 'details' ? 'active' : ''}" data-tckind="details">详情与季集 (${Number(sm.details || 0)})</button>
+          <button type="button" class="mw-pill ${state.tmdbCacheKind === 'miss' ? 'active' : ''}" data-tckind="miss">未命中负缓存 (${Number(sm.resolve_misses || 0)})</button>
+          <button type="button" class="mw-pill ${state.tmdbCacheKind === 'expired' ? 'active' : ''}" data-tckind="expired">已过期 (${Number(sm.expired || 0)})</button>
+        </div>
+        <div class="mw-actions">
+          <input type="text" class="mw-input" id="inp-tc-kw" style="width:210px;" placeholder="搜索片名 / TMDB ID / 缓存键..." value="${esc(state.tmdbCacheKeyword)}" />
+          <button type="button" class="mw-btn sm primary" id="btn-tc-search">搜索</button>
+          <button type="button" class="mw-btn sm danger" id="btn-tc-del-selected" ${selCount === 0 ? 'disabled' : ''}>删除勾选 (${selCount})</button>
+        </div>
+      </div>
+
+      ${
+        items.length === 0
+          ? `<div class="mw-empty">当前筛选条件下暂无 TMDB 缓存条目。</div>`
+          : `<div class="mw-table-wrap">
+              <table class="mw-table">
+                <thead>
+                  <tr>
+                    <th style="width:28px;"><input type="checkbox" id="chk-tc-all" ${allChecked ? 'checked' : ''} /></th>
+                    <th style="width:105px;">类型</th>
+                    <th style="width:70px;">媒体</th>
+                    <th>片名 / 查询词</th>
+                    <th style="width:108px;">TMDB ID</th>
+                    <th>缓存内容（季集 / 年份 / 映射）</th>
+                    <th style="width:128px;">剩余 TTL / 到期</th>
+                    <th style="width:74px;">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${items
+                    .map((it) => {
+                      const checked = state.tmdbCacheSelected.has(it.cache_key) ? 'checked' : '';
+                      const mtLabel =
+                        it.media_type === 'tv'
+                          ? '<span class="mw-tag primary">剧集</span>'
+                          : it.media_type === 'movie'
+                            ? '<span class="mw-tag ok">电影</span>'
+                            : `<span class="mw-tag">${esc(it.media_type || '-')}</span>`;
+                      const ttlTxt = fmtTtlRemaining(it.ttl_remaining_secs, it.expired);
+                      return `
+                        <tr>
+                          <td><input type="checkbox" class="js-chk-tc" data-key="${esc(it.cache_key)}" ${checked} /></td>
+                          <td>${tmdbCacheKindBadge(it)}</td>
+                          <td>${mtLabel}</td>
+                          <td>
+                            <div style="font-weight:600;">${esc(it.title || it.query_text || '-')}${it.year ? ` <span class="mw-muted">(${esc(it.year)})</span>` : ''}</div>
+                            <div class="mw-muted mw-mono" style="font-size:11px;word-break:break-all;margin-top:2px;">${esc(it.cache_key)}</div>
+                          </td>
+                          <td>
+                            ${
+                              it.tmdb_id
+                                ? `<span class="mw-tag mw-mono js-tc-copy" data-copy="${esc(it.tmdb_id)}" data-tip="点击复制 TMDB ID" style="cursor:pointer;">${esc(it.tmdb_id)}</span>`
+                                : '<span class="mw-muted">-</span>'
+                            }
+                          </td>
+                          <td style="font-size:12.5px;line-height:1.5;">${esc(it.detail_summary || '-')}</td>
+                          <td>
+                            <div style="font-weight:600;font-size:12px;${it.expired ? 'color:var(--mw-muted);' : ''}">${esc(ttlTxt)}</div>
+                            <div class="mw-muted mw-mono" style="font-size:11px;">${esc(it.expires_at_text || '-')}</div>
+                          </td>
+                          <td>
+                            <button type="button" class="mw-btn sm danger js-tc-del-one" data-key="${esc(it.cache_key)}">删除</button>
+                          </td>
+                        </tr>`;
+                    })
+                    .join('')}
+                </tbody>
+              </table>
+            </div>`
+      }
+    </div>
+  `;
+
+  const syncTmdbCacheSelectionUI = () => {
+    const cnt = state.tmdbCacheSelected.size;
+    const delBtn = document.getElementById('btn-tc-del-selected');
+    if (delBtn) {
+      delBtn.textContent = `删除勾选 (${cnt})`;
+      delBtn.disabled = cnt === 0;
+    }
+    const allEl = document.getElementById('chk-tc-all');
+    if (allEl) {
+      allEl.checked =
+        items.length > 0 && items.every((it) => state.tmdbCacheSelected.has(it.cache_key));
+    }
+  };
+
+  document.getElementById('btn-tc-refresh').onclick = async () => {
+    await loadCurrentTabData();
+    render();
+  };
+
+  root.querySelectorAll('.mw-pill[data-tckind]').forEach((btn) => {
+    btn.onclick = async () => {
+      state.tmdbCacheKind = btn.dataset.tckind || 'all';
+      state.tmdbCacheSelected.clear();
+      await loadCurrentTabData();
+      render();
+    };
+  });
+
+  const doSearch = async () => {
+    state.tmdbCacheKeyword = (document.getElementById('inp-tc-kw')?.value || '').trim();
+    state.tmdbCacheSelected.clear();
+    await loadCurrentTabData();
+    render();
+  };
+  document.getElementById('btn-tc-search').onclick = doSearch;
+  document.getElementById('inp-tc-kw').onkeydown = (e) => {
+    if (e.key === 'Enter') doSearch();
+  };
+
+  const chkAll = document.getElementById('chk-tc-all');
+  if (chkAll) {
+    chkAll.onchange = () => {
+      if (chkAll.checked) items.forEach((it) => state.tmdbCacheSelected.add(it.cache_key));
+      else state.tmdbCacheSelected.clear();
+      root.querySelectorAll('.js-chk-tc').forEach((c) => {
+        c.checked = chkAll.checked;
+      });
+      syncTmdbCacheSelectionUI();
+    };
+  }
+
+  root.querySelectorAll('.js-chk-tc').forEach((chk) => {
+    chk.onchange = () => {
+      const k = chk.dataset.key || '';
+      if (!k) return;
+      if (chk.checked) state.tmdbCacheSelected.add(k);
+      else state.tmdbCacheSelected.delete(k);
+      syncTmdbCacheSelectionUI();
+    };
+  });
+
+  root.querySelectorAll('.js-tc-copy').forEach((el) => {
+    el.onclick = async () => {
+      const v = el.dataset.copy || '';
+      if (!v) return;
+      await copyToClipboard(v);
+      showToast(`已复制 TMDB ID：${v}`, 'success');
+    };
+  });
+
+  const doDeleteCache = async (mode, keys = []) => {
+    const res = await callAction('ui_tmdb_cache_delete', {
+      mode,
+      keys,
+      kind: state.tmdbCacheKind,
+      keyword: state.tmdbCacheKeyword,
+      limit: 300,
+    });
+    state.tmdbCacheSelected.clear();
+    state.tmdbCacheData = res;
+    state.boot.counts = res.counts || state.boot.counts;
+    syncSidebarBadges();
+    showToast(`已清理 ${Number(res.deleted || 0)} 条 TMDB 缓存`, 'success');
+    render();
+  };
+
+  root.querySelectorAll('.js-tc-del-one').forEach((btn) => {
+    btn.onclick = () => {
+      const k = btn.dataset.key || '';
+      if (k) doDeleteCache('keys', [k]);
+    };
+  });
+
+  const delSelBtn = document.getElementById('btn-tc-del-selected');
+  if (delSelBtn) {
+    delSelBtn.onclick = () => {
+      const keys = Array.from(state.tmdbCacheSelected);
+      if (!keys.length) return showToast('请先勾选要删除的缓存条目', 'error');
+      doDeleteCache('keys', keys);
+    };
+  }
+
+  const pruneBtn = document.getElementById('btn-tc-prune-expired');
+  if (pruneBtn) {
+    pruneBtn.onclick = () => doDeleteCache('expired', []);
+  }
+
+  const clrAllBtn = document.getElementById('btn-tc-clear-all');
+  if (clrAllBtn) {
+    clrAllBtn.onclick = () => {
+      openModal(
+        '确认清空全部 TMDB 缓存',
+        `
+          <p style="margin:0 0 14px;font-size:13px;line-height:1.6;">
+            确定要清空全部 <strong>${Number(sm.total || 0)}</strong> 条本地 TMDB 缓存吗？清空后下次扫描会自动重新向宿主请求 TMDB 识别与季集详情，不会影响任何媒体文件或人工绑定规则。
+          </p>
+          <div class="mw-actions" style="justify-content:flex-end;">
+            <button type="button" class="mw-btn" id="tc-clr-cancel">取消</button>
+            <button type="button" class="mw-btn danger" id="tc-clr-confirm">确认清空全部</button>
+          </div>
+        `,
+        (body) => {
+          body.querySelector('#tc-clr-cancel').onclick = closeModal;
+          body.querySelector('#tc-clr-confirm').onclick = async () => {
+            closeModal();
+            await doDeleteCache('all', []);
+          };
+        }
+      );
+    };
+  }
 }
 
 // ============================================================================

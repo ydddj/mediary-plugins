@@ -1264,6 +1264,35 @@ impl HostClient {
         Ok(last_resp)
     }
 
+    /// Calls `POST /api/plugin/open115/files/move` (`open115:write`)
+    /// to move 115 files directly into an existing library folder CID (e.g. TV `Season XX`
+    /// when TMDB has not yet listed the latest episode number).
+    pub fn open115_move_files(&self, file_ids: &[String], to_cid: &str) -> Result<usize> {
+        db::validate_cid(to_cid).context("115 直移缺少有效的目标目录 to_cid")?;
+        ensure!(to_cid != "0", "禁止将媒体文件直接移至 115 根目录 0");
+        let clean_ids: Vec<String> = file_ids
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != "0" && s.bytes().all(|b| b.is_ascii_digit()))
+            .collect();
+        ensure!(!clean_ids.is_empty(), "没有有效的 115 文件 ID 可直移");
+
+        for chunk in clean_ids.chunks(100) {
+            let resp: Value = self.call_json(
+                "POST",
+                "/plugin/open115/files/move",
+                &[],
+                Some(json!({
+                    "file_ids": chunk,
+                    "to_cid": to_cid.trim(),
+                })),
+                30,
+            )?;
+            ensure_host_ok(&resp, "115 直移入库")?;
+        }
+        Ok(clean_ids.len())
+    }
+
     /// Calls `POST /api/plugin/open115/files/delete` (`open115:write`, Mediary 3.4.6+)
     /// to move rejected/duplicate 115 files directly into 115 Official Recycle Bin.
     pub fn open115_delete_files(&self, parent_cid: &str, file_ids: &[String]) -> Result<usize> {
