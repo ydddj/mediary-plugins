@@ -910,7 +910,7 @@ pub fn test_bot_template(bot: &NextBotConfig, proxy_url: &str) -> Result<String>
         size_str: "14.44 GB".into(),
         total_size_str: "101.08 GB".into(),
         trigger_reason_folder: "测试触发 → 待洗版".into(),
-        source: "MediFind NextBOT 测试通道".into(),
+        source: "MediFind FindBOT 测试通道".into(),
         slug: "https://115.com/s/swtest123456?password=abcd".into(),
         poster_urls: vec![
             "https://image.tmdb.org/t/p/w1280/tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg".into(),
@@ -918,7 +918,7 @@ pub fn test_bot_template(bot: &NextBotConfig, proxy_url: &str) -> Result<String>
         was_encrypted: false,
     };
     send_bot_notification(&agent, bot, &test_data)?;
-    Ok("NextBOT 测试消息发送成功，请前往 Telegram 查收".into())
+    Ok("FindBOT 测试消息发送成功，请前往 Telegram 查收".into())
 }
 
 pub fn has_active_transfer_bots(cfg: &AppConfig) -> bool {
@@ -1212,12 +1212,12 @@ pub fn poll_bot_transfers(
         let (st, val) = match tg_get_json(&agent, &url, &params) {
             Ok(v) => v,
             Err(e) => {
-                errors.push(format!("NextBOT 拉取消息失败: {}", e));
+                errors.push(format!("FindBOT 拉取消息失败: {}", e));
                 continue;
             }
         };
         if st != 200 || val.get("ok").and_then(|x| x.as_bool()) != Some(true) {
-            errors.push(format!("NextBOT getUpdates: {}", explain_tg_bot_error(st, &val)));
+            errors.push(format!("FindBOT getUpdates: {}", explain_tg_bot_error(st, &val)));
             continue;
         }
         let Some(updates) = val.get("result").and_then(|r| r.as_array()) else {
@@ -1273,7 +1273,7 @@ pub fn poll_bot_transfers(
                     &agent,
                     &token,
                     &reply_chat_id,
-                    "🤖 <b>MediFind NextBOT 已就绪</b>\n\n直接发送或转发包含 <code>115</code> 分享链接、<code>ed2k://</code> 或 <code>magnet:?</code> 的消息，我将自动识别片名与 TMDB 信息并转存到 115。",
+                    "🤖 <b>MediFind FindBOT 已就绪</b>\n\n直接发送或转发包含 <code>115</code> 分享链接、<code>ed2k://</code> 或 <code>magnet:?</code> 的消息，我将自动识别片名与 TMDB 信息并转存到 115。",
                 );
                 continue;
             }
@@ -1321,7 +1321,7 @@ pub fn poll_bot_transfers(
                     tmdb_id: link.tmdb_id.clone(),
                     media_type: link.media_type.clone(),
                     source_type: link.source_kind.to_string(),
-                    channel_name: "NextBOT 转存".into(),
+                    channel_name: "FindBOT 转存".into(),
                     allow_unlock: settings.auto_unlock_hdhive,
                     trigger_reason: "BOT转存".into(),
                     ..Default::default()
@@ -1362,7 +1362,7 @@ pub fn poll_bot_transfers(
                     let _ = send_message_html(&agent, &token, &reply_chat_id, &reply);
                 }
                 Err(e) => {
-                    errors.push(format!("NextBOT 转存失败 [{}]: {}", link.title, e));
+                    errors.push(format!("FindBOT 转存失败 [{}]: {}", link.title, e));
                     let reply = format!("❌ <b>转存失败:</b> {}", html_escape(&e.to_string()));
                     let _ = send_message_html(&agent, &token, &reply_chat_id, &reply);
                 }

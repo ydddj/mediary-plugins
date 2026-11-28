@@ -230,6 +230,9 @@ pub fn is_valid_115_target_cid(cid: &str) -> bool {
     !t.is_empty() && t != "0" && t.chars().all(|c| c.is_ascii_digit())
 }
 
+pub const MEDIARY_DEFAULT_NOTIFY_IMAGE: &str =
+    "https://raw.githubusercontent.com/KyleYu2024/Mediary-Plugins/main/assets/notify/mediary-28d63047ff76.png";
+
 pub fn tmdb_poster_https(poster_path: &str) -> Option<String> {
     tmdb_image_https(poster_path, "w500")
 }
@@ -1011,7 +1014,7 @@ impl HostClient {
     }
 
     pub fn notify(&self, title: &str, content: &str) -> Result<()> {
-        self.notify_with_image(title, content, None)
+        self.notify_with_image(title, content, Some(MEDIARY_DEFAULT_NOTIFY_IMAGE))
     }
 
     pub fn notify_with_image(

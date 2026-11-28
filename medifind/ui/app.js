@@ -2232,14 +2232,14 @@ function renderChannelsTab(root) {
                 <div class="nf-tg-icon-box">
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                 </div>
-                <span>6. NextBOT</span>
+                <span>6. FindBOT</span>
                 <span class="mf-pill ${activeCnt > 0 ? 'success' : 'neutral'}">${activeCnt > 0 ? `${activeCnt}/${bots.length} 运行中` : '多机器人自定义推送 · 雷达 · BOT转存'}</span>
               </div>
-              <div class="mf-card-sub" style="margin-top:4px">支持配置多个 Telegram Bot：自定义拖拽通知模板、TMDB 横版海报、NextFind 同款链接加密、TG 新片推送雷达，以及私聊/群组发送 115/ED2K/磁力自动 <strong>BOT 转存</strong>（每 2 分钟自动轮询）</div>
+              <div class="mf-card-sub" style="margin-top:4px">支持配置多个 Telegram Bot：自定义拖拽通知模板、TMDB 横版海报、链接加密防二次转发、TG 新片推送雷达，以及私聊/群组发送 115/ED2K/磁力自动 <strong>BOT 转存</strong>（每 2 分钟自动轮询）</div>
             </div>
             <div class="mf-actions">
               ${hasTransferBot ? `<button type="button" class="mf-btn sm" id="btn-nb-poll">立即拉取 BOT 转存</button>` : ''}
-              <button type="button" class="mf-btn sm primary" id="btn-nb-save">保存 NextBOT 配置</button>
+              <button type="button" class="mf-btn sm primary" id="btn-nb-save">保存 FindBOT 配置</button>
             </div>
           </div>
 
@@ -2669,7 +2669,7 @@ function renderChannelsTab(root) {
   root.querySelectorAll('[data-toggle-rss]').forEach((b) => { b.onclick = () => callAction('ui_toggle_rss', { id: b.dataset.toggleRss }); });
   root.querySelectorAll('[data-del-rss]').forEach((b) => { b.onclick = () => callAction('ui_delete_rss', { id: b.dataset.delRss }); });
 
-  // ==================== NextBOT Events ====================
+  // ==================== FindBOT Events ====================
   const bots = d.notifications.telegram_bots || [];
   const verifyNextBotAt = async (idx) => {
     syncDraftFromChannelsDOM(root);
@@ -2833,12 +2833,12 @@ function renderChannelsTab(root) {
     };
   }
   const nbSaveBtn = root.querySelector('#btn-nb-save');
-  if (nbSaveBtn) nbSaveBtn.onclick = () => collectAndSave('已保存 NextBOT 配置');
+  if (nbSaveBtn) nbSaveBtn.onclick = () => collectAndSave('已保存 FindBOT 配置');
   const nbPollBtn = root.querySelector('#btn-nb-poll');
   if (nbPollBtn) {
     nbPollBtn.onclick = async () => {
       await collectAndSave('', true);
-      await callAction('ui_poll_nextbot_transfers', {});
+      await callAction('ui_poll_findbot_transfers', {});
     };
   }
 }
@@ -2866,7 +2866,7 @@ function openNextBotTemplateModal(bot, root, onSaveChannels) {
     modalRoot.innerHTML = `
       <div class="mf-modal" style="width:min(560px, 95vw)">
         <div class="mf-modal-head">
-          <strong>⚙️ NextBOT 模板配置</strong>
+          <strong>⚙️ FindBOT 模板配置</strong>
           <div class="mf-actions">
             <button type="button" class="mf-btn sm primary" id="nb-tpl-test">发送测试消息</button>
             <button type="button" class="mf-btn sm" id="nb-tpl-close">关闭</button>
@@ -3027,7 +3027,7 @@ function openNextBotTemplateModal(bot, root, onSaveChannels) {
           chat_id: bot.chat_id,
           bot_conf: serializeNextBotJS(bot),
         });
-        showToast(res?.notice || 'NextBOT 测试消息发送成功', 'success');
+        showToast(res?.notice || 'FindBOT 测试消息发送成功', 'success');
       } catch (err) {
         showToast(err.message || String(err), 'error');
       } finally {
@@ -3040,7 +3040,7 @@ function openNextBotTemplateModal(bot, root, onSaveChannels) {
       syncSigInput();
       modalRoot.classList.add('hidden');
       renderChannelsTab(root);
-      if (onSaveChannels) await onSaveChannels('已保存 NextBOT 模板配置');
+      if (onSaveChannels) await onSaveChannels('已保存 FindBOT 模板配置');
     };
   };
 

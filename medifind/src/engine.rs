@@ -2206,20 +2206,31 @@ pub fn run_daily_checkin(
     force_hdhive: bool,
 ) -> Result<String> {
     let proxy_url = effective_proxy(mc, cfg);
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    if cfg.hdhive.last_checkin_date.trim() != today {
+        cfg.hdhive.checked_in_today = false;
+    }
+
     let mut parts = Vec::new();
+    let mut channels_run = Vec::new();
+    let mut executed = 0usize;
+    let mut err_count = 0usize;
 
     if cfg.hdhive.enabled
         && (force_hdhive || cfg.hdhive.auto_checkin)
         && !cfg.hdhive.api_key.trim().is_empty()
     {
+        executed += 1;
+        channels_run.push("影巢 / HDHive");
         match providers::hdhive_checkin(cfg, &proxy_url) {
             Ok(msg) => {
                 let detail = format!("{} (当前 {} 积分)", msg, cfg.hdhive.points);
-                parts.push(format!("HDHive: {}", detail));
+                parts.push(format!("影巢: {}", detail));
                 let _ = db.append_record("HDHive 每日签到", "hdhive", "", "每日签到", "success", &detail);
             }
             Err(e) => {
-                parts.push(format!("HDHive签到失败: {}", e));
+                err_count += 1;
+                parts.push(format!("影巢签到失败: {}", e));
                 let _ = db.append_record(
                     "HDHive 每日签到",
                     "hdhive",
@@ -2233,9 +2244,14 @@ pub fn run_daily_checkin(
     }
 
     if cfg.ayclub.enabled && !cfg.ayclub.nf_token.trim().is_empty() {
+        executed += 1;
+        channels_run.push("AYClub");
         match providers::refresh_ayclub_quota(cfg, &proxy_url) {
             Ok(msg) => parts.push(format!("AYClub: {}", msg)),
-            Err(e) => parts.push(format!("AYClub配额刷新失败: {}", e)),
+            Err(e) => {
+                err_count += 1;
+                parts.push(format!("AYClub配额刷新失败: {}", e));
+            }
         }
     }
 
@@ -2248,16 +2264,32 @@ pub fn run_daily_checkin(
     }
     let summary = parts.join("；");
     cfg.last_result = summary.clone();
-    if settings.notify && cfg.notifications.enabled && cfg.notifications.on_checkin {
+    if executed > 0 && settings.notify && cfg.notifications.enabled && cfg.notifications.on_checkin
+    {
         if let Some(host) = mc {
-            if cfg.hdhive.checked_in_today || cfg.ayclub.enabled {
-                let mut lines: Vec<String> = parts.iter().map(|p| format!("🎯 {}", p)).collect();
-                lines.push(format!(
-                    "🗓️ 时间: {}",
-                    chrono::Local::now().format("%Y-%m-%d %H:%M")
-                ));
-                let _ = host.notify("📅 每日签到 · 额度报告", &lines.join("\n"));
+            let status_badge = if err_count == 0 {
+                "✅签到完成"
+            } else if err_count < executed {
+                "⚠️部分完成"
+            } else {
+                "❌签到失败"
+            };
+            let title = format!("📅 每日签到 · 额度报告 {}", status_badge);
+            let mut lines = Vec::new();
+            lines.push(format!("渠道: {}", channels_run.join(" / ")));
+            for p in &parts {
+                lines.push(format!("结果: {}", p));
             }
+            lines.push(format!(
+                "时间: {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M")
+            ));
+            lines.push("来源: MediFind 每日签到".into());
+            let _ = host.notify_with_image(
+                &title,
+                &lines.join("\n"),
+                Some(crate::host::MEDIARY_DEFAULT_NOTIFY_IMAGE),
+            );
         }
     }
     Ok(summary)
@@ -2272,7 +2304,7 @@ pub fn run_tick(
     let mut sum = TickSummary::default();
     let proxy_url = effective_proxy(mc, cfg);
 
-    // 1. Telegram sync + NextFind level 64 (入新) / 99 (全量) + NextBOT 推送雷达
+    // 1. Telegram sync + NextFind level 64 (入新) / 99 (全量) + FindBOT 推送雷达
     let (tg_added, tg_by_ch, tg_errs) = providers::sync_all_tg_channels(db, cfg, false, &proxy_url);
     sum.tg_added = tg_added;
     sum.errors.extend(tg_errs);
@@ -2289,7 +2321,7 @@ pub fn run_tick(
         }
     }
 
-    // 1.5 NextBOT BOT 转存队列拉取
+    // 1.5 FindBOT BOT 转存队列拉取
     if let Some(host) = mc {
         if crate::nextbot::has_active_transfer_bots(cfg) {
             let (nb_cnt, nb_errs) =
@@ -2349,7 +2381,7 @@ pub fn run_tick(
     );
     if sum.nextbot_transfers > 0 || sum.nextbot_radar > 0 {
         sum.message.push_str(&format!(
-            "，NextBOT(转存{}/雷达{})",
+            "，FindBOT(转存{}/雷达{})",
             sum.nextbot_transfers, sum.nextbot_radar
         ));
     }
@@ -3873,7 +3905,9 @@ fn notify_transfer_templated(
             let content =
                 crate::host::render_mediary_template(&tpls.download_started.content, &vars);
             let img = if cfg.notifications.include_poster {
-                poster_url.as_deref()
+                poster_url
+                    .as_deref()
+                    .or(Some(crate::host::MEDIARY_DEFAULT_NOTIFY_IMAGE))
             } else {
                 None
             };

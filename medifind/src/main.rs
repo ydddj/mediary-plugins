@@ -89,10 +89,10 @@ fn run() -> Result<()> {
             json!({ "notice": msg })
         }
 
-        "nextbot_poll" => {
+        "findbot_poll" | "nextbot_poll" => {
             if !nextbot::has_active_transfer_bots(&cfg) {
                 return Ok(println!(
-                    r#"{{"notice":"未启用任何开启「BOT 转存」的 NextBOT，已快速跳过"}}"#
+                    r#"{{"notice":"未启用任何开启「BOT 转存」的 FindBOT，已快速跳过"}}"#
                 ));
             }
             let host = mc
@@ -100,7 +100,7 @@ fn run() -> Result<()> {
                 .ok_or_else(|| anyhow!("缺少 Mediary 插件 API 运行环境"))?;
             let Some(_guard) = db.try_acquire_tick_lock() else {
                 return Ok(println!(
-                    r#"{{"notice":"已有后台巡检运行中，本轮 NextBOT 轮询自动跳过"}}"#
+                    r#"{{"notice":"已有后台巡检运行中，本轮 FindBOT 轮询自动跳过"}}"#
                 ));
             };
             let proxy_url = engine::effective_proxy(Some(host), &cfg);
@@ -108,7 +108,7 @@ fn run() -> Result<()> {
                 nextbot::poll_bot_transfers(host, &db, &settings, &mut cfg, &proxy_url);
             db.save_config(&cfg)?;
             let _ = db.write_dashboard(&cfg);
-            let mut msg = format!("NextBOT 接收轮询完成：处理转存 {} 条", cnt);
+            let mut msg = format!("FindBOT 接收轮询完成：处理转存 {} 条", cnt);
             if !errs.is_empty() {
                 msg.push_str(&format!("（异常 {} 项：{}）", errs.len(), errs.join("；")));
             }
@@ -975,6 +975,9 @@ fn run() -> Result<()> {
                         &resolved.poster_path,
                     );
                 }
+                if test_img.is_none() {
+                    test_img = Some(host::MEDIARY_DEFAULT_NOTIFY_IMAGE.to_string());
+                }
             }
             host.notify_with_image(&title, &content, test_img.as_deref())?;
             build_bootstrap(
@@ -1271,13 +1274,13 @@ fn run() -> Result<()> {
             })
         }
 
-        "ui_poll_nextbot_transfers" => {
+        "ui_poll_findbot_transfers" | "ui_poll_nextbot_transfers" => {
             let host = mc
                 .as_ref()
                 .ok_or_else(|| anyhow!("缺少 Mediary 插件 API 运行环境"))?;
             ensure!(
                 nextbot::has_active_transfer_bots(&cfg),
-                "当前没有开启「BOT 转存」且处于运行中的 NextBOT，请先在模板配置中勾选「BOT 转存」并保存"
+                "当前没有开启「BOT 转存」且处于运行中的 FindBOT，请先在模板配置中勾选「BOT 转存」并保存"
             );
             let proxy_url = engine::effective_proxy(Some(host), &cfg);
             let (cnt, errs) =
@@ -1285,9 +1288,9 @@ fn run() -> Result<()> {
             db.save_config(&cfg)?;
             let _ = db.write_dashboard(&cfg);
             let mut msg = if cnt > 0 {
-                format!("NextBOT 接收完成：已自动转存 {} 条资源", cnt)
+                format!("FindBOT 接收完成：已自动转存 {} 条资源", cnt)
             } else {
-                "NextBOT 收件箱已拉取，暂无待处理的新资源链接".to_string()
+                "FindBOT 收件箱已拉取，暂无待处理的新资源链接".to_string()
             };
             if !errs.is_empty() {
                 msg.push_str(&format!("（提示：{}）", errs.join("；")));

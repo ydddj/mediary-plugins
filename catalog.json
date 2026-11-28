@@ -4,8 +4,8 @@
     {
       "id": "medifind",
       "name": "MediFind 网盘聚合引擎",
-      "version": "3.2.6",
-      "description": "聚合TG、影巢、AYClub与RSS多源搜片，支持订阅追更、115选集转存与NextBOT联动。",
+      "version": "3.2.7",
+      "description": "聚合TG、影巢、AYClub与RSS多源搜片，支持订阅追更、115选集转存与FindBOT联动。",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/medifind",
       "source": "https://github.com/ydddj/mediary-plugins",
@@ -26,9 +26,9 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/medifind-3.2.6-linux-amd64.tar.gz",
-          "sha256": "df68ad10353e6f9475e07f37d0b5337b3c0ddac9146ccc32943f4dcd9d722e72",
-          "size": 6148843
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/medifind-3.2.7-linux-amd64.tar.gz",
+          "sha256": "b91f0f7e20cbd0dab111be01728e1d2de4f6acdd1fe8479dc81132228e188243",
+          "size": 6153369
         }
       }
     },
