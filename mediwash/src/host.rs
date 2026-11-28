@@ -1877,6 +1877,15 @@ pub fn render_mediary_template(
     out.trim().to_string()
 }
 
+/// Recognizes Mediary v3.4.13+'s safety rejection when selected delete source(s) and retained
+/// winner source point to the exact same underlying file (`所选版本与保留版本指向同一文件，拒绝删除`).
+pub fn is_same_file_delete_refused(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}");
+    msg.contains("指向同一文件")
+        || (msg.contains("同一文件") && msg.contains("拒绝删除"))
+        || msg.to_ascii_lowercase().contains("same underlying file")
+}
+
 /// Adapts a rendered `transfer_completed` host template title for MediWash sub-actions
 /// (e.g. `🗑️去重回收`, `🗑️回收清理`, `✨洗版删旧完成`) while preserving custom host prefixes/formats.
 pub fn format_transfer_template_title(rendered_title: &str, action_badge: &str) -> String {
@@ -1923,6 +1932,12 @@ mod tests {
             format_transfer_template_title("[自定义前缀] 宝珠", "✨洗版删旧完成"),
             "[自定义前缀] 宝珠 · ✨洗版删旧完成"
         );
+        assert!(is_same_file_delete_refused(&anyhow::anyhow!(
+            "删除媒体库重复低分源失败: 所选版本与保留版本指向同一文件，拒绝删除"
+        )));
+        assert!(!is_same_file_delete_refused(&anyhow::anyhow!(
+            "删除媒体库重复低分源失败: 网络超时"
+        )));
 
         assert_eq!(
             tmdb_card_image_https("/bd123.jpg", "/ps456.jpg").as_deref(),

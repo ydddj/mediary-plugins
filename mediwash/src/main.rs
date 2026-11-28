@@ -151,7 +151,8 @@ fn dispatch(
                 .iter()
                 .filter(|p| p.enabled || (is_manual_ui && !p.source_cid.trim().is_empty()))
             {
-                if is_manual_ui && tick_clock.elapsed().as_secs() >= 26 {
+                let elapsed = tick_clock.elapsed().as_secs();
+                if (is_manual_ui && elapsed >= 26) || (!is_manual_ui && elapsed >= 200) {
                     any_has_more = true;
                     break;
                 }
@@ -179,7 +180,9 @@ fn dispatch(
                 }
             }
 
-            let ledger_res = if !is_manual_ui || (!any_has_more && tick_clock.elapsed().as_secs() < 26) {
+            let ledger_res = if (!is_manual_ui && tick_clock.elapsed().as_secs() < 225)
+                || (is_manual_ui && !any_has_more && tick_clock.elapsed().as_secs() < 26)
+            {
                 staging::reconcile_ledger(conn, &host, &cfg, settings)?
             } else {
                 json!({})
@@ -192,7 +195,9 @@ fn dispatch(
                 ));
             }
 
-            let pt_res = if !is_manual_ui || (!any_has_more && tick_clock.elapsed().as_secs() < 12) {
+            let pt_res = if (!is_manual_ui && tick_clock.elapsed().as_secs() < 235)
+                || (is_manual_ui && !any_has_more && tick_clock.elapsed().as_secs() < 12)
+            {
                 pt::scheduled_pt_sweep(conn, &host, &cfg, settings)?
             } else {
                 json!({ "checked": 0 })

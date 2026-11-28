@@ -843,12 +843,23 @@ pub fn process_approved_cleanups(
                 .map(|p| format!("保留胜出源：{p}"))
                 .unwrap_or_default();
 
-            host.delete_library_sources(&item_id, &to_delete)?;
+            if let Err(err) = host.delete_library_sources(&item_id, &to_delete) {
+                if crate::host::is_same_file_delete_refused(&err) {
+                    return Ok((0, String::new(), win_path));
+                }
+                return Err(err);
+            }
             let _ = host.scan_library_item(&item_id);
             Ok((to_delete.len(), del_paths.join(" ; "), win_path))
         })();
 
         match one_res {
+            Ok((0, _, _)) => {
+                db.execute(
+                    "UPDATE lib_decisions SET state = 'dismissed', reason = ?, updated_at = ? WHERE id = ?",
+                    params!["宿主复核所选版本与保留版本指向同一底层文件，已安全跳过无需删旧", now_ts(), did],
+                )?;
+            }
             Ok((cnt, del_paths_s, win_path)) => {
                 cleaned_groups += 1;
                 deleted_sources += cnt;

@@ -42,15 +42,17 @@
 
 ---
 
-## 四、Mediary v3.4.8+ 命名模板 `{{webSource}}` 联动说明
+## 四、Mediary v3.4.13+ 命名模板 `{{resourceType}}` 与 `{{webSource}}` 联动说明
 
-Mediary `v3.4.8+` 已在 **PT 下载整理** 与 **内置 115 原生整理（`POST /api/plugin/open115/files/organize`）** 双链路同步注入 `{{webSource}}` 与 `{{web_source}}` 变量（识别不到时为空字符串 `""`，普通 `WEB-DL` 不再误标为 `"WEB"`）：
+Mediary `v3.4.13+` 已在 **PT 下载整理** 与 **内置 115 原生整理（`POST /api/plugin/open115/files/organize`）** 双链路同步注入 **`{{resourceType}}` / `{{resource_type}}`**（片源类型）与 **`{{webSource}}` / `{{web_source}}`**（流媒体平台）变量（未识别到时均为空字符串 `""`，普通 `WEB-DL` 不会误标为 `"WEB"`）：
 
-- **推荐模板判空写法**：
+- **推荐模板组合判空写法**：
   ```jinja2
-  {{title}}.{{year}}.{{season_episode}}.{{videoFormat}}{% if webSource %}.{{webSource}}{% endif %}.{{videoCodec}}{{fileExt}}
+  {{title}}.{{year}}.{{season_episode}}.{{videoFormat}}{% if webSource %}.{{webSource}}{% endif %}{% if resourceType %}.{{resourceType}}{% endif %}.{{videoCodec}}{{fileExt}}
   ```
-- **支持的 20 个标准流媒体缩写**（MediWash 候选/存量属性与试算器已完全对齐）：
+- **支持的 14 个标准片源类型（`{{resourceType}}`）**：
+  - `BDRemux`、`REMUX`、`UHD BluRay`、`BluRay`、`WEB-DL`、`WEBRip`、`BDRip`、`BDISO`、`BDMV`、`MiniBD`、`HDTV`、`HDRip`、`DVDRip`、`DVD`
+- **支持的 20 个标准流媒体缩写（`{{webSource}}`）**（MediWash 候选/存量属性与试算器已完全对齐）：
   - **国际（10）**：`NF` (Netflix)、`AMZN` (Amazon)、`DSNP` (Disney+)、`ATVP` (Apple TV+)、`HMAX` (HBO Max / Max)、`HULU`、`PMTP` (Paramount+)、`PCOK` (Peacock)、`ITUN` (iTunes)、`CR` (Crunchyroll)
   - **国内/亚洲（10）**：`BILI` (Bilibili / BGlobal)、`IQ` (iQIYI 爱奇艺)、`YK` (Youku 优酷)、`TX` (Tencent / WeTV 腾讯视频)、`MGTV` (MangoTV 芒果TV)、`BAHA` (Bahamut 巴哈姆特)、`KKTV`、`MYTV` (myTV SUPER)、`VIU` (Viu / ViuTV)、`FRIDAY` (friDay影音)
-- **模板继承提示**：在 Mediary「内置 STRM 工具 → 转存整理」中保留 1 条默认转存任务（保持「停用」不抢跑）并在「系统设置 → 整理重命名」保存含 `[tmdbid-{{tmdbid}}]` 与 `{% if webSource %}` 的模板，MediWash 每次调用原生归档时会自动透传该默认任务名，一步生成带 `[tmdbid-...]` 与流媒体平台标识的规范目录和 `.strm`。
+- **模板继承提示**：在 Mediary「内置 STRM 工具 → 转存整理」中保留 1 条默认转存任务（保持「停用」不抢跑）并填入含 `[tmdbid-{{tmdbid}}]`、`{% if webSource %}` 与 `{% if resourceType %}` 的模板，MediWash 每次调用 115 原生归档时会自动透传该默认任务名，一步生成规范目录和 `.strm`。

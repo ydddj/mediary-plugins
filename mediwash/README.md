@@ -1,11 +1,12 @@
-# MediWash 归档入库与权重洗版引擎 (v3.2.2)
+# MediWash 归档入库与权重洗版引擎 (v3.2.12)
 
-面向 **Mediary 3.4.8+**（向下兼容 3.4.6+）的 Rust 115 监控目录自动归档入库与双引擎权重洗版插件（`rusqlite` WAL 瘦身存储 + 纯 `action_runtime` 零常驻进程）。
+面向 **Mediary 3.4.13+**（向下兼容 3.4.6+）的 Rust 115 监控目录自动归档入库与双引擎权重洗版插件（`rusqlite` WAL 瘦身存储 + 纯 `action_runtime` 零常驻进程）。
 
 在 `medifind`（找片转存进货） → **`mediwash`（监控目录归档入库 + 权重洗版覆盖）** → `medinext`（302 播放负载）三段式全栈媒体流水线中，承担中游核心职责：
 
 - **115 监控目录归档入库（内置权重洗版选项）**：监控 115 待整理目录（电影/剧集/动漫全部混放即可），胜出文件直接调用 Mediary 原生 `POST /api/plugin/open115/files/organize` 一步完成二级分类（`category.yaml`）、模板重命名、字幕跟随与 STRM 入库；自动保护「蓝光原盘」专区的 `.iso` 文件。
-- **全面适配 Mediary v3.4.8+ `{{webSource}}` 流媒体平台识别与重命名**：内置边界安全的 20 个国际与国内/亚洲流媒体平台词表（国际：`NF` / `AMZN` / `DSNP` / `ATVP` / `HMAX` / `HULU` / `PMTP` / `PCOK` / `ITUN` / `CR`；国内/亚洲：`BILI` / `IQ` / `YK` / `TX` / `MGTV` / `BAHA` / `KKTV` / `MYTV` / `VIU` / `FRIDAY`），严格隔离片名与技术规格、杜绝普通 `WEB-DL` 误标 `"WEB"`，并在候选/存量属性中展示标准化 `web_source`；宿主 115 原生归档与 PT 整理双链路现均支持 `{{webSource}}` / `{{web_source}}` / `{% if webSource %}` 命名模板变量。
+- **全面适配 Mediary v3.4.13+ `{{resourceType}}` 片源类型与 `{{webSource}}` 流媒体平台重命名**：
+  - 宿主 115 原生归档与 PT 整理双链路原生注入 **`{{resourceType}}` / `{{resource_type}}`**（14 项词边界标准化：`BDRemux` / `REMUX` / `UHD BluRay` / `BluRay` / `WEB-DL` / `WEBRip` / `BDRip` / `BDISO` / `BDMV` / `MiniBD` / `HDTV` / `HDRip` / `DVDRip` / `DVD`）与 **`{{webSource}}` / `{{web_source}}`**（20 个国际与国内/亚洲流媒体平台缩写：`NF` / `AMZN` / `DSNP` / `ATVP` / `HMAX` / `HULU` / `PMTP` / `PCOK` / `ITUN` / `CR`、`BILI` / `IQ` / `YK` / `TX` / `MGTV` / `BAHA` / `KKTV` / `MYTV` / `VIU` / `FRIDAY`），推荐组合判空写法 `{% if webSource %}.{{webSource}}{% endif %}{% if resourceType %}.{{resourceType}}{% endif %}`。
 - **低分落败直移 115 回收站 + 新源确认后安全删旧**：对接 `POST /api/plugin/open115/files/delete`（`open115:write`），低分淘汰或已在库内的重复文件可直接移入 115 官方回收站；洗版升级确认新源入库后再安全清理旧低分源。
 - **媒体历史与任务记录彻底分离**：工作台独立「历史记录」页面将「🎬 媒体处理历史」与「⚙️ 任务执行记录」完全分栏，支持按通道、处理动作与关键词实时检索，支持单删、批量勾选删除、历史重整与一键补齐缺失 `[tmdbid-...]` 记录；宿主卡片「数据」弹窗仅展示干净的媒体历史记录。
 - **存量库低负载多版本精洗**：针对数万电影与数十万剧集提供断点续扫，严格限制在同二级分类 + 同版本槽位内比较，仅落盘拟清理与待复核记录（零 `keep` 膨胀），清理前强制二次复核并保留至少 1 个胜出版本。

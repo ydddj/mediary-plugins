@@ -491,7 +491,7 @@ function renderStagingTab(root) {
     <div class="mw-header">
       <div>
         <h2>115 监控目录归档入库（原生一步直达媒体库 + 权重洗版）</h2>
-        <p>仅需设置 1 个待洗版目录：胜出文件调用 Mediary 3.4.8+ 原生接口一步完成二级分类、重命名（支持 <code>{{webSource}}</code> 流媒体平台变量）、字幕跟随与 STRM 入库；低分落败与重复文件直接移入 115 官方回收站</p>
+        <p>仅需设置 1 个待洗版目录：胜出文件调用 Mediary 原生接口一步完成二级分类、重命名（支持 <code>{{resourceType}}</code> 片源类型与 <code>{{webSource}}</code> 流媒体平台变量）、字幕跟随与 STRM 入库；低分落败与重复文件直接移入 115 官方回收站</p>
       </div>
       <div class="mw-actions">
         <button type="button" class="mw-btn" id="btn-goto-history">查看历史记录 (${Number(c.media_history || 0)})</button>
@@ -517,7 +517,7 @@ function renderStagingTab(root) {
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;font-size:12.5px;line-height:1.55;">
               <div style="flex:1;min-width:0;">
                 <strong>⚠️ 检测到宿主「内置 STRM 工具 → 转存整理任务」列表为空（会导致归档目录缺少 <code>[tmdbid-...]</code>）</strong><br/>
-                <span class="mw-muted">主程序的 <code>open115/files/organize</code> 接口会从内置 STRM 工具的默认转存任务读取 115 电影/剧集重命名模板；当转存任务被清空时，会回退为不含 <code>[tmdbid-...]</code> 的简版模板。请在内置 STRM 工具中新建一条<strong>取消勾选「启用」（保持停用即可，不会抢跑转存）</strong>的默认任务并粘贴下方模板，随后在历史记录点「重整」即可修正（Mediary v3.4.8+ 115 归档与 PT 整理双链路原生支持 <code>{{webSource}}</code> / <code>{% if webSource %}</code> 流媒体平台变量）。</span>
+                <span class="mw-muted">主程序的 <code>open115/files/organize</code> 接口会从内置 STRM 工具的默认转存任务读取 115 电影/剧集重命名模板；当转存任务被清空时，会回退为不含 <code>[tmdbid-...]</code> 的简版模板。请在内置 STRM 工具中新建一条<strong>取消勾选「启用」（保持停用即可，不会抢跑转存）</strong>的默认任务并粘贴下方模板，随后在历史记录点「重整」即可修正（Mediary v3.4.13+ 115 归档与 PT 整理双链路原生支持 <code>{{resourceType}}</code> / <code>{% if resourceType %}</code> 与 <code>{{webSource}}</code> / <code>{% if webSource %}</code> 变量）。</span>
               </div>
               <div class="mw-actions" style="flex-shrink:0;">
                 ${hsync.movie_rename_format ? `<button type="button" class="mw-btn sm" id="btn-copy-tpl-movie">复制电影模板</button>` : ''}
@@ -676,16 +676,21 @@ function renderStagingTab(root) {
 
       <details style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--mw-border);font-size:12px;">
         <summary style="cursor:pointer;color:var(--mw-muted);user-select:none;">
-          Mediary v3.4.8+ 命名模板助手（已同步宿主模板 · 原生支持 <code>{{webSource}}</code> / <code>{% if webSource %}</code> 流媒体平台变量）
+          Mediary v3.4.13+ 命名模板助手（已同步宿主模板 · 原生支持 <code>{{resourceType}}</code> 片源类型与 <code>{{webSource}}</code> 流媒体平台变量）
         </summary>
         <div style="margin-top:8px;padding:10px 12px;border-radius:8px;background:var(--mw-surface-2);line-height:1.6;">
           <div>
-            <strong>双链路原生支持：</strong>Mediary <code>v3.4.8+</code> 的 115 原生整理（<code>open115/files/organize</code>）与 PT 整理器均已注入 <code>{{webSource}}</code> / <code>{{web_source}}</code>（未识别到平台时为空字符串，普通 <code>WEB-DL</code> 不会误标 <code>WEB</code>），推荐判空写法：
-            <code>{% if webSource %}.{{webSource}}{% endif %}</code>
-            <button type="button" class="mw-btn sm" id="btn-copy-websource-snip" style="margin-left:6px;">复制变量片段</button>
+            <strong>双链路原生支持（v3.4.13+）：</strong>115 原生整理（<code>open115/files/organize</code>）与 PT 整理器均已注入 <code>{{resourceType}}</code> / <code>{{resource_type}}</code> 与 <code>{{webSource}}</code> / <code>{{web_source}}</code>（未识别到时为空字符串），推荐组合判空写法：
+            <code>{% if webSource %}.{{webSource}}{% endif %}{% if resourceType %}.{{resourceType}}{% endif %}</code>
+            <button type="button" class="mw-btn sm" id="btn-copy-resourcetype-snip" style="margin-left:6px;">复制 resourceType 片段</button>
+            <button type="button" class="mw-btn sm" id="btn-copy-websource-snip" style="margin-left:4px;">复制 webSource 片段</button>
           </div>
           <div class="mw-muted" style="margin-top:4px;">
-            <strong>支持 20 个标准流媒体缩写：</strong>
+            <strong>14 个标准片源类型（<code>{{resourceType}}</code>）：</strong>
+            <code>BDRemux</code> <code>REMUX</code> <code>UHD BluRay</code> <code>BluRay</code> <code>WEB-DL</code> <code>WEBRip</code> <code>BDRip</code> <code>BDISO</code> <code>BDMV</code> <code>MiniBD</code> <code>HDTV</code> <code>HDRip</code> <code>DVDRip</code> <code>DVD</code>
+          </div>
+          <div class="mw-muted" style="margin-top:4px;">
+            <strong>20 个标准流媒体缩写（<code>{{webSource}}</code>）：</strong>
             国际 <code>NF</code> <code>AMZN</code> <code>DSNP</code> <code>ATVP</code> <code>HMAX</code> <code>HULU</code> <code>PMTP</code> <code>PCOK</code> <code>ITUN</code> <code>CR</code> ·
             国内/亚洲 <code>BILI</code> <code>IQ</code> <code>YK</code> <code>TX</code> <code>MGTV</code> <code>BAHA</code> <code>KKTV</code> <code>MYTV</code> <code>VIU</code> <code>FRIDAY</code>
           </div>
@@ -806,11 +811,18 @@ function renderStagingTab(root) {
       showToast('已复制剧集重命名模板（含 [tmdbid] 与 Season 01）', 'success');
     };
   }
+  const copyRtBtn = document.getElementById('btn-copy-resourcetype-snip');
+  if (copyRtBtn) {
+    copyRtBtn.onclick = async () => {
+      await copyToClipboard('{% if resourceType %}.{{resourceType}}{% endif %}');
+      showToast('已复制 Mediary v3.4.13+ {{resourceType}} 判空模板片段', 'success');
+    };
+  }
   const copyWsBtn = document.getElementById('btn-copy-websource-snip');
   if (copyWsBtn) {
     copyWsBtn.onclick = async () => {
       await copyToClipboard('{% if webSource %}.{{webSource}}{% endif %}');
-      showToast('已复制 Mediary v3.4.8+ {{webSource}} 判空模板片段', 'success');
+      showToast('已复制 Mediary {{webSource}} 判空模板片段', 'success');
     };
   }
 

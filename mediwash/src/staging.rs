@@ -555,7 +555,7 @@ pub fn scan_pipeline(
     pipeline_id: i64,
     max_videos: usize,
 ) -> Result<Value> {
-    scan_pipeline_with_budget(db, host, cfg, settings, pipeline_id, max_videos, 120, 270, false)
+    scan_pipeline_with_budget(db, host, cfg, settings, pipeline_id, max_videos, 75, 195, false)
 }
 
 /// UI-safe high-throughput bounded scan + auto-execute slice that stays safely under
@@ -627,8 +627,8 @@ pub fn scan_pipeline_with_budget(
 
     // Optimization 1: Priority re-check of previously queued `probing` items (round-robin by oldest `updated_at`)
     // BEFORE advancing the BFS cursor, so async 115 MediaInfo results archive immediately without waiting for a full walk cycle!
-    let probe_recheck_limit: usize = if is_ui_slice { 40 } else { 200 };
-    let probe_recheck_budget_secs: u64 = if is_ui_slice { 8 } else { 45 };
+    let probe_recheck_limit: usize = if is_ui_slice { 40 } else { 150 };
+    let probe_recheck_budget_secs: u64 = if is_ui_slice { 8 } else { 30 };
     if let Ok(mut pstmt) = db.prepare(
         "SELECT id, file_id, parent_cid, rel_path, sidecar_ids_json
            FROM staging_items
@@ -914,11 +914,12 @@ pub fn scan_pipeline_with_budget(
                 prune_budget_secs: 6,
             }
         } else {
+            let org_to = rem_secs.saturating_sub(15).clamp(25, 75);
             ExecOpts {
-                soft_budget_secs: rem_secs,
-                max_organize_files: 150,
-                organize_http_timeout_secs: 110,
-                prune_budget_secs: 18,
+                soft_budget_secs: rem_secs.saturating_sub(10).max(10),
+                max_organize_files: 120,
+                organize_http_timeout_secs: org_to,
+                prune_budget_secs: 12,
             }
         };
         let exec_res =
@@ -4445,7 +4446,7 @@ pub fn reconcile_ledger(
                 }
                 Ok(_) => {
                     db.execute(
-                        "UPDATE wash_ledger SET item_id = ?, state = 'cleaned', message = '新源已确认入库，原旧源已不存在或已被替换', updated_at = ? WHERE id = ?",
+                        "UPDATE wash_ledger SET item_id = ?, state = 'cleaned', message = '新源已确认入库，原旧源已不存在或与胜出源指向同一文件（已安全跳过）', updated_at = ? WHERE id = ?",
                         params![live_item.id, now_ts(), lid],
                     )?;
                 }
@@ -4808,7 +4809,12 @@ fn verify_and_clean_old_sources(
         .and_then(|(wid, _)| sources.iter().find(|s| &s.id == wid))
         .map(src_disp)
         .unwrap_or_default();
-    host.delete_library_sources(item_id, &to_delete)?;
+    if let Err(err) = host.delete_library_sources(item_id, &to_delete) {
+        if crate::host::is_same_file_delete_refused(&err) {
+            return Ok((0, String::new(), String::new()));
+        }
+        return Err(err);
+    }
     let _ = host.scan_library_item(item_id);
     Ok((
         to_delete.len(),
