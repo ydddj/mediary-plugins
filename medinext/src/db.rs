@@ -707,6 +707,13 @@ pub fn prune_stale_data(conn: &Connection) {
         "DELETE FROM ip_events WHERE last_seen_at < ?1",
         params![now - 86400],
     );
+    // Prune expired ephemeral cooldown keys from kv_store to prevent unbounded growth
+    let _ = conn.execute(
+        "DELETE FROM kv_store
+         WHERE updated_at < ?1
+           AND (key LIKE 'detail_pre:%' OR key LIKE 'prewarm_next:%' OR key LIKE 'notify_play:%' OR key LIKE 'notify_risk:%')",
+        params![now - 86400],
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -730,7 +737,7 @@ pub fn touch_active_session(
     } else if !host_session_key.trim().is_empty() {
         host_session_key.trim().to_string()
     } else {
-        format!("ip:{}:{}", ip.trim(), &ua[..ua.len().min(24)])
+        format!("ip:{}:{}", ip.trim(), crate::models::truncate_chars(ua.trim(), 24))
     };
     let session_key = format!("{}:{}", username.trim(), dev_part);
     let _ = conn.execute(
@@ -1541,6 +1548,31 @@ mod tests {
         assert!(peek_cached_link(&conn, "alice:pc002:deadbeef:N").is_none());
         assert!(peek_cached_link(&conn, "alice:pc001:tv-2:deadbeef:N").is_some());
         assert!(peek_cached_link(&conn, "alice_2:pc001:deadbeef:N").is_some());
+
+        // 4. UTF-8 safe truncation & ephemeral kv_store cooldown pruning
+        assert_eq!(crate::models::truncate_chars("飞牛影视客户端/2.0", 4), "飞牛影视");
+        touch_active_session(
+            &conn,
+            "",
+            "alice",
+            "10",
+            "",
+            "TV",
+            "飞牛",
+            "飞牛影视播放器客户端超长中文名称测试版本123456",
+            "10.0.0.1",
+            "item1",
+            "Demo",
+            "lb1",
+        );
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES ('detail_pre:old', '1', ?1), ('folder_cid:old', '12345', ?1)",
+            params![now_ts() - 100_000],
+        )
+        .unwrap();
+        prune_stale_data(&conn);
+        assert!(get_kv(&conn, "detail_pre:old").is_none());
+        assert_eq!(get_kv(&conn, "folder_cid:old").as_deref(), Some("12345"));
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -95,7 +95,7 @@ async function runAction(name, payload = {}, okMsg = '') {
 function updateChrome() {
   const d = state.data;
   if (!d) return;
-  el('mn-version-label').textContent = `v${d.version || '2.1.6'} · 原生 302 钩子`;
+  el('mn-version-label').textContent = `v${d.version || '2.2.0'} · 原生 302 钩子`;
   el('badge-sessions').textContent = (d.active_sessions || []).length;
   el('badge-accounts').textContent = (d.source_accounts || []).length + (d.lb_accounts || []).length;
   el('badge-users').textContent = (d.users || []).length;
@@ -180,7 +180,7 @@ function renderOverview(view) {
 
   view.innerHTML = `
     <div class="mn-mobile-status-strip">
-      <span class="mn-status-pill">v${esc(d.version || '2.1.6')}</span>
+      <span class="mn-status-pill">v${esc(d.version || '2.2.0')}</span>
       <span class="mn-status-pill ${hookStatusCls}">${hookStatusText}</span>
       <span class="mn-status-pill ${okLbs > 0 ? 'ok' : 'warn'}">负载号 ${okLbs}/${lbs.length}</span>
       <span class="mn-status-pill ${hs.media_service_read_ready && hs.media_service_write_ready ? 'ok' : 'warn'}">${hs.media_service_read_ready && hs.media_service_write_ready ? '权限读写就绪' : '权限待完善'}</span>
@@ -664,8 +664,12 @@ function openQrModal(defaultKind = 'lb', defaultName = '') {
 }
 
 // ==================== 3. Users & Policy Templates ====================
-function buildUsersListHtml(users) {
+function buildUsersListHtml(users, tpls = []) {
   if (users.length === 0) return `<div class="mn-card-sub">暂无匹配用户</div>`;
+  const tplForbidMap = {};
+  (tpls || []).forEach((t) => {
+    if (t.forbid_master_fallback) tplForbidMap[t.name] = true;
+  });
   return `
     <div class="mn-table-wrap">
       <table class="mn-table mn-mobile-cards">
@@ -673,7 +677,9 @@ function buildUsersListHtml(users) {
           <tr><th>用户名</th><th>状态</th><th>路由模式</th><th>模板</th><th>并发 / 设备</th><th>到期日</th><th>专属 115</th><th>操作</th></tr>
         </thead>
         <tbody>
-          ${users.map((u) => `
+          ${users.map((u) => {
+            const effNoMaster = u.forbid_master_fallback || (!u.is_admin && tplForbidMap[u.template]);
+            return `
             <tr>
               <td class="mn-td-primary" data-label="用户名">
                 <div class="mn-cell-val">
@@ -688,7 +694,12 @@ function buildUsersListHtml(users) {
                     : `<span class="mn-tag ok">正常</span>`}
                 </div>
               </td>
-              <td data-label="路由模式"><div class="mn-cell-val">${u.route_mode === 'direct' ? '源盘直连' : u.route_mode === 'own_cookie' ? '独立115秒传' : u.route_mode === 'load_balance' ? '多号负载均衡' : '跟随模板'}</div></td>
+              <td data-label="路由模式">
+                <div class="mn-cell-val">
+                  ${u.route_mode === 'direct' ? '源盘直连' : u.route_mode === 'own_cookie' ? '独立115秒传' : u.route_mode === 'load_balance' ? '多号负载均衡' : '跟随模板'}
+                  ${effNoMaster ? ` <span class="mn-tag warn" title="严格禁止走源盘大号/小文件直连/失败回源">禁走大号</span>` : ''}
+                </div>
+              </td>
               <td data-label="策略模板"><div class="mn-cell-val"><span class="mn-tag">${esc(u.template || '-')}</span></div></td>
               <td data-label="并发 / 设备"><div class="mn-cell-val">流 ${u.active_streams} · 设备 ${u.device_count}</div></td>
               <td data-label="到期日"><div class="mn-cell-val">${esc(u.expiry_date || '永久')}</div></td>
@@ -701,7 +712,8 @@ function buildUsersListHtml(users) {
                 </div>
               </td>
             </tr>
-          `).join('')}
+          `;
+          }).join('')}
         </tbody>
       </table>
     </div>
@@ -741,9 +753,12 @@ function renderUsers(view) {
       <div class="mn-grid-3">
         ${tpls.map((t) => `
           <div class="mn-kpi" style="display:flex;flex-direction:column;gap:6px">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
               <b>${esc(t.name)}</b>
-              <span class="mn-tag primary">${t.default_route === 'direct' ? '源盘直连' : t.default_route === 'own_cookie' ? '独立秒传' : '负载均衡'}</span>
+              <div style="display:flex;gap:4px;align-items:center">
+                <span class="mn-tag primary">${t.default_route === 'direct' ? '源盘直连' : t.default_route === 'own_cookie' ? '独立秒传' : '负载均衡'}</span>
+                ${t.forbid_master_fallback ? `<span class="mn-tag warn">禁走大号</span>` : ''}
+              </div>
             </div>
             <div class="mn-card-sub">最大并发流: <b>${t.max_streams || '不限'}</b> · 最大设备数: <b>${t.max_devices || '不限'}</b></div>
             <div class="mn-actions">
@@ -762,7 +777,7 @@ function renderUsers(view) {
         </div>
         <input class="mn-input mn-search-input" id="user-search" type="search" placeholder="搜索用户名 / 备注..." value="${esc(state.userQuery)}" />
       </div>
-      <div id="users-list-wrap">${buildUsersListHtml(users)}</div>
+      <div id="users-list-wrap">${buildUsersListHtml(users, tpls)}</div>
     </div>
   `;
 
@@ -793,7 +808,7 @@ function renderUsers(view) {
     if (titleEl) titleEl.textContent = `观影用户列表 (${filtered.length})`;
     const wrap = el('users-list-wrap');
     if (wrap) {
-      wrap.innerHTML = buildUsersListHtml(filtered);
+      wrap.innerHTML = buildUsersListHtml(filtered, tpls);
       bindUserActions(wrap);
     }
   };
@@ -833,6 +848,10 @@ function openTemplateModal(tpl) {
           </select>
         </div>
       </div>
+      <label class="mn-check">
+        <input type="checkbox" id="tp-no-master" ${tpl.forbid_master_fallback ? 'checked' : ''} />
+        <b>禁止回退源盘大号</b>（强制仅走小号池/自有号：跳过小文件直连，小号全不可用时直接拦截而不回源大号）
+      </label>
       <div class="mn-modal-foot">
         <button class="mn-btn primary" id="tp-save">保存模板</button>
       </div>
@@ -845,7 +864,8 @@ function openTemplateModal(tpl) {
           max_streams: Number(box.querySelector('#tp-streams').value || 0),
           max_devices: Number(box.querySelector('#tp-devs').value || 0),
           default_route: box.querySelector('#tp-route').value,
-          quota_gb: 0,
+          quota_gb: Number(tpl.quota_gb || 0),
+          forbid_master_fallback: box.querySelector('#tp-no-master').checked,
         },
       }, '策略模板已保存');
       closeModal();
@@ -903,6 +923,7 @@ function openUserModal(u) {
         <textarea class="mn-textarea" id="us-cookie" style="min-height:68px" placeholder="UID=...; CID=...; SEID=...">${esc(u.cookie_masked || '')}</textarea>
       </div>
       <div class="mn-actions">
+        <label class="mn-check"><input type="checkbox" id="us-no-master" ${u.forbid_master_fallback ? 'checked' : ''} /> <b>禁止回退源盘大号</b>（仅限小号/自有号，禁小文件直连与失败回源）</label>
         <label class="mn-check"><input type="checkbox" id="us-admin" ${u.is_admin ? 'checked' : ''} /> 管理员豁免风控限制</label>
         <label class="mn-check"><input type="checkbox" id="us-ban" ${u.is_banned ? 'checked' : ''} /> 封禁禁止播放</label>
         ${u.has_own_cookie ? `<label class="mn-check"><input type="checkbox" id="us-clear-ck" /> 清除已绑定的独立 Cookie</label>` : ''}
@@ -919,6 +940,7 @@ function openUserModal(u) {
           username: box.querySelector('#us-name').value.trim(),
           emby_id: box.querySelector('#us-id').value.trim(),
           route_mode: box.querySelector('#us-route').value,
+          forbid_master_fallback: box.querySelector('#us-no-master').checked,
           template: box.querySelector('#us-tpl').value,
           expiry_date: box.querySelector('#us-exp').value.trim(),
           cache_path: box.querySelector('#us-cpath').value.trim(),
@@ -1223,7 +1245,7 @@ function renderSettings(view) {
       engine: {
         p115_proxy_url: el('eg-proxy').value.trim(),
         cache_ttl_secs: Number(el('eg-ttl').value || 1800),
-        negative_cache_secs: 60,
+        negative_cache_secs: Number(e.negative_cache_secs ?? 60),
         small_file_direct_mb: Number(el('eg-small').value || 0),
         risk_405_cooldown_secs: Number(el('eg-cd405').value || 1800),
         p115_cooldown_ms: Number(el('eg-cool').value || 250),

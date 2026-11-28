@@ -423,6 +423,7 @@ struct EffectiveUserContext {
     is_banned: bool,
     expiry_date: String,
     route: String, // "direct" | "load_balance" | "own_cookie"
+    forbid_master_fallback: bool,
     max_streams: u32,
     max_devices: u32,
     own_policy: Option<UserPolicy>,
@@ -500,7 +501,9 @@ fn resolve_user_context(
             .unwrap_or(&default_tpl);
         let is_admin = u.is_admin || host_is_admin;
         let has_own_cookie = !u.cookies.trim().is_empty() || !u.access_token.trim().is_empty();
-        let route = if is_admin && (u.route_mode.is_empty() || u.route_mode == "direct") {
+        // Admin accounts are exempt from template-inherited `forbid_master_fallback` unless explicitly checked on the user itself.
+        let forbid_master_fallback = u.forbid_master_fallback || (!is_admin && tpl.forbid_master_fallback);
+        let mut route = if is_admin && !forbid_master_fallback && (u.route_mode.is_empty() || u.route_mode == "direct") {
             "direct".to_string()
         } else {
             match u.route_mode.as_str() {
@@ -518,6 +521,13 @@ fn resolve_user_context(
                 }
             }
         };
+        if forbid_master_fallback && route == "direct" {
+            route = if has_own_cookie {
+                "own_cookie".to_string()
+            } else {
+                "load_balance".to_string()
+            };
+        }
         let max_streams = if u.max_streams_override > 0 {
             u.max_streams_override
         } else {
@@ -539,6 +549,7 @@ fn resolve_user_context(
             is_banned: u.is_banned || u.is_disabled || host_is_disabled,
             expiry_date: u.expiry_date.clone(),
             route,
+            forbid_master_fallback,
             max_streams,
             max_devices,
             own_policy: Some(u.clone()),
@@ -552,7 +563,8 @@ fn resolve_user_context(
             "guest".to_string()
         };
     }
-    let route = if host_is_admin || cfg.engine.guest_route == "direct" {
+    let forbid_master_fallback = !host_is_admin && default_tpl.forbid_master_fallback;
+    let route = if (host_is_admin || cfg.engine.guest_route == "direct") && !forbid_master_fallback {
         "direct".to_string()
     } else {
         "load_balance".to_string()
@@ -564,6 +576,7 @@ fn resolve_user_context(
         is_banned: host_is_disabled,
         expiry_date: String::new(),
         route,
+        forbid_master_fallback,
         max_streams: default_tpl.max_streams,
         max_devices: default_tpl.max_devices,
         own_policy: None,
@@ -1034,84 +1047,88 @@ pub fn resolve_playback(
             cfg.engine.cache_ttl_secs,
         ) {
             if hit.url == NEGATIVE_SENTINEL {
-                return Ok(pass_decision("处于失败冷却期，交由宿主原生 /api/302 直出", started));
-            }
-            let display_name = if !req.file_name.is_empty() {
-                req.file_name.clone()
-            } else {
-                hit.file_name.clone()
-            };
-            db::touch_active_session(
-                &conn,
-                &req.session_id,
-                &uctx.username,
-                &uctx.user_id,
-                &req.device_id,
-                &req.device_name,
-                &req.client,
-                &ua,
-                &req.client_ip,
-                &req.item_id,
-                &display_name,
-                &hit.provider,
-            );
-            db::record_playback_history(
-                &conn,
-                &uctx.username,
-                &req.item_id,
-                &display_name,
-                &hit.provider,
-                &hit.mode_label,
-                &ua,
-                &req.client_ip,
-                req.file_size,
-                true,
-                "redirect",
-                "命中 1800s 直链缓存并续期",
-            );
-            let elapsed_ms = started.elapsed().as_millis() as u64;
-            maybe_notify_playback_started(
-                &conn,
-                settings,
-                &cfg,
-                &uctx,
-                &req,
-                &display_name,
-                &hit.provider,
-                &hit.mode_label,
-                &ua,
-                &poster_url,
-                elapsed_ms,
-            );
-            if cfg.engine.enable_next_ep_prewarm {
-                if let Some((acc, is_lb)) = find_managed_account_by_provider(&cfg, &uctx, &hit.provider) {
-                    trigger_next_episode_prewarm(
-                        &conn,
-                        data_dir,
-                        &cfg,
-                        resolved_item_meta.clone(),
-                        &req,
-                        &uctx.username,
-                        &ua,
-                        acc,
-                        is_lb,
-                    );
+                if !uctx.forbid_master_fallback {
+                    return Ok(pass_decision("处于失败冷却期，交由宿主原生 /api/302 直出", started));
                 }
+            } else {
+                let display_name = if !req.file_name.is_empty() {
+                    req.file_name.clone()
+                } else {
+                    hit.file_name.clone()
+                };
+                db::touch_active_session(
+                    &conn,
+                    &req.session_id,
+                    &uctx.username,
+                    &uctx.user_id,
+                    &req.device_id,
+                    &req.device_name,
+                    &req.client,
+                    &ua,
+                    &req.client_ip,
+                    &req.item_id,
+                    &display_name,
+                    &hit.provider,
+                );
+                db::record_playback_history(
+                    &conn,
+                    &uctx.username,
+                    &req.item_id,
+                    &display_name,
+                    &hit.provider,
+                    &hit.mode_label,
+                    &ua,
+                    &req.client_ip,
+                    req.file_size,
+                    true,
+                    "redirect",
+                    "命中 1800s 直链缓存并续期",
+                );
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                maybe_notify_playback_started(
+                    &conn,
+                    settings,
+                    &cfg,
+                    &uctx,
+                    &req,
+                    &display_name,
+                    &hit.provider,
+                    &hit.mode_label,
+                    &ua,
+                    &poster_url,
+                    elapsed_ms,
+                );
+                if cfg.engine.enable_next_ep_prewarm {
+                    if let Some((acc, is_lb)) = find_managed_account_by_provider(&cfg, &uctx, &hit.provider) {
+                        trigger_next_episode_prewarm(
+                            &conn,
+                            data_dir,
+                            &cfg,
+                            resolved_item_meta.clone(),
+                            &req,
+                            &uctx.username,
+                            &ua,
+                            acc,
+                            is_lb,
+                            uctx.forbid_master_fallback,
+                        );
+                    }
+                }
+                return Ok(ResolveDecision {
+                    handled: true,
+                    status: "redirect".to_string(),
+                    url: hit.url,
+                    fallback_video_url: String::new(),
+                    ttl_seconds: Some(60),
+                    status_code: 302,
+                    headers: hit.headers,
+                    provider: hit.provider,
+                    mode_label: hit.mode_label,
+                    cache_hit: true,
+                    elapsed_ms,
+                    reason: "缓存命中".to_string(),
+                });
             }
-            return Ok(ResolveDecision {
-                handled: true,
-                status: "redirect".to_string(),
-                url: hit.url,
-                fallback_video_url: String::new(),
-                ttl_seconds: Some(60),
-                status_code: 302,
-                headers: hit.headers,
-                provider: hit.provider,
-                mode_label: hit.mode_label,
-                cache_hit: true,
-                elapsed_ms,
-                reason: "缓存命中".to_string(),
-            });
         }
     }
 
@@ -1188,12 +1205,14 @@ pub fn resolve_playback(
             })
         };
 
-    // 7. Direct Mode or Small-File Fast-Path
+    // 7. Direct Mode or Small-File Fast-Path (strictly disabled when `forbid_master_fallback` is active)
     let small_limit_bytes = cfg.engine.small_file_direct_mb.saturating_mul(1024 * 1024);
-    let is_small_direct =
-        small_limit_bytes > 0 && req.file_size > 0 && req.file_size <= small_limit_bytes;
+    let is_small_direct = !uctx.forbid_master_fallback
+        && small_limit_bytes > 0
+        && req.file_size > 0
+        && req.file_size <= small_limit_bytes;
 
-    if uctx.route == "direct" || is_small_direct {
+    if !uctx.forbid_master_fallback && (uctx.route == "direct" || is_small_direct) {
         let label = if is_small_direct && uctx.route != "direct" {
             "[小文件直连]"
         } else {
@@ -1253,6 +1272,7 @@ pub fn resolve_playback(
                         &ua,
                         src,
                         false,
+                        uctx.forbid_master_fallback,
                     );
                 }
             }
@@ -1402,65 +1422,74 @@ pub fn resolve_playback(
 
     let mut last_err = String::new();
 
+    let src_master_uid = source_acc.as_ref().map(|src| {
+        if !src.uid.is_empty() {
+            src.uid.clone()
+        } else {
+            p115::extract_uid_from_cookie(&src.cookies)
+        }
+    }).unwrap_or_default();
+
     for (target_acc, mode_label, is_lb) in targets {
         let target_uid = if !target_acc.uid.is_empty() {
             target_acc.uid.clone()
         } else {
             p115::extract_uid_from_cookie(&target_acc.cookies)
         };
+        if uctx.forbid_master_fallback
+            && is_lb
+            && !src_master_uid.is_empty()
+            && !target_uid.is_empty()
+            && target_uid == src_master_uid
+        {
+            continue;
+        }
         let target_proxy = if !target_acc.proxy_url.trim().is_empty() {
             target_acc.proxy_url.as_str()
         } else {
             global_proxy.as_str()
         };
 
-        // Same-UID fast path
-        if let Some(src) = source_acc.as_ref() {
-            let src_uid = if !src.uid.is_empty() {
-                src.uid.clone()
-            } else {
-                p115::extract_uid_from_cookie(&src.cookies)
-            };
-            if !target_uid.is_empty() && target_uid == src_uid {
-                if let Ok(dl) = p115::get_download_link(
-                    &target_acc.cookies,
-                    &target_acc.access_token,
-                    &target_uid,
-                    &pickcode,
-                    &ua,
-                    target_proxy,
-                    cooldown_ms,
-                ) {
-                    if is_lb {
-                        db::record_lb_selected(
-                            &conn,
-                            &target_acc.name,
-                            &uctx.username,
-                            &req.device_id,
-                        );
-                    }
-                    return finish_success(
+        // Same-UID fast path (disabled when `forbid_master_fallback` forbids master account streaming)
+        if !uctx.forbid_master_fallback && !src_master_uid.is_empty() && !target_uid.is_empty() && target_uid == src_master_uid {
+            if let Ok(dl) = p115::get_download_link(
+                &target_acc.cookies,
+                &target_acc.access_token,
+                &target_uid,
+                &pickcode,
+                &ua,
+                target_proxy,
+                cooldown_ms,
+            ) {
+                if is_lb {
+                    db::record_lb_selected(
                         &conn,
-                        data_dir,
-                        settings,
-                        &cfg,
-                        resolved_item_meta.clone(),
-                        &poster_url,
-                        &cache_key,
-                        &pickcode,
-                        &uctx,
-                        &req,
-                        &ua,
-                        &target_acc,
-                        is_lb,
-                        &target_uid,
-                        &mode_label,
-                        dl,
-                        cfg.engine.cache_ttl_secs,
-                        started,
-                        "同 UID 免转存直出",
+                        &target_acc.name,
+                        &uctx.username,
+                        &req.device_id,
                     );
                 }
+                return finish_success(
+                    &conn,
+                    data_dir,
+                    settings,
+                    &cfg,
+                    resolved_item_meta.clone(),
+                    &poster_url,
+                    &cache_key,
+                    &pickcode,
+                    &uctx,
+                    &req,
+                    &ua,
+                    &target_acc,
+                    is_lb,
+                    &target_uid,
+                    &mode_label,
+                    dl,
+                    cfg.engine.cache_ttl_secs,
+                    started,
+                    "同 UID 免转存直出",
+                );
             }
         }
 
@@ -1710,9 +1739,10 @@ pub fn resolve_playback(
         }
     }
 
-    // 9. Fallback Handling (`fallback_on_fail` / `fallback_for_guest`)
-    let allow_fallback = cfg.engine.fallback_on_fail
-        || (uctx.own_policy.is_none() && cfg.engine.fallback_for_guest);
+    // 9. Fallback Handling (`fallback_on_fail` / `fallback_for_guest` — strictly blocked by `forbid_master_fallback`)
+    let allow_fallback = !uctx.forbid_master_fallback
+        && (cfg.engine.fallback_on_fail
+            || (uctx.own_policy.is_none() && cfg.engine.fallback_for_guest));
     if allow_fallback {
         if let Some(dec) = try_source_direct(&conn, &req, "[回源兜底]") {
             db::touch_active_session(
@@ -1742,6 +1772,19 @@ pub fn resolve_playback(
                 false,
                 "redirect",
                 &format!("转存未命中 ({last_err})，已自动回源直出"),
+            );
+            maybe_notify_playback_started(
+                &conn,
+                settings,
+                &cfg,
+                &uctx,
+                &req,
+                &req.file_name,
+                &dec.provider,
+                &dec.mode_label,
+                &ua,
+                &poster_url,
+                dec.elapsed_ms,
             );
             return Ok(dec);
         }
@@ -1796,18 +1839,28 @@ pub fn resolve_playback(
         return Ok(pass_decision(&detail, started));
     }
 
-    let fail_reason = if last_err.is_empty() {
-        "没有可用的 115 负载账号且已关闭失败回源".to_string()
+    let (fail_mode, fail_reason) = if uctx.forbid_master_fallback {
+        let msg = if last_err.is_empty() {
+            "已启用「禁止回退源盘大号」策略，当前暂无可用负载小号".to_string()
+        } else {
+            format!("已启用「禁止回退源盘大号」策略，负载小号调度失败: {last_err}")
+        };
+        ("[禁回大号]", msg)
     } else {
-        format!("播放调度失败: {last_err}")
+        let msg = if last_err.is_empty() {
+            "没有可用的 115 负载账号且已关闭失败回源".to_string()
+        } else {
+            format!("播放调度失败: {last_err}")
+        };
+        ("[调度失败]", msg)
     };
     db::record_playback_history(
         &conn,
         &uctx.username,
         &req.item_id,
         &req.file_name,
-        "",
-        "[调度失败]",
+        "RiskGuard",
+        fail_mode,
         &ua,
         &req.client_ip,
         req.file_size,
@@ -1815,6 +1868,18 @@ pub fn resolve_playback(
         "deny",
         &fail_reason,
     );
+    if uctx.forbid_master_fallback {
+        maybe_notify_risk_intercept(
+            &conn,
+            settings,
+            &cfg,
+            &uctx.username,
+            &req,
+            &ua,
+            fail_mode,
+            &fail_reason,
+        );
+    }
     Ok(deny_or_prompt_video(403, &fail_reason, "", started))
 }
 
@@ -1916,6 +1981,7 @@ fn finish_success(
             ua,
             target_acc.clone(),
             is_lb,
+            uctx.forbid_master_fallback,
         );
     }
     Ok(ResolveDecision {
@@ -2175,7 +2241,11 @@ fn resolve_detail_prefetch(
     }
 
     let small_limit_bytes = cfg.engine.small_file_direct_mb.saturating_mul(1024 * 1024);
-    if small_limit_bytes > 0 && req.file_size > 0 && req.file_size <= small_limit_bytes {
+    if !uctx.forbid_master_fallback
+        && small_limit_bytes > 0
+        && req.file_size > 0
+        && req.file_size <= small_limit_bytes
+    {
         return Ok(pass_decision("小文件走直出通道，跳过小号预热", started));
     }
 
@@ -2271,8 +2341,19 @@ fn resolve_detail_prefetch(
         }
     }
 
+    let src_master_uid = source_acc
+        .as_ref()
+        .map(|src| {
+            if !src.uid.is_empty() {
+                src.uid.clone()
+            } else {
+                p115::extract_uid_from_cookie(&src.cookies)
+            }
+        })
+        .unwrap_or_default();
+
     let mut targets: Vec<(Account115, bool)> = Vec::new();
-    if uctx.route == "direct" {
+    if uctx.route == "direct" && !uctx.forbid_master_fallback {
         if let Some(src) = source_acc.clone() {
             targets.push((src, false));
         }
@@ -2284,6 +2365,16 @@ fn resolve_detail_prefetch(
         }
     } else {
         for lb in select_lb_candidates(conn, cfg, &uctx.username, &req.device_id) {
+            if uctx.forbid_master_fallback && !src_master_uid.is_empty() {
+                let lb_uid = if !lb.uid.is_empty() {
+                    lb.uid.clone()
+                } else {
+                    p115::extract_uid_from_cookie(&lb.cookies)
+                };
+                if !lb_uid.is_empty() && lb_uid == src_master_uid {
+                    continue;
+                }
+            }
             targets.push((lb, true));
         }
     }
@@ -2575,6 +2666,7 @@ fn trigger_next_episode_prewarm(
     ua: &str,
     target_acc: Account115,
     is_lb: bool,
+    forbid_master_fallback: bool,
 ) {
     if req.item_id.trim().is_empty() && cur_resolved.is_none() {
         return;
@@ -2674,7 +2766,12 @@ fn trigger_next_episode_prewarm(
         });
 
         let small_limit = cfg_owned.engine.small_file_direct_mb.saturating_mul(1024 * 1024);
-        if !is_same_source_uid && small_limit > 0 && next_ep.file_size > 0 && next_ep.file_size <= small_limit {
+        if !forbid_master_fallback
+            && !is_same_source_uid
+            && small_limit > 0
+            && next_ep.file_size > 0
+            && next_ep.file_size <= small_limit
+        {
             return;
         }
 

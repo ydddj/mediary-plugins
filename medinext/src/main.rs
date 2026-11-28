@@ -343,6 +343,22 @@ fn dispatch(
                             acc.uid = existing.uid.clone();
                         }
                     }
+                    // Preserve runtime/probed metadata omitted by the UI form
+                    if acc.user_key.is_empty() && acc.cookies == existing.cookies {
+                        acc.user_key = existing.user_key.clone();
+                    }
+                    if acc.app.is_empty() {
+                        acc.app = existing.app.clone();
+                    }
+                    if acc.drive_info.is_empty() {
+                        acc.drive_info = existing.drive_info.clone();
+                    }
+                    if acc.sort_order == 0 && existing.sort_order != 0 {
+                        acc.sort_order = existing.sort_order;
+                    }
+                    if acc.cache_cid.is_empty() && acc.cache_path == existing.cache_path {
+                        acc.cache_cid = existing.cache_cid.clone();
+                    }
                     acc.valid = true;
                     *existing = acc;
                 } else {
@@ -358,7 +374,18 @@ fn dispatch(
                 Ok(true)
             })?;
             if is_lb {
-                db::mark_lb_cooldown(&conn, &orig_name, 0, "");
+                let saved_name = input["account"]["name"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&orig_name);
+                db::mark_lb_cooldown(&conn, saved_name, 0, "");
+                if orig_name != saved_name && !orig_name.is_empty() {
+                    let _ = conn.execute(
+                        "DELETE FROM lb_state WHERE account_name = ?1",
+                        params![orig_name],
+                    );
+                }
             }
             Ok(build_bootstrap(&conn, &cfg, settings, fast_host_status(data_dir)))
         }
@@ -393,6 +420,10 @@ fn dispatch(
                 .find(|a| a.name == name)
                 .context("未找到指定 115 账号")?
                 .clone();
+            ensure!(
+                !acc.cookies.trim().is_empty(),
+                "该账号仅配置了 OpenAPI 令牌，无需 Cookie 探活"
+            );
             let proxy = if !acc.proxy_url.is_empty() {
                 acc.proxy_url.as_str()
             } else {
@@ -563,14 +594,54 @@ fn dispatch(
                     .iter_mut()
                     .find(|x| x.username.eq_ignore_ascii_case(&user.username))
                 {
-                    if user.cookies.trim().is_empty() || user.cookies.contains("******") {
-                        if input["clear_cookie"].as_bool() != Some(true) {
-                            user.cookies = ex.cookies.clone();
-                            user.access_token = ex.access_token.clone();
+                    let clear_ck = input["clear_cookie"].as_bool() == Some(true);
+                    let incoming_user = &input["user"];
+                    if clear_ck {
+                        user.cookies.clear();
+                        user.access_token.clear();
+                        user.p115_uid.clear();
+                        user.user_key.clear();
+                        user.cache_cid.clear();
+                    } else if user.cookies.trim().is_empty() || user.cookies.contains("******") {
+                        user.cookies = ex.cookies.clone();
+                        user.access_token = ex.access_token.clone();
+                        if user.p115_uid.is_empty() {
+                            user.p115_uid = ex.p115_uid.clone();
+                        }
+                        if user.user_key.is_empty() {
+                            user.user_key = ex.user_key.clone();
                         }
                     }
-                    if user.p115_uid.is_empty() {
+                    if !clear_ck && user.p115_uid.is_empty() {
                         user.p115_uid = p115::extract_uid_from_cookie(&user.cookies);
+                    }
+                    // Preserve fields omitted by the UI edit modal so editing a user never wipes quota/status!
+                    if incoming_user.get("is_disabled").is_none() {
+                        user.is_disabled = ex.is_disabled;
+                    }
+                    if incoming_user.get("quota_enabled").is_none() {
+                        user.quota_enabled = ex.quota_enabled;
+                    }
+                    if incoming_user.get("quota_gb").is_none() {
+                        user.quota_gb = ex.quota_gb;
+                    }
+                    if incoming_user.get("quota_usage_bytes").is_none() {
+                        user.quota_usage_bytes = ex.quota_usage_bytes;
+                    }
+                    if incoming_user.get("recycle_bin_code").is_none() {
+                        user.recycle_bin_code = ex.recycle_bin_code.clone();
+                    }
+                    if incoming_user.get("max_streams_override").is_none() {
+                        user.max_streams_override = ex.max_streams_override;
+                    }
+                    if incoming_user.get("max_devices_override").is_none() {
+                        user.max_devices_override = ex.max_devices_override;
+                    }
+                    if incoming_user.get("last_ip").is_none() {
+                        user.last_ip = ex.last_ip.clone();
+                    }
+                    if !clear_ck && user.cache_cid.is_empty() && user.cache_path == ex.cache_path {
+                        user.cache_cid = ex.cache_cid.clone();
                     }
                     *ex = user;
                 } else {

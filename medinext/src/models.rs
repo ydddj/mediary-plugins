@@ -66,6 +66,10 @@ where
     Ok(flex_u64(deserializer)?.min(u32::MAX as u64) as u32)
 }
 
+pub fn truncate_chars(s: &str, max_chars: usize) -> String {
+    s.chars().take(max_chars).collect()
+}
+
 pub fn mask_secret(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -254,6 +258,8 @@ pub struct PolicyTemplate {
     pub default_route: String,
     #[serde(deserialize_with = "flex_u64")]
     pub quota_gb: u64,
+    /// 禁止回退源盘大号（跳过小文件直连、强制不走源盘/宿主兜底）
+    pub forbid_master_fallback: bool,
 }
 
 impl Default for PolicyTemplate {
@@ -264,6 +270,7 @@ impl Default for PolicyTemplate {
             max_devices: 5,
             default_route: "load_balance".to_string(),
             quota_gb: 0,
+            forbid_master_fallback: false,
         }
     }
 }
@@ -281,6 +288,8 @@ pub struct UserPolicy {
     /// "template" | "load_balance" | "own_cookie" | "direct"
     #[serde(deserialize_with = "null_default")]
     pub route_mode: String,
+    /// 禁止回退源盘大号（跳过小文件直连、失败时禁止回退源盘主号或宿主内置主号）
+    pub forbid_master_fallback: bool,
     #[serde(deserialize_with = "null_default")]
     pub template: String,
     /// YYYY-MM-DD or empty for permanent
@@ -328,6 +337,7 @@ impl UserPolicy {
             "is_disabled": self.is_disabled,
             "is_expired": expired,
             "route_mode": if self.route_mode.is_empty() { "template" } else { &self.route_mode },
+            "forbid_master_fallback": self.forbid_master_fallback,
             "template": self.template,
             "expiry_date": self.expiry_date,
             "has_own_cookie": !self.cookies.trim().is_empty() || !self.access_token.trim().is_empty(),
@@ -430,6 +440,7 @@ impl Default for AppConfig {
                 max_devices: 5,
                 default_route: "load_balance".to_string(),
                 quota_gb: 0,
+                forbid_master_fallback: false,
             }],
             users: Vec::new(),
             risk: RiskConfig::default(),

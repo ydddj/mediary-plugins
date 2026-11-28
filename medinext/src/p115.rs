@@ -342,7 +342,10 @@ pub fn fetch_upload_credentials(
             if code == 405 || code == 403 {
                 Err(P115Error::Risk405(format!("uploadinfo HTTP {code}")))
             } else {
-                Err(P115Error::Other(format!("uploadinfo HTTP {code}: {}", &body[..body.len().min(120)])))
+                Err(P115Error::Other(format!(
+                    "uploadinfo HTTP {code}: {}",
+                    crate::models::truncate_chars(&body, 120)
+                )))
             }
         }
         Err(e) => Err(P115Error::Other(format!("连接 115 uploadinfo 失败: {e}"))),
@@ -628,10 +631,13 @@ pub fn get_download_link(
 fn extract_downurl_from_data(data_val: &Value, ua: &str) -> Option<DownloadLink115> {
     let map = data_val.as_object()?;
     for (_fid, entry) in map {
-        let url_str = entry["url"]["url"]
+        let Some(url_str) = entry["url"]["url"]
             .as_str()
             .or_else(|| entry["url"].as_str())
-            .filter(|s| !s.trim().is_empty())?;
+            .filter(|s| !s.trim().is_empty())
+        else {
+            continue;
+        };
         let file_name = entry["file_name"].as_str().unwrap_or_default().to_string();
         let file_size = entry["file_size"]
             .as_u64()
@@ -915,7 +921,12 @@ where
                 .set("Authorization", &format!("Bearer {}", access_token.trim()))
                 .set("User-Agent", DEFAULT_115_UA)
                 .send_form(&form)
-                .map_err(|e| P115Error::Other(format!("OpenAPI upload/init 失败: {e}")))?;
+                .map_err(|e| match e {
+                    ureq::Error::Status(405 | 403, _) => {
+                        P115Error::Risk405("OpenAPI upload/init HTTP 405".to_string())
+                    }
+                    other => P115Error::Other(format!("OpenAPI upload/init 失败: {other}")),
+                })?;
             r.into_json().map_err(|e| P115Error::Other(e.to_string()))
         };
 

@@ -72,8 +72,8 @@
     {
       "id": "medinext",
       "name": "MediNext 302 播放负载与风控",
-      "version": "2.1.6",
-      "description": "面向 Mediary 3.4.6+/3.4.8+ 的原生 302 播放负载与观影风控引擎：基于宿主 playback_hook 常驻 Unix Socket 零额外端口接管 8118 播放，支持 115 多号负载均衡池、用户独立 115 秒传复用、Mediary 3.4.8+ 详情页/多版本切换(PlaybackInfo)/片尾下一集 /prefetch 小号预热转发与临期续签、跨入口直链缓存复用、主程序通知中心实时风控告警、转存配额与回收站自动清理及 NextEmby 一键迁移。",
+      "version": "2.2.0",
+      "description": "原生302播放负载与风控引擎：支持115多号均衡、独立秒传、智能预热、配额清理与防爬。",
       "author": "ydddj",
       "homepage": "https://github.com/ydddj/mediary-plugins/tree/main/medinext",
       "source": "https://github.com/ydddj/mediary-plugins",
@@ -90,9 +90,9 @@
       ],
       "artifacts": {
         "linux-amd64": {
-          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/medinext-2.1.6-linux-amd64.tar.gz",
-          "sha256": "3e220fd88ddf6a14c82006f721ddedc4d48929dd8abb601e0d378fdcf0c4c34c",
-          "size": 3771556
+          "url": "https://github.com/ydddj/mediary-plugins/releases/download/v2026.11.28/medinext-2.2.0-linux-amd64.tar.gz",
+          "sha256": "0e4612a0becafa57a3d0b73fb50d6c055a826b31f083adff19b4cee6a13246a2",
+          "size": 3772584
         }
       }
     },

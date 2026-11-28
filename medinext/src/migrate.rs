@@ -128,6 +128,8 @@ fn import_from_sqlite_file(db_path: &Path, label: &str, cfg: &mut AppConfig) -> 
                                         false,
                                     ),
                                     quota_gb: 0,
+                                    forbid_master_fallback: item["forbid_master_fallback"].as_bool()
+                                        == Some(true),
                                 };
                                 if let Some(ex) = cfg.templates.iter_mut().find(|t| t.name == name) {
                                     *ex = tpl;

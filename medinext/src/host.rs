@@ -227,7 +227,7 @@ impl HostClient {
             }
             Err(ureq::Error::Status(code, r)) => {
                 let raw = r.into_string().unwrap_or_default();
-                Err(anyhow!("HTTP {code}: {}", &raw[..raw.len().min(180)]))
+                Err(anyhow!("HTTP {code}: {}", crate::models::truncate_chars(&raw, 180)))
             }
             Err(e) => Err(anyhow!("请求宿主 API 失败: {e}")),
         }

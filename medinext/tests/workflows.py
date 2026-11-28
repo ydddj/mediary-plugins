@@ -355,9 +355,13 @@ def main():
                 f,
             )
 
+        # 0. Verify plugin.json description stays concise (<= 50 chars)
+        manifest = json.load(open(os.path.join(os.path.dirname(binary), "plugin.json"), "r", encoding="utf-8"))
+        assert len(manifest["description"]) <= 50, f"description too long ({len(manifest['description'])}): {manifest['description']}"
+
         # 1. Bootstrap & dashboard.json (verify enabled detection when "$enabled" is stripped from settings!)
         boot = run_action(binary, data_dir, "ui_bootstrap", {}, api_url=api_url)
-        assert boot["version"] == "2.1.6", boot["version"]
+        assert boot["version"] == "2.2.0", boot["version"]
         assert boot["engine"]["notify_playback"] is False, boot["engine"]
         assert boot["engine"]["detail_prefetch_delay_ms"] == 0, boot["engine"]
         assert boot["host_status"]["plugin_enabled"] is True, boot["host_status"]
@@ -706,6 +710,115 @@ def main():
             tick_res = run_action(binary, data_dir, "tick", {}, api_url=api_url)
             assert tick_res["disabled_expired"] == 1, tick_res
             assert ("11", False) in disabled_users, disabled_users
+
+            # 4g. Regression: ui_save_account & ui_save_user MUST preserve hidden fields omitted by UI modals!
+            run_action(
+                binary,
+                data_dir,
+                "ui_save_account",
+                {
+                    "original_name": "115-lb1",
+                    "account": {
+                        "name": "115-lb1",
+                        "role": "lb",
+                        "cookies": "******",
+                        "cache_path": "/Next",
+                        "quota_gb": 5120,
+                        "quota_enabled": True,
+                        "recycle_bin_code": "",
+                        "proxy_url": "",
+                        "enabled": True,
+                    },
+                },
+                api_url=api_url,
+            )
+            boot_acc = run_action(binary, data_dir, "ui_bootstrap", {}, api_url=api_url)
+            lb1_after = [a for a in boot_acc["lb_accounts"] if a["name"] == "115-lb1"][0]
+            assert lb1_after["quota_usage_bytes"] == 10737418240, lb1_after
+            assert lb1_after["app"] == "tv", lb1_after
+
+            # 4h. Strict `forbid_master_fallback` policy: charlie (user_id=12) MUST NEVER fall back to master
+            #     on small files (50 MB <= 200 MB) OR when LB accounts are unavailable -> returns 403 deny!
+            run_action(
+                binary,
+                data_dir,
+                "ui_save_user",
+                {
+                    "user": {
+                        "username": "charlie",
+                        "emby_id": "12",
+                        "route_mode": "load_balance",
+                        "forbid_master_fallback": True,
+                        "template": "vvvvvip",
+                        "expiry_date": "",
+                        "cache_path": "/EmbyCache",
+                        "remark": "strict lb only",
+                        "cookies": "",
+                        "is_admin": False,
+                        "is_banned": False,
+                    }
+                },
+                api_url=api_url,
+            )
+            # Disable all LB accounts so charlie has zero healthy small accounts
+            for lb_name in ("115-lb1", "115-lb1-ipad"):
+                run_action(
+                    binary,
+                    data_dir,
+                    "ui_save_account",
+                    {
+                        "original_name": lb_name,
+                        "account": {
+                            "name": lb_name,
+                            "role": "lb",
+                            "cookies": "******",
+                            "cache_path": "/Next",
+                            "quota_gb": 5120,
+                            "quota_enabled": True,
+                            "enabled": False,
+                        },
+                    },
+                    api_url=api_url,
+                )
+            code, no_master_deny = unix_http_request(
+                sock_path,
+                "POST",
+                "/resolve",
+                {
+                    "user_id": 12,
+                    "pick_code": "ay4u93dndfz6ehj39",
+                    "item_id": "item_small_demo",  # 50 MB small file! Must NOT use small_file_direct or fallback_on_fail!
+                    "user_agent": "Infuse-Direct/8.0",
+                    "device_id": "dev-charlie-1",
+                },
+            )
+            assert code == 200 and no_master_deny["status"] == "deny" and no_master_deny["status_code"] == 403, no_master_deny
+            assert "禁止回退源盘大号" in no_master_deny["reason"], no_master_deny
+            # Verify editing expired_bob preserves is_disabled=True set by tick!
+            run_action(
+                binary,
+                data_dir,
+                "ui_save_user",
+                {
+                    "user": {
+                        "username": "expired_bob",
+                        "emby_id": "11",
+                        "route_mode": "template",
+                        "forbid_master_fallback": False,
+                        "template": "vvvvvip",
+                        "expiry_date": "2020-01-01",
+                        "cache_path": "/EmbyCache",
+                        "remark": "edited remark",
+                        "cookies": "",
+                        "is_admin": False,
+                        "is_banned": False,
+                    }
+                },
+                api_url=api_url,
+            )
+            boot_bob = run_action(binary, data_dir, "ui_bootstrap", {}, api_url=api_url)
+            bob_after = [u for u in boot_bob["users"] if u["username"] == "expired_bob"][0]
+            assert bob_after["is_disabled"] is True, bob_after
         finally:
             daemon.terminate()
             daemon.wait(timeout=5)
