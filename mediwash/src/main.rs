@@ -432,6 +432,78 @@ fn dispatch(
             }))
         }
 
+        "ui_prune_staging" => {
+            ensure!(
+                !settings.dry_run,
+                "当前处于「仅预览模式（干跑）」，请先关闭仅预览模式后再清理待洗版空目录与残留文件"
+            );
+            let host = HostClient::from_env()?;
+            let cfg = db::load_config(conn)?;
+            let pid_opt = input["id"].as_i64().filter(|&id| id > 0);
+            let targets: Vec<&models::StagingPipeline> = cfg
+                .pipelines
+                .iter()
+                .filter(|p| {
+                    !p.source_cid.trim().is_empty()
+                        && pid_opt.is_none_or(|pid| p.id == pid)
+                })
+                .collect();
+            ensure!(!targets.is_empty(), "请先配置至少一个 115 待洗版监控目录");
+            let mut total_dirs = 0usize;
+            let mut total_files = 0usize;
+            let mut preserved_hits: Vec<String> = Vec::new();
+            let mut any_truncated = false;
+            for p in targets {
+                let ps = staging::prune_pipeline_staging(&host, &cfg, p, 25);
+                total_dirs += ps.cleaned_dirs;
+                total_files += ps.cleaned_files;
+                for h in ps.preserved_hits {
+                    if !preserved_hits.contains(&h) {
+                        preserved_hits.push(h);
+                    }
+                }
+                if ps.truncated {
+                    any_truncated = true;
+                }
+            }
+            let mut parts = Vec::new();
+            if total_dirs > 0 {
+                parts.push(format!("已清理空/残留目录 {total_dirs} 个"));
+            }
+            if total_files > 0 {
+                parts.push(format!("已清理非媒体残留文件 {total_files} 个"));
+            }
+            if parts.is_empty() {
+                parts.push("未发现可清理的空目录或非媒体残留文件".to_string());
+            }
+            if !preserved_hits.is_empty() {
+                parts.push(format!("已保留受保护目录：{}", preserved_hits.join("、")));
+            }
+            if any_truncated {
+                parts.push("子目录数量较多，可再次点击继续深度清理".to_string());
+            }
+            let notice = parts.join("；");
+            if total_dirs > 0 || total_files > 0 {
+                db::log_task_history(
+                    conn,
+                    "115清理",
+                    "待洗版空目录与非媒体残留清理",
+                    "",
+                    "prune",
+                    "done",
+                    &notice,
+                );
+            }
+            Ok(json!({
+                "cleaned_dirs": total_dirs,
+                "cleaned_files": total_files,
+                "preserved_hits": preserved_hits,
+                "truncated": any_truncated,
+                "notice": notice,
+                "counts": db::summary_counts(conn),
+            }))
+        }
+
         "ui_staging_list" => {
             let pid = input["pipeline_id"].as_i64();
             let state = input["state"].as_str().unwrap_or("pending");

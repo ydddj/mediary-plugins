@@ -473,7 +473,12 @@ function renderStagingTab(root) {
     reject_mode: 'recycle_bin',
     probe_mode: 'smart',
     rule_id_override: '',
+    clean_empty_dirs: true,
+    preserved_dirs: ['link'],
   };
+  const primaryPreservedStr = Array.isArray(primary.preserved_dirs)
+    ? primary.preserved_dirs.join(', ')
+    : 'link';
   const rules = b.rules || [];
   const extraPipelines = pipelines.slice(1);
   const rejMode = primary.reject_mode === 'skip' ? 'skip' : 'recycle_bin';
@@ -624,6 +629,14 @@ function renderStagingTab(root) {
         </div>
       </div>
 
+      <div class="mw-field" style="margin-top:10px;">
+        <label>保留目录（清理空目录时永不删除的目录，逗号分隔，如上传用的 <code>link</code> 目录）</label>
+        <input class="mw-input mw-mono" id="qp-preserved-dirs" value="${esc(primaryPreservedStr)}" placeholder="例如: link, upload, link/电影（支持目录名、相对路径或 115 CID）" />
+        <span class="mw-muted" style="font-size:11.5px;">
+          保留目录本身永远不会被删；其内部已归档清空的影片子目录及无视频时的散落非媒体残留（<code>.nfo / .jpg / .txt / .url / .pdf / 字幕包</code> 等）会自动移入 115 回收站
+        </span>
+      </div>
+
       <div id="qp-inline-picker" style="margin-top:10px;"></div>
 
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--mw-border);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
@@ -648,9 +661,14 @@ function renderStagingTab(root) {
             <input type="checkbox" id="qp-sub" ${primary.move_subtitles !== false ? 'checked' : ''} />
             <span>淘汰时同步清理同名外挂字幕</span>
           </label>
+          <label class="mw-check">
+            <input type="checkbox" id="qp-clean-empty" ${primary.clean_empty_dirs !== false ? 'checked' : ''} />
+            <span>处理后自动清理空目录及非媒体残留</span>
+          </label>
         </div>
 
         <div class="mw-actions">
+          <button type="button" class="mw-btn" id="btn-qp-prune-now" data-tip="立即扫描待洗版目录，将已清空或仅剩非媒体残留的子目录与散落杂文件移入 115 回收站（自动跳过上方保留目录）">清理空目录与残留</button>
           <button type="button" class="mw-btn" id="btn-qp-save">保存设置</button>
           <button type="button" class="mw-btn primary" id="btn-qp-save-scan">保存并立即扫描处理</button>
         </div>
@@ -831,6 +849,16 @@ function renderStagingTab(root) {
     });
   };
 
+  const parsePreservedList = (raw) =>
+    Array.from(
+      new Set(
+        String(raw || '')
+          .split(/[,，;\n]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      )
+    );
+
   const savePrimaryPipeline = async (runScan) => {
     const srcCid = document.getElementById('qp-src-cid').value.trim();
     const dstCid = document.getElementById('qp-dst-cid').value.trim();
@@ -853,6 +881,8 @@ function renderStagingTab(root) {
       reject_mode: document.getElementById('qp-rej-mode').value,
       probe_mode: document.getElementById('qp-probe-mode').value || 'smart',
       rule_id_override: document.getElementById('qp-rule-override').value || '',
+      clean_empty_dirs: document.getElementById('qp-clean-empty').checked,
+      preserved_dirs: parsePreservedList(document.getElementById('qp-preserved-dirs').value),
     };
     if (runScan) showToast('正在保存设置并分批执行一步归档与洗版处理...', 'info');
     let res = await callAction('ui_save_pipeline', { pipeline, run_scan: runScan });
@@ -878,6 +908,15 @@ function renderStagingTab(root) {
 
   document.getElementById('btn-qp-save').onclick = () => savePrimaryPipeline(false);
   document.getElementById('btn-qp-save-scan').onclick = () => savePrimaryPipeline(true);
+  document.getElementById('btn-qp-prune-now').onclick = async () => {
+    showToast('正在扫描待洗版目录并清理空目录与非媒体残留...', 'info');
+    const res = await callAction('ui_prune_staging', { id: primary.id || 0 });
+    if (res.counts && state.boot) {
+      state.boot.counts = res.counts;
+      syncSidebarBadges();
+    }
+    showToast(res.notice || '清理完成', 'success');
+  };
 
   document.getElementById('btn-edit-primary-pipe').onclick = () => openPipelineModal(primary.id ? primary : null);
   document.getElementById('btn-browse-115-standalone').onclick = () => open115BrowserModal();
@@ -3158,8 +3197,11 @@ function openPipelineModal(existing) {
         reject_mode: 'recycle_bin',
         probe_mode: 'smart',
         rule_id_override: '',
+        clean_empty_dirs: true,
+        preserved_dirs: ['link'],
       };
   const rules = state.boot.rules || [];
+  const pPreservedStr = Array.isArray(p.preserved_dirs) ? p.preserved_dirs.join(', ') : 'link';
 
   openModal(
     p.id ? `编辑 115 监控目录 · ${p.name}` : '新增 115 待洗版监控目录',
@@ -3228,12 +3270,18 @@ function openPipelineModal(existing) {
         </div>
       </div>
 
+      <div class="mw-field" style="margin-top:10px;">
+        <label>保留目录（清理空目录时永不删除，逗号分隔，如 <code>link</code>）</label>
+        <input class="mw-input mw-mono" id="pm-preserved" value="${esc(pPreservedStr)}" placeholder="例如: link, upload, link/电影（支持目录名、相对路径或 115 CID）" />
+      </div>
+
       <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:14px;">
         <label class="mw-check"><input type="checkbox" id="pm-wash" ${p.wash_enabled !== false ? 'checked' : ''} /><span>启用权重洗版</span></label>
         <label class="mw-check"><input type="checkbox" id="pm-auto" ${p.auto_admit !== false ? 'checked' : ''} /><span>全自动执行归档与回收</span></label>
         <label class="mw-check"><input type="checkbox" id="pm-enabled" ${p.enabled !== false ? 'checked' : ''} /><span>启用定时巡检</span></label>
         <label class="mw-check"><input type="checkbox" id="pm-rec" ${p.recursive !== false ? 'checked' : ''} /><span>递归扫描子文件夹</span></label>
         <label class="mw-check"><input type="checkbox" id="pm-sub" ${p.move_subtitles !== false ? 'checked' : ''} /><span>淘汰时同步清理同名外挂字幕</span></label>
+        <label class="mw-check"><input type="checkbox" id="pm-clean-empty" ${p.clean_empty_dirs !== false ? 'checked' : ''} /><span>处理后自动清理空目录及非媒体残留</span></label>
       </div>
 
       <div id="pm-inline-browser" style="margin-top:12px;"></div>
@@ -3278,6 +3326,15 @@ function openPipelineModal(existing) {
           reject_mode: body.querySelector('#pm-rej').value,
           probe_mode: body.querySelector('#pm-probe').value,
           rule_id_override: body.querySelector('#pm-rule').value,
+          clean_empty_dirs: body.querySelector('#pm-clean-empty').checked,
+          preserved_dirs: Array.from(
+            new Set(
+              String(body.querySelector('#pm-preserved').value || '')
+                .split(/[,，;\n]+/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+            )
+          ),
         };
         const res = await callAction('ui_save_pipeline', { pipeline });
         applyBootstrap(res);

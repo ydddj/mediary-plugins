@@ -19,9 +19,13 @@ const VIDEO_EXTS: &[&str] = &[
 const SUBTITLE_EXTS: &[&str] = &["ass", "ssa", "srt", "sup", "vtt", "sub", "idx"];
 const CLUTTER_EXTS: &[&str] = &[
     "nfo", "xml", "json", "txt", "md", "url", "htm", "html", "sfv", "md5", "sha1", "log",
-    "jpg", "jpeg", "png", "webp", "bmp", "gif", "tbn", "ico",
-    "ass", "ssa", "srt", "sup", "vtt", "sub", "idx", "cue", "ini", "db", "torrent",
+    "pdf", "doc", "docx", "rtf", "csv", "cue", "ini", "db", "torrent", "nzb", "lnk",
+    "m3u", "m3u8", "pls", "lrc", "part", "aria2", "tmp", "bak",
+    "jpg", "jpeg", "png", "webp", "bmp", "gif", "tbn", "ico", "svg", "tif", "tiff", "heic", "avif", "jfif", "bif",
+    "ass", "ssa", "srt", "sup", "vtt", "sub", "idx", "smi", "sami", "sbv", "mks",
 ];
+
+const ARCHIVE_CLUTTER_EXTS: &[&str] = &["zip", "rar", "7z"];
 
 pub fn is_video_name(name: &str) -> bool {
     name.rsplit_once('.')
@@ -38,26 +42,113 @@ fn is_leftover_clutter(file: &Cloud115File) -> bool {
         return false;
     }
     let trimmed = file.name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let low_full = trimmed.to_ascii_lowercase();
+    if low_full.ends_with(".strm") {
+        return false;
+    }
     if trimmed.starts_with('.') && file.size <= 10 * 1024 * 1024 {
         return true;
     }
     if file.size > 50 * 1024 * 1024 {
         return false;
     }
-    trimmed.rsplit_once('.').is_some_and(|(_, ext)| {
+    if let Some((_, ext)) = trimmed.rsplit_once('.') {
         let low = ext.to_ascii_lowercase();
         if low == "json" {
             // Clean Mediary PT upload `*-mediainfo.json` / metadata sidecars <= 10 MB
             return file.size <= 10 * 1024 * 1024;
         }
+        if ARCHIVE_CLUTTER_EXTS.contains(&low.as_str()) {
+            // Small leftover subtitle/info archives <= 30 MB
+            return file.size <= 30 * 1024 * 1024;
+        }
         CLUTTER_EXTS.contains(&low.as_str())
-    })
+    } else {
+        // Extensionless small readme / disclaimer / thumbs leftovers <= 2 MB
+        file.size <= 2 * 1024 * 1024
+    }
 }
 
-/// Bottom-up Mode B cleanup of subdirectories inside `root_cid`:
-/// Recycles any non-protected subdirectory whose entire subtree contains ZERO videos
-/// and ZERO unknown/large files (cleaning both pure empty directories and directories
-/// left with only `.nfo / .jpg / .png / .txt / .url / *-mediainfo.json / orphan subtitles` after videos moved out).
+#[derive(Debug, Clone, Default)]
+pub struct PruneStats {
+    pub cleaned_dirs: usize,
+    pub cleaned_files: usize,
+    pub preserved_hits: Vec<String>,
+    pub truncated: bool,
+}
+
+fn normalize_preserved_rule(raw: &str) -> String {
+    raw.trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string()
+}
+
+/// Checks if a directory inside `source_cid` is protected by user `preserved_dirs` rules.
+/// Supports:
+/// - Top-level folder name (e.g. `link`, `upload`)
+/// - Nested relative path (e.g. `link/upload` — protects both `link` and `link/upload`)
+/// - Pure numeric 115 CID (e.g. `3570317016130651367`)
+pub(crate) fn is_preserved_dir_match(
+    rel_path: &str,
+    dir_name: &str,
+    dir_cid: &str,
+    depth: usize,
+    preserved_rules: &[String],
+) -> bool {
+    let rel_low = rel_path.trim().trim_matches('/').to_ascii_lowercase();
+    let name_low = dir_name.trim().to_ascii_lowercase();
+    let cid_trimmed = dir_cid.trim();
+
+    for raw in preserved_rules {
+        let rule = normalize_preserved_rule(raw);
+        if rule.is_empty() {
+            continue;
+        }
+        if rule.bytes().all(|b| b.is_ascii_digit()) {
+            if !cid_trimmed.is_empty() && cid_trimmed == rule {
+                return true;
+            }
+            continue;
+        }
+        let rule_low = rule.to_ascii_lowercase();
+        if rule_low.contains('/') {
+            if rel_low == rule_low || rule_low.starts_with(&format!("{rel_low}/")) {
+                return true;
+            }
+        } else if depth == 0 && name_low == rule_low {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_bluray_structural_dir(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "bdmv"
+            | "certificate"
+            | "video_ts"
+            | "audio_ts"
+            | "auxdata"
+            | "backup"
+            | "clipinf"
+            | "jar"
+            | "meta"
+            | "playlist"
+    )
+}
+
+/// Bottom-up Mode B cleanup of subdirectories & orphan non-media files inside a staging pipeline:
+/// 1) Recycles any non-preserved subdirectory whose entire subtree contains ZERO videos
+///    and ZERO unknown/large files (cleaning both pure empty directories and directories
+///    left with only `.nfo / .jpg / .png / .txt / .url / *-mediainfo.json / orphan subtitles / small archives`).
+/// 2) Preserves configured `preserved_dirs` (e.g. `link`) themselves while still pruning
+///    emptied child media folders inside them AND cleaning loose orphan non-media files
+///    sitting directly in `root` or inside a preserved folder when that folder has ZERO videos.
 #[allow(dead_code)]
 pub fn prune_staging_subdirs(host: &HostClient, cfg: &AppConfig, root_cid: &str) -> usize {
     prune_staging_subdirs_with_budget(host, cfg, root_cid, 12)
@@ -69,9 +160,41 @@ pub fn prune_staging_subdirs_with_budget(
     root_cid: &str,
     budget_secs: u64,
 ) -> usize {
+    let preserved: Vec<String> = cfg
+        .pipelines
+        .iter()
+        .find(|p| p.source_cid.trim() == root_cid.trim())
+        .map(|p| p.preserved_dirs.clone())
+        .unwrap_or_else(crate::models::default_preserved_dirs);
+    prune_staging_root_with_rules(host, cfg, root_cid, &preserved, budget_secs).cleaned_dirs
+}
+
+pub fn prune_pipeline_staging(
+    host: &HostClient,
+    cfg: &AppConfig,
+    pipeline: &StagingPipeline,
+    budget_secs: u64,
+) -> PruneStats {
+    prune_staging_root_with_rules(
+        host,
+        cfg,
+        &pipeline.source_cid,
+        &pipeline.preserved_dirs,
+        budget_secs,
+    )
+}
+
+pub fn prune_staging_root_with_rules(
+    host: &HostClient,
+    cfg: &AppConfig,
+    root_cid: &str,
+    preserved_rules: &[String],
+    budget_secs: u64,
+) -> PruneStats {
+    let mut stats = PruneStats::default();
     let root = root_cid.trim();
     if root.is_empty() || root == "0" {
-        return 0;
+        return stats;
     }
     let mut protected: BTreeSet<String> = cfg.host_sync.protected_cids.iter().cloned().collect();
     for p in &cfg.pipelines {
@@ -85,16 +208,23 @@ pub fn prune_staging_subdirs_with_budget(
     protected.insert(root.to_string());
 
     let clock = Instant::now();
-    let max_dur = Duration::from_secs(budget_secs.clamp(3, 25));
-    let mut bfs: VecDeque<(String, usize)> = VecDeque::from([(root.to_string(), 0usize)]);
+    let max_dur = Duration::from_secs(budget_secs.clamp(3, 30));
+    let mut bfs: VecDeque<(String, usize, String)> =
+        VecDeque::from([(root.to_string(), 0usize, String::new())]);
     let mut seen: BTreeSet<String> = BTreeSet::from([root.to_string()]);
     let mut parent_of: BTreeMap<String, String> = BTreeMap::new();
     let mut children_of: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut depth_of: BTreeMap<String, usize> = BTreeMap::new();
+    let mut name_of: BTreeMap<String, String> = BTreeMap::new();
     let mut own_clean: BTreeMap<String, bool> = BTreeMap::new();
+    let mut dir_has_video: BTreeMap<String, bool> = BTreeMap::new();
+    let mut dir_all_pages_ok: BTreeMap<String, bool> = BTreeMap::new();
+    let mut loose_clutter: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut preserved_seen: BTreeSet<String> = BTreeSet::new();
 
-    while let Some((cid, depth)) = bfs.pop_front() {
-        if seen.len() > 150 || clock.elapsed() >= max_dur {
+    while let Some((cid, depth, rel_prefix)) = bfs.pop_front() {
+        if seen.len() > 600 || clock.elapsed() >= max_dur {
+            stats.truncated = true;
             // Incomplete subtree discovery: mark unexpanded directory as non-clean so we never delete an uninspected parent!
             if cid != root {
                 own_clean.insert(cid, false);
@@ -104,6 +234,8 @@ pub fn prune_staging_subdirs_with_budget(
         let mut offset = 0usize;
         let mut all_pages_ok = true;
         let mut dir_files_clean = true;
+        let mut has_video_here = false;
+        let mut clutter_ids_here: Vec<String> = Vec::new();
         let mut pages_read = 0usize;
         loop {
             pages_read += 1;
@@ -118,29 +250,59 @@ pub fn prune_staging_subdirs_with_budget(
             let n = page.items.len();
             for item in page.items {
                 if item.is_dir {
-                    // Protect depth-1 upstream mount folders (`待洗版/link`, `待洗版/upload`, etc.) so FlowLink upload targets stay intact!
-                    if depth == 0
-                        && matches!(
-                            item.name.trim().to_lowercase().as_str(),
-                            "link" | "upload" | "offline" | "云下载" | "转存" | "转存监控" | "最近接收"
-                        )
-                    {
+                    let child_rel = if rel_prefix.is_empty() {
+                        item.name.trim().to_string()
+                    } else {
+                        format!("{rel_prefix}/{}", item.name.trim())
+                    };
+                    if is_preserved_dir_match(
+                        &child_rel,
+                        &item.name,
+                        &item.file_id,
+                        depth,
+                        preserved_rules,
+                    ) {
+                        protected.insert(item.file_id.clone());
+                        if preserved_seen.insert(child_rel.clone()) {
+                            stats.preserved_hits.push(child_rel.clone());
+                        }
+                    } else if is_bluray_structural_dir(&item.name) && depth > 0 {
+                        // Do not strip structural subdirectories inside an active Bluray disc folder
                         protected.insert(item.file_id.clone());
                     }
                     if !item.file_id.is_empty() && seen.insert(item.file_id.clone()) {
                         parent_of.insert(item.file_id.clone(), cid.clone());
-                        children_of.entry(cid.clone()).or_default().push(item.file_id.clone());
+                        children_of
+                            .entry(cid.clone())
+                            .or_default()
+                            .push(item.file_id.clone());
                         depth_of.insert(item.file_id.clone(), depth + 1);
-                        bfs.push_back((item.file_id, depth + 1));
+                        name_of.insert(item.file_id.clone(), item.name.clone());
+                        bfs.push_back((item.file_id, depth + 1, child_rel));
                     }
-                } else if cid != root && !is_leftover_clutter(&item) {
-                    dir_files_clean = false;
+                } else {
+                    let low = item.name.trim().to_ascii_lowercase();
+                    if is_video_name(&item.name) || low.ends_with(".strm") {
+                        has_video_here = true;
+                        dir_files_clean = false;
+                    } else if is_leftover_clutter(&item) {
+                        if !item.file_id.is_empty() {
+                            clutter_ids_here.push(item.file_id);
+                        }
+                    } else {
+                        dir_files_clean = false;
+                    }
                 }
             }
             offset += n;
             if n == 0 || offset >= page.count {
                 break;
             }
+        }
+        dir_has_video.insert(cid.clone(), has_video_here);
+        dir_all_pages_ok.insert(cid.clone(), all_pages_ok);
+        if !clutter_ids_here.is_empty() {
+            loose_clutter.insert(cid.clone(), clutter_ids_here);
         }
         if cid != root {
             own_clean.insert(cid, all_pages_ok && dir_files_clean);
@@ -163,10 +325,27 @@ pub fn prune_staging_subdirs_with_budget(
         removable.insert(cid.clone(), is_rem);
     }
 
-    // Delete highest removable subtree roots per parent (falling back to children if a parent dir is host-protected, e.g., `待洗版/link`)
-    let mut cleaned_dirs = 0usize;
+    // Delete highest removable subtree roots per parent (falling back to children if a parent dir is preserved/host-protected, e.g., `待洗版/link`)
+    // AND clean loose orphan non-media clutter files directly inside `root` or preserved dirs when ZERO videos exist directly inside them.
     let mut cursor_parents: VecDeque<String> = VecDeque::from([root.to_string()]);
     while let Some(p_cid) = cursor_parents.pop_front() {
+        // 1) Recycle loose non-media clutter directly in root or preserved dirs (only if ZERO video files exist in `p_cid`!)
+        let is_root_or_preserved = p_cid == root || protected.contains(&p_cid);
+        if is_root_or_preserved
+            && dir_all_pages_ok.get(&p_cid) == Some(&true)
+            && dir_has_video.get(&p_cid) == Some(&false)
+        {
+            if let Some(clutter_ids) = loose_clutter.get(&p_cid) {
+                for chunk in clutter_ids.chunks(50) {
+                    let batch: Vec<String> = chunk.to_vec();
+                    if host.open115_delete_files(&p_cid, &batch).is_ok() {
+                        stats.cleaned_files += batch.len();
+                    }
+                }
+            }
+        }
+
+        // 2) Recycle removable child subdirectories
         let Some(kids) = children_of.get(&p_cid) else {
             continue;
         };
@@ -179,24 +358,29 @@ pub fn prune_staging_subdirs_with_budget(
             }
         }
         if !batch_rem.is_empty() {
-            if host.open115_delete_files(&p_cid, &batch_rem).is_ok() {
-                cleaned_dirs += batch_rem.len();
-            } else {
-                for single in batch_rem {
-                    if host
-                        .open115_delete_files(&p_cid, std::slice::from_ref(&single))
-                        .is_ok()
-                    {
-                        cleaned_dirs += 1;
-                    } else {
-                        // Likely a host-protected mount directory (e.g. `待洗版/link`): preserve it and prune its removable children!
-                        cursor_parents.push_back(single);
+            for chunk in batch_rem.chunks(50) {
+                let batch: Vec<String> = chunk.to_vec();
+                if host.open115_delete_files(&p_cid, &batch).is_ok() {
+                    stats.cleaned_dirs += batch.len();
+                } else {
+                    for single in batch {
+                        if host
+                            .open115_delete_files(&p_cid, std::slice::from_ref(&single))
+                            .is_ok()
+                        {
+                            stats.cleaned_dirs += 1;
+                        } else {
+                            // Likely a host-protected mount directory (e.g. `待洗版/link`): preserve it and prune its removable children!
+                            protected.insert(single.clone());
+                            cursor_parents.push_back(single);
+                        }
                     }
                 }
             }
         }
     }
-    cleaned_dirs
+    let _ = (&parent_of, &name_of);
+    stats
 }
 
 fn stem_prefix(name: &str) -> String {
@@ -718,6 +902,7 @@ pub fn scan_pipeline_with_budget(
 
     let mut auto_moved = 0usize;
     let mut cleaned_dirs = 0usize;
+    let mut cleaned_files = 0usize;
     let mut remaining_auto = 0usize;
     if pipeline.auto_admit && !settings.dry_run && !auto_ready_ids.is_empty() {
         let rem_secs = total_budget_secs.saturating_sub(clock.elapsed().as_secs()).max(5);
@@ -726,20 +911,21 @@ pub fn scan_pipeline_with_budget(
                 soft_budget_secs: rem_secs.min(22),
                 max_organize_files: 30,
                 organize_http_timeout_secs: 38,
-                prune_budget_secs: 5,
+                prune_budget_secs: 6,
             }
         } else {
             ExecOpts {
                 soft_budget_secs: rem_secs,
                 max_organize_files: 150,
                 organize_http_timeout_secs: 110,
-                prune_budget_secs: 15,
+                prune_budget_secs: 18,
             }
         };
         let exec_res =
             execute_staging_items_opts(db, host, cfg, settings, &auto_ready_ids, None, opts)?;
         auto_moved = exec_res["moved"].as_u64().unwrap_or(0) as usize;
         cleaned_dirs = exec_res["cleaned_dirs"].as_u64().unwrap_or(0) as usize;
+        cleaned_files = exec_res["cleaned_files"].as_u64().unwrap_or(0) as usize;
         remaining_auto = exec_res["remaining"].as_u64().unwrap_or(0) as usize;
 
         // Optimization 2: Compensate mid-directory pagination `offset` left-shift when files were moved/recycled out of `q_cid`!
@@ -761,19 +947,24 @@ pub fn scan_pipeline_with_budget(
                 }
             }
         }
-    } else if walk_finished
+    }
+    if cleaned_dirs == 0
+        && cleaned_files == 0
+        && walk_finished
+        && remaining_auto == 0
         && pipeline.auto_admit
         && !settings.dry_run
-        && pipeline.recursive
-        && pipeline.reject_mode != "skip"
-        && clock.elapsed() < Duration::from_secs(total_budget_secs.saturating_sub(5))
+        && pipeline.clean_empty_dirs
+        && clock.elapsed() < Duration::from_secs(total_budget_secs.saturating_sub(4))
     {
-        cleaned_dirs = prune_staging_subdirs_with_budget(
+        let ps = prune_pipeline_staging(
             host,
             cfg,
-            &pipeline.source_cid,
-            if is_ui_slice { 6 } else { 12 },
+            &pipeline,
+            if is_ui_slice { 8 } else { 15 },
         );
+        cleaned_dirs = ps.cleaned_dirs;
+        cleaned_files = ps.cleaned_files;
     }
 
     let has_more = !walk_finished || remaining_auto > 0;
@@ -784,8 +975,15 @@ pub fn scan_pipeline_with_budget(
     if auto_moved > 0 {
         tail_notes.push(format!("已自动执行 {auto_moved} 项"));
     }
-    if cleaned_dirs > 0 {
-        tail_notes.push(format!("清理空壳目录 {cleaned_dirs} 个"));
+    if cleaned_dirs > 0 || cleaned_files > 0 {
+        let mut cparts = Vec::new();
+        if cleaned_dirs > 0 {
+            cparts.push(format!("空/残留目录 {cleaned_dirs} 个"));
+        }
+        if cleaned_files > 0 {
+            cparts.push(format!("非媒体残留 {cleaned_files} 个"));
+        }
+        tail_notes.push(format!("清理 {}", cparts.join("、")));
     }
     if remaining_auto > 0 {
         tail_notes.push(format!("剩余 {remaining_auto} 项待续执行"));
@@ -2566,15 +2764,17 @@ pub fn execute_staging_items_opts(
 
     let total_handled = organized_count + recycled_115;
     let mut cleaned_dirs = 0usize;
+    let mut cleaned_files = 0usize;
     if total_handled > 0
         && remaining_ids.is_empty()
-        && exec_clock.elapsed() < Duration::from_secs(soft_budget_secs.saturating_sub(4))
+        && exec_clock.elapsed() < Duration::from_secs(soft_budget_secs.saturating_sub(3))
     {
         for pid in &touched_pipelines {
             if let Some(p) = cfg.pipelines.iter().find(|p| p.id == *pid) {
-                if p.recursive && p.reject_mode != "skip" {
-                    cleaned_dirs +=
-                        prune_staging_subdirs_with_budget(host, cfg, &p.source_cid, opts.prune_budget_secs);
+                if p.clean_empty_dirs {
+                    let ps = prune_pipeline_staging(host, cfg, p, opts.prune_budget_secs);
+                    cleaned_dirs += ps.cleaned_dirs;
+                    cleaned_files += ps.cleaned_files;
                 }
             }
         }
@@ -2704,8 +2904,10 @@ pub fn execute_staging_items_opts(
                 if recycled_115 > 0 {
                     lines.push(format!("🗑️ 拦截: 同批去重/低分回收 {recycled_115} 项"));
                 }
-                if cleaned_dirs > 0 {
-                    lines.push(format!("🧹 目录: 清理空目录 {cleaned_dirs} 个"));
+                if cleaned_dirs > 0 || cleaned_files > 0 {
+                    lines.push(format!(
+                        "🧹 清理: 空/残留目录 {cleaned_dirs} 个 · 非媒体残留 {cleaned_files} 个"
+                    ));
                 }
                 if !remaining_ids.is_empty() {
                     lines.push(format!("⏳ 队列: 其余 {} 项分批继续处理", remaining_ids.len()));
@@ -2754,8 +2956,10 @@ pub fn execute_staging_items_opts(
                 lines.push(format!("📌 涉及: {}{more}", preview.join(" / ")));
             }
             lines.push(format!("🛡️ 原因: {reason_summary}"));
-            if cleaned_dirs > 0 {
-                lines.push(format!("🧹 目录: 清理空目录 {cleaned_dirs} 个"));
+            if cleaned_dirs > 0 || cleaned_files > 0 {
+                lines.push(format!(
+                    "🧹 清理: 空/残留目录 {cleaned_dirs} 个 · 非媒体残留 {cleaned_files} 个"
+                ));
             }
             lines.push(format!("🗓️ 时间: {now_str}"));
             let img = host.resolve_tmdb_card_image(&first_rec.tmdb_id, &first_rec.media_type);
@@ -2782,6 +2986,7 @@ pub fn execute_staging_items_opts(
         "organized": organized_count,
         "recycled_115": recycled_115,
         "cleaned_dirs": cleaned_dirs,
+        "cleaned_files": cleaned_files,
         "moved_by_cid": moved_by_cid,
         "remaining": remaining_ids.len(),
         "remaining_ids": remaining_ids,
@@ -7286,5 +7491,56 @@ mod tests {
         assert!(live_dir.join("movie.nfo").exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn preserved_dirs_and_extended_clutter_rules_work() {
+        let rules = vec![
+            "link".to_string(),
+            "upload/tmp".to_string(),
+            "99887766".to_string(),
+        ];
+        // Top-level `link` is protected, child media folders inside `link` are NOT protected
+        assert!(is_preserved_dir_match("link", "link", "11", 0, &rules));
+        assert!(is_preserved_dir_match("LINK", "LINK", "11", 0, &rules));
+        assert!(!is_preserved_dir_match("link/某剧 (2025)", "某剧 (2025)", "12", 1, &rules));
+        // Nested rule `upload/tmp` protects both ancestor `upload` and exact `upload/tmp`, not siblings
+        assert!(is_preserved_dir_match("upload", "upload", "21", 0, &rules));
+        assert!(is_preserved_dir_match("upload/tmp", "tmp", "22", 1, &rules));
+        assert!(!is_preserved_dir_match("upload/other", "other", "23", 1, &rules));
+        // Pure-digit CID rule matches at any depth
+        assert!(is_preserved_dir_match("any/nested", "nested", "99887766", 2, &rules));
+
+        // Extended clutter checks
+        let pdf = Cloud115File {
+            name: "说明.pdf".to_string(),
+            size: 120_000,
+            ..Default::default()
+        };
+        assert!(is_leftover_clutter(&pdf));
+        let sub_zip = Cloud115File {
+            name: "中文字幕.zip".to_string(),
+            size: 5 * 1024 * 1024,
+            ..Default::default()
+        };
+        assert!(is_leftover_clutter(&sub_zip));
+        let huge_zip = Cloud115File {
+            name: "大包.zip".to_string(),
+            size: 40 * 1024 * 1024,
+            ..Default::default()
+        };
+        assert!(!is_leftover_clutter(&huge_zip));
+        let readme = Cloud115File {
+            name: "README".to_string(),
+            size: 4096,
+            ..Default::default()
+        };
+        assert!(is_leftover_clutter(&readme));
+        let strm = Cloud115File {
+            name: "test.strm".to_string(),
+            size: 128,
+            ..Default::default()
+        };
+        assert!(!is_leftover_clutter(&strm));
     }
 }

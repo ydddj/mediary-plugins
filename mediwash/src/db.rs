@@ -365,6 +365,8 @@ fn migrate_legacy_data(data_dir: &Path, cfg: &mut AppConfig) {
                                     "smart".to_string()
                                 },
                                 rule_id_override: String::new(),
+                                clean_empty_dirs: true,
+                                preserved_dirs: crate::models::default_preserved_dirs(),
                             });
                             next_id += 1;
                         }

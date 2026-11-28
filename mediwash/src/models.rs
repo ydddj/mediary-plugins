@@ -100,6 +100,10 @@ fn default_reject_mode() -> String {
     "recycle_bin".to_string()
 }
 
+pub fn default_preserved_dirs() -> Vec<String> {
+    vec!["link".to_string()]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PluginSettings {
@@ -325,6 +329,13 @@ pub struct StagingPipeline {
     /// "smart" | "always" | "filename_only"
     pub probe_mode: String,
     pub rule_id_override: String,
+    /// Automatically prune empty directories and leftover non-media clutter after processing
+    #[serde(default = "default_true")]
+    pub clean_empty_dirs: bool,
+    /// Directory names / relative paths / 115 CIDs inside `source_cid` that must NEVER be deleted
+    /// when pruning empty dirs (e.g. `link`, `upload`, `link/upload`).
+    #[serde(default = "default_preserved_dirs")]
+    pub preserved_dirs: Vec<String>,
 }
 
 impl Default for StagingPipeline {
@@ -345,6 +356,8 @@ impl Default for StagingPipeline {
             reject_mode: default_reject_mode(),
             probe_mode: "smart".to_string(),
             rule_id_override: String::new(),
+            clean_empty_dirs: true,
+            preserved_dirs: default_preserved_dirs(),
         }
     }
 }
